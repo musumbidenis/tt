@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RVNP Attendance Register</title>
+<meta name="description" content="Offline-first attendance register: PouchDB on the device, CouchDB on the server, Google Sheets for records">
+<meta name="theme-color" content="#0f5c4d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="chrome">
+<header class="topbar">
+  <div class="brand">
+    <img src="icons/icon.svg" alt="" width="34" height="34">
+    <div>
+      <strong>Attendance</strong>
+      <span id="trainerLabel">Not set up yet</span>
+    </div>
+  </div>
+  <div class="status">
+    <span id="netBadge" class="badge">Offline</span>
+    <button id="syncBtn" class="btn small" title="Sync waiting registers with the server">
+      <span class="sync-icon" aria-hidden="true">⟳</span> Sync <span id="pendingCount" class="count">0</span>
+    </button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button data-tab="mark" class="active" role="tab">Mark</button>
+  <button data-tab="sessions" role="tab">Registers</button>
+  <button data-tab="reports" role="tab">Reports</button>
+  <button data-tab="settings" role="tab">Setup</button>
+</nav>
+</div>
+
+<main>
+  <!-- MARK -->
+  <section id="tab-mark" class="tab active">
+    <div id="emptyRoster" class="card notice" hidden>
+      <h2>No class lists on this device yet</h2>
+      <p>Go to <a href="#" data-goto="settings">Setup</a> and connect to the server once — class lists from Google Sheets arrive automatically. Or import the trainee and unit CSV files. After that, marking works fully offline.</p>
+    </div>
+
+    <form id="sessionForm" class="card session-form">
+      <label>Date<input type="date" id="fDate" required></label>
+      <label>Class<select id="fClass" required></select></label>
+      <label>Unit<select id="fUnit" required></select></label>
+      <label>Lesson<select id="fPeriod" required></select></label>
+      <button type="submit" class="btn primary" id="openBtn">Open register</button>
+    </form>
+
+    <div id="register" class="card register" hidden>
+      <div class="reg-head">
+        <div>
+          <h2 id="regTitle"></h2>
+          <p id="regSub" class="muted"></p>
+        </div>
+        <span id="saveState" class="save-state">Not saved yet</span>
+      </div>
+
+      <div class="counts" id="counts"></div>
+
+      <div class="reg-tools">
+        <input type="search" id="regSearch" placeholder="Search name or admission no." aria-label="Search trainees">
+        <button type="button" class="btn ghost" id="allPresent">All present</button>
+        <button type="button" class="btn ghost" id="allAbsent">All absent</button>
+        <button type="button" class="btn" id="scanBtn">Scan QR</button>
+      </div>
+
+      <ul id="traineeList" class="trainee-list"></ul>
+
+      <label class="notes">Notes (topic covered, remarks)
+        <textarea id="regNotes" rows="2" placeholder="Optional"></textarea>
+      </label>
+
+      <div class="reg-actions">
+        <button type="button" class="btn ghost" id="closeReg">Close</button>
+        <button type="button" class="btn primary" id="saveReg">Save register</button>
+      </div>
+      <p id="editLogInfo" class="muted small"></p>
+    </div>
+  </section>
+
+  <!-- SESSIONS -->
+  <section id="tab-sessions" class="tab">
+    <div class="card filters">
+      <select id="sClass" aria-label="Filter by class"><option value="">All classes</option></select>
+      <select id="sSync" aria-label="Filter by sync status">
+        <option value="">All registers</option>
+        <option value="pending">Waiting to sync</option>
+        <option value="synced">On server</option>
+      </select>
+    </div>
+    <div id="sessionList" class="session-list"></div>
+  </section>
+
+  <!-- REPORTS -->
+  <section id="tab-reports" class="tab">
+    <div class="card filters report-filters">
+      <label>Class<select id="rClass"></select></label>
+      <label>Unit<select id="rUnit"></select></label>
+      <label>From<input type="date" id="rFrom"></label>
+      <label>To<input type="date" id="rTo"></label>
+      <label>Minimum %<input type="number" id="rThreshold" min="0" max="100" step="1"></label>
+    </div>
+    <div id="reportSummary" class="report-summary"></div>
+    <div class="card table-wrap">
+      <table id="reportTable" class="report-table"></table>
+    </div>
+    <div class="row-actions">
+      <button class="btn" id="exportReport">Export report CSV</button>
+      <button class="btn ghost" id="exportRaw">Export all records CSV</button>
+      <button class="btn ghost" id="printQR">Print QR cards for class</button>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="tab-settings" class="tab">
+    <form id="trainerForm" class="card">
+      <h2>Trainer</h2>
+      <div class="grid2">
+        <label>Full name<input id="setName" autocomplete="name" required></label>
+        <label>Staff number<input id="setStaff"></label>
+      </div>
+      <div class="grid2">
+        <label>Registers lock after (hours)<input type="number" id="setLock" min="1" step="1"></label>
+        <label>New registers start with
+          <select id="setDefault">
+            <option value="P">Everyone present</option>
+            <option value="A">Everyone absent</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn primary">Save trainer details</button>
+    </form>
+
+    <form id="couchForm" class="card">
+      <h2>Server sync</h2>
+      <p class="muted">Enter the CouchDB address and the trainer login. Registers sync both ways whenever there is a network. With no network, everything keeps working on this device.</p>
+      <label>Server address<input id="setCouchUrl" type="url" placeholder="https://your-pc.your-tailnet.ts.net/rvnp_attendance"></label>
+      <div class="grid2">
+        <label>Username<input id="setCouchUser" autocomplete="username"></label>
+        <label>Password<input id="setCouchPass" type="password" autocomplete="current-password"></label>
+      </div>
+      <div class="row-actions">
+        <button class="btn primary">Save and connect</button>
+        <button type="button" class="btn" id="testCouch">Test connection</button>
+      </div>
+      <p id="couchStatus" class="muted small">Not connected</p>
+    </form>
+
+    <div class="card">
+      <h2>Google Sheets</h2>
+      <p class="muted">Every 10 minutes, registers on the server are copied into the <code>Sessions</code> and <code>Attendance</code> tabs, and class lists are read from the <code>Classes</code>, <code>Units</code> and <code>Trainees</code> tabs.</p>
+      <div class="row-actions">
+        <button type="button" class="btn" id="refreshRoster">Refresh class lists from Sheets</button>
+      </div>
+      <p id="sheetsStatus" class="muted small"></p>
+    </div>
+
+    <div class="card">
+      <h2>Import roster from CSV</h2>
+      <p class="muted">For trying the app without a server. When a server is connected, the class lists in Google Sheets replace these. Trainees file columns: <code>AdmNo, Name, ClassCode, ClassName, Active</code>. Units file columns: <code>ClassCode, UnitCode, UnitName</code>.</p>
+      <div class="grid2">
+        <label class="file">Trainees CSV<input type="file" id="importTrainees" accept=".csv,text/csv"></label>
+        <label class="file">Units CSV<input type="file" id="importUnits" accept=".csv,text/csv"></label>
+      </div>
+      <p id="rosterInfo" class="muted small"></p>
+    </div>
+
+    <div class="card">
+      <h2>Backup and transfer</h2>
+      <p class="muted">For long periods with no network: export a backup file, carry it to another device (flash disk, Bluetooth, WhatsApp) and import it there. Nothing is lost or duplicated.</p>
+      <div class="row-actions">
+        <button class="btn" id="exportBackup">Export backup</button>
+        <label class="btn file-btn">Import backup<input type="file" id="importBackup" accept=".json,application/json"></label>
+        <button class="btn danger" id="wipeData">Erase this device</button>
+      </div>
+      <p id="dbInfo" class="muted small"></p>
+    </div>
+  </section>
+</main>
+
+<dialog id="scanDialog" class="scan-dialog">
+  <div class="scan-head">
+    <strong>Scan trainee QR cards</strong>
+    <button type="button" class="btn small ghost" id="stopScan">Done</button>
+  </div>
+  <div class="video-wrap"><video id="scanVideo" playsinline muted></video><div class="frame"></div></div>
+  <label class="scan-mode">Mark scanned trainees as
+    <select id="scanAs"><option value="P">Present</option><option value="L">Late</option></select>
+  </label>
+  <p id="scanResult" class="scan-result">Point the camera at a card</p>
+</dialog>
+
+<div id="printArea" class="print-area" aria-hidden="true"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="vendor/pouchdb.min.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

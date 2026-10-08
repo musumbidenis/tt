@@ -1,0 +1,51 @@
+name: Google Sheets sync
+
+# Every 10 minutes: class lists Google Sheets → CouchDB, new registers CouchDB → Google Sheets.
+# First time: Actions tab → "Google Sheets sync" → Run workflow → task: setup.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "sync = normal sync · setup = first-time setup of CouchDB and the Sheet · roster = only refresh class lists"
+        type: choice
+        options: [sync, setup, roster]
+        default: sync
+
+concurrency:
+  group: sheets-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+
+      - name: Install
+        working-directory: bridge
+        run: npm ci --omit=dev
+
+      - name: Run ${{ inputs.task || 'sync' }}
+        working-directory: bridge
+        run: node attendance-bridge.js "--${TASK}"
+        env:
+          TASK: ${{ inputs.task || 'sync' }}
+          COUCH_URL: ${{ secrets.COUCH_URL }}
+          COUCH_USER: ${{ secrets.COUCH_USER }}
+          COUCH_PASSWORD: ${{ secrets.COUCH_PASSWORD }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          TRAINER_PASSWORD: ${{ secrets.TRAINER_PASSWORD }}
+          CORS_ORIGIN: https://${{ github.repository_owner }}.github.io
