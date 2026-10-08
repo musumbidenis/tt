@@ -38,20 +38,20 @@ If the PC is switched off, nothing is lost. Phones keep working offline and sync
 
 ## 3. Push to GitHub
 
-Create a **public** repository on GitHub, for example `attendance-register`. Then, in this folder:
+Create a **public** repository on GitHub, for example `tt`. Then, in this folder:
 
 ```bash
 git init
 git add .
 git commit -m "Attendance register"
 git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/attendance-register.git
+git remote add origin https://github.com/musumbidenis/tt.git
 git push -u origin main
 ```
 
 In the repository on GitHub:
 
-**a. Turn on the website:** go to **Settings → Pages → Deploy from a branch** and choose `main` with `/ (root)` → **Save**. The app will be at `https://YOUR-USERNAME.github.io/attendance-register/`.
+**a. Turn on the website:** go to **Settings → Pages → Deploy from a branch** and choose `main` with `/ (root)` → **Save**. The app will be at `https://musumbidenis.github.io/tt/`.
 
 **b. Add the secrets:** go to **Settings → Secrets and variables → Actions → New repository secret** and add:
 
@@ -79,7 +79,7 @@ To have them appear right away, run the workflow once more with `sync`. Otherwis
 
 ## 4. On each phone
 
-1. Open `https://YOUR-USERNAME.github.io/attendance-register/` in Chrome, then choose **⋮ → Add to Home screen**.
+1. Open `https://musumbidenis.github.io/tt/` in Chrome, then choose **⋮ → Add to Home screen**.
 2. In **Setup**:
    - enter the trainer's name;
    - for **Server address**, enter your CouchDB URL;
