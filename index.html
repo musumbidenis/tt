@@ -38,6 +38,7 @@
 </div>
 
 <main>
+  <div id="syncWarn" class="card warn-banner" hidden></div>
   <!-- MARK -->
   <section id="tab-mark" class="tab active">
     <div id="emptyRoster" class="card notice" hidden>
@@ -148,6 +149,7 @@
         <button class="btn primary">Save and connect</button>
         <button type="button" class="btn" id="testSheets">Test connection</button>
         <button type="button" class="btn" id="pullRoster">Download class lists</button>
+        <button type="button" class="btn" id="studentLinkBtn">Student app link</button>
       </div>
       <p id="sheetsStatus" class="muted small"></p>
     </form>
@@ -195,7 +197,16 @@
   <div id="lessonQrCode" class="qr-box"></div>
   <div class="qr-timer"><i id="lessonQrBar"></i></div>
   <p class="qr-note">Students: scan with your phone camera — no internet needed. The code changes every 20 seconds.</p>
-  <button type="button" class="btn primary" id="collectReceipts" style="width:100%">Collect receipts from students' phones</button>
+  <button type="button" class="btn ghost" id="collectReceipts" style="width:100%">Scan students' receipts (optional)</button>
+</dialog>
+
+<dialog id="studentLinkDialog" class="qr-dialog">
+  <div class="qr-head">
+    <div><strong>Student app</strong><span class="muted small">Students open this once while online, choose their class and name, and they're set up.</span></div>
+    <button type="button" class="btn small" id="closeStudentLink">Close</button>
+  </div>
+  <div id="studentLinkCode" class="qr-box"></div>
+  <div class="join-link"><input id="studentLink" readonly aria-label="Student app link"><button type="button" class="btn small" id="copyStudentLink">Copy link</button></div>
 </dialog>
 
 <div id="printArea" class="print-area" aria-hidden="true"></div>

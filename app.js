@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -83,8 +83,22 @@ async function saveSettings(patch) {
   renderTrainerLabel();
 }
 async function loadDevice() {
-  const d = await updateLocal('device', (doc) => { if (!doc.deviceId) doc.deviceId = 'dev-' + uuid().slice(0, 8); });
+  // Kept in the database and in a second place, so the phone ID survives if one is lost.
+  let mirror = null;
+  try { mirror = localStorage.getItem('rvnp_trainer_device'); } catch { /* blocked */ }
+  const d = await updateLocal('device', (doc) => { if (!doc.deviceId) doc.deviceId = mirror || 'dev-' + uuid().slice(0, 8); });
   state.deviceId = d.deviceId;
+  try { localStorage.setItem('rvnp_trainer_device', d.deviceId); } catch { /* blocked */ }
+}
+
+async function protectStorage() {
+  state.storage = 'unknown';
+  if (!navigator.storage?.persist) return;
+  try {
+    let ok = await navigator.storage.persisted();
+    if (!ok) ok = await navigator.storage.persist();
+    state.storage = ok ? 'protected' : 'not-protected';
+  } catch { /* unknown */ }
 }
 
 /* ---------------- roster ---------------- */
@@ -651,10 +665,23 @@ async function pendingSessions() {
   return sessions.filter((s) => map[s._id] !== s._rev);
 }
 async function refreshPending() {
-  const n = (await pendingSessions()).length;
+  const pending = await pendingSessions();
+  const n = pending.length;
   const el = $('#pendingCount');
   el.textContent = n;
   el.classList.toggle('zero', n === 0);
+  // Long-unsent registers matter most for QR lessons: students' scans are verified only once the lesson reaches the Sheet.
+  const oldest = pending.reduce((m, s) => (!m || s.updatedAt < m ? s.updatedAt : m), '');
+  const days = oldest ? Math.floor((Date.now() - new Date(oldest).getTime()) / 864e5) : 0;
+  const qr = pending.filter((s) => s.qr).length;
+  const warn = $('#syncWarn');
+  if (days >= 2) {
+    warn.hidden = false;
+    warn.textContent = `${n} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this phone — connect and tap Sync.`;
+  } else if (state.storage === 'not-protected' && n) {
+    warn.hidden = false;
+    warn.textContent = 'Install this app (browser menu → Add to Home screen) so the phone keeps unsent registers safely.';
+  } else warn.hidden = true;
 }
 
 function toSheetSession(s) {
@@ -944,7 +971,7 @@ async function handleReceipt(raw) {
 
 /* After sending registers, fetch what the Sheet decided about QR check-ins and show it in the registers. */
 async function pullCheckins() {
-  const since = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
+  const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10); // students may sync months late
   const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
   if (!sessions.length) return 0;
   const res = await callSheets('POST', { action: 'checkins', token: state.settings.sheetsToken, sessionIds: sessions.map((s) => s._id) });
@@ -1022,7 +1049,7 @@ async function wipeData() {
 
 async function renderDbInfo() {
   const info = await db.info();
-  $('#dbInfo').textContent = `Device ${state.deviceId} · ${info.doc_count} records stored · app v${APP_VERSION}`;
+  $('#dbInfo').textContent = `Device ${state.deviceId} · ${info.doc_count} records stored · storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} · app v${APP_VERSION}`;
 }
 
 /* ---------------- tabs, network, wiring ---------------- */
@@ -1109,6 +1136,19 @@ function wire() {
     syncSheets({ silent: true });
   });
   $('#testSheets').addEventListener('click', async () => { await saveSheets(); testSheets(); });
+  $('#studentLinkBtn').addEventListener('click', async () => {
+    await saveSheets();
+    if (!state.settings.sheetsUrl) { toast('Add the web app URL first', 'err'); return; }
+    const url = studentPageUrl() + '#u=' + encodeURIComponent(state.settings.sheetsUrl);
+    $('#studentLinkCode').innerHTML = qrSvg(url, 4);
+    $('#studentLink').value = url;
+    $('#studentLinkDialog').showModal();
+  });
+  $('#closeStudentLink').addEventListener('click', () => $('#studentLinkDialog').close());
+  $('#copyStudentLink').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('#studentLink').value); toast('Link copied — share it in the class WhatsApp group', 'ok'); }
+    catch { $('#studentLink').select(); toast('Select and copy the link'); }
+  });
   $('#pullRoster').addEventListener('click', async () => { await saveSheets(); pullRoster(); });
   $('#importTrainees').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -1150,6 +1190,7 @@ async function init() {
   fillSelect($('#fPeriod'), PERIODS.map((p) => ({ value: p.code, label: p.label })));
   $('#fDate').value = todayISO();
   await loadDevice();
+  await protectStorage();
   await loadSettings();
   fillSettingsForms();
   renderTrainerLabel();

@@ -61,43 +61,53 @@ From then on, the phone works with or without network.
 
 ## QR check-in (students mark themselves)
 
-Students record their own attendance by scanning the trainer's lesson QR. **Both phones can be offline the whole lesson.** There's no joining step, because each student's class already comes from the `Trainees` tab.
+**One-time setup for each student (needs internet once):**
+1. Share the student app.
+   - Either paste your web app URL into `config.js` in this repository, so students simply open https://musumbidenis.github.io/tt/student.html;
+   - or, in the trainer app, open **Setup → Student app link** and share the QR or the link (for example in the class WhatsApp group).
+2. The student chooses their **class**, then their **name**, from dropdowns filled from your Sheet, and taps **Register this phone**.
+3. The Sheet ties that phone to that student in the `Devices` tab. From then on:
+   - the phone can only check in that student;
+   - that student can only check in from that phone;
+   - a registered phone can't be switched to someone else.
 
-**In the lesson:**
-1. Open the register and tap **QR for students**, then show it to the class.
-   - The code is made on your phone, offline, and changes every 20 seconds. Each code is unique to this lesson and this moment, and can't be faked.
-   - Trainees who don't scan count as **absent** unless you mark them yourself.
-2. Each student scans it with their phone camera.
-   - The first time, they type their admission number. That's the only setup.
-   - Their phone saves the check-in and shows a small **receipt QR**.
-3. Tap **Collect receipts** (or **Scan receipts / ID cards** in the register) and scan the students' receipts, about a second each. This is the record on **your** phone, saved with the student's phone ID. Your phone checks it on the spot, offline, and refuses:
-   - a student who isn't in this class;
-   - a code that isn't from this lesson, whether fake, from another lesson, or out of time;
-   - a phone registered to a different student, or a student whose registered phone is a different one;
-   - a second student on the same phone.
+**Every lesson (trainer and students can all be offline):**
+1. Open the register and tap **QR for students**. The code is made on your phone, unique to the lesson, and changes every 20 seconds. Trainees who don't scan count as **absent** unless you mark them.
+2. Students scan it with the app or their normal camera. The phone checks the class straight away, so a student from another class is refused, and stores the check-in.
+3. Whenever each phone gets internet, it syncs. The Sheet verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
 
-**After the lesson, whenever each phone has internet:** both sides sync to the Sheet. The Sheet runs the same checks again and matches the two records:
+**Optional receipt:** the student's phone also keeps a receipt QR. If you want a record on your own phone at the moment of the lesson, scan receipts with **Scan receipts / ID cards**. The Sheet then marks those check-ins as **Both** rather than **Student only**. Without receipts, a check-in is still fully verified by the lesson code.
 
-| Verification | Meaning |
+> **Why the trainer's phone can't pick up check-ins by itself offline:** browsers don't let two phones talk to each other directly without internet. There's no Bluetooth or Wi-Fi Direct between phones for web apps. That would need a native Android app. The lesson code makes it unnecessary for proof, because only your phone can create valid codes.
+
+**In the Sheet:**
+- `CheckIns` lists every attempt and its result.
+- `Devices` shows which phone belongs to which student. **Delete a row** to let a student set up a new phone or fix a wrong choice.
+- `Attendance` → `Source` shows `trainer`, `default`, `qr (student only)`, `qr (both)` or `qr (trainer only)`.
+
+## How long data stays on a phone
+
+Registers and check-ins are stored in the phone browser's database (IndexedDB). They stay there until they're synced, **with no time limit**. The app also protects them in these ways:
+
+| Protection | What it does |
 |---|---|
-| **Both** | The student's phone and your receipt scan agree. The record is confirmed by both. |
-| **Student only** | The student scanned a genuine code, but you didn't scan their receipt. |
-| **Trainer only** | You scanned their receipt; their phone hasn't synced yet. It becomes **Both** when it does. |
+| **Protected storage** | The app asks the browser to keep its data permanently, so it isn't cleared when the phone is low on space. Browsers usually grant this once the app is **added to the home screen**. The app shows a reminder until it's protected. |
+| **Second copy** | The phone ID, the student's registration and all unsent check-ins are also kept in a second storage area. They're restored automatically if the main database is ever lost. |
+| **Reminders** | Students see a warning when check-ins have waited 3+ days. Trainers see one when registers have waited 2+ days. |
+| **No expiry at the Sheet** | A check-in that syncs months later is verified exactly like one sent the same day. |
+| **Tamper-proof** | Changing a stored check-in (its lesson, time or code) makes it fail verification. A student's records only count for the phone registered to them. |
+| **Trainer backup** | **Setup → Export backup** saves everything on the trainer's phone to a file, including the lesson secrets that verify students' scans. |
 
-**Who wins:** a mark you tap yourself beats a QR check-in, and a QR check-in beats the default "absent".
+What can still lose unsent data:
+- **Clearing the browser's data, or uninstalling the browser.** This removes both copies.
+- **iPhones:** Safari deletes a website's data after 7 days of not opening it, unless the app was **added to the home screen**. So on iPhones, adding it to the home screen is essential.
+- **Losing or breaking the phone** before it syncs. Sync whenever there's a connection.
 
-**Where to look in the Sheet:**
-- `CheckIns` lists every attempt, from either phone, with its result and verification.
-- `Devices` shows which phone belongs to which student. The first submission registers the phone; delete a student's row to let them change phone.
-- `Attendance` → `Source` shows `trainer`, `default`, `qr (both)`, `qr (student only)` or `qr (trainer only)`.
-
-**Students should:**
-- open https://musumbidenis.github.io/tt/student.html **once while online**, so the page works offline afterwards, and add it to the home screen;
-- always use the same browser.
+The trainer's phone matters most: it holds each lesson's secret. Until that lesson reaches the Sheet, students' scans for it wait as "pending". So trainers should sync after class whenever possible, and export a backup if they'll be offline for long.
 
 ## Good to know
 
-- **After updating `Code.gs`**, use **Deploy → Manage deployments → Edit → Version: New version → Deploy**. That keeps the same URL, and phones pick up the change. New tabs (`CheckIns`, `Devices`) are created automatically. Then tap **Setup → Download class lists**, so your phone also gets the list of registered student phones for offline checks.
+- **After updating `Code.gs`**, use **Deploy → Manage deployments → Edit → Version: New version → Deploy**. That keeps the same URL, and phones pick up the change. New tabs (`CheckIns`, `Devices`) are created automatically. Then tap **Setup → Download class lists** on your phone.
 - The access token is shared with trainers. Anyone who has it can send registers to the Sheet. If it leaks, use **Attendance → Generate a new access token** in the Sheet and update the phones. 
 - A Google Sheet holds up to 10 million cells. At 14 columns per trainee record, that's several hundred thousand attendance rows. When a year's Sheet gets large, start a new Sheet for the next year and deploy the script there.
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v3.0.1`) so phones fetch the new version.

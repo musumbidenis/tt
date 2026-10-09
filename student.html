@@ -18,7 +18,7 @@
     <img src="icons/icon.svg" alt="" width="34" height="34">
     <div>
       <strong>Check-in</strong>
-      <span id="who">Scan your trainer's QR to start</span>
+      <span id="who">Not set up</span>
     </div>
   </div>
   <div class="status">
@@ -29,12 +29,17 @@
 </div>
 
 <main>
-  <section id="idCard" class="card" hidden>
-    <h2>Who are you?</h2>
-    <p class="muted">Type your admission number. You only do this once — this phone will then be <b>registered to you</b> and can't be used to check in anyone else.</p>
-    <p id="idWhy" class="small err-text"></p>
-    <label>Admission number<input id="idAdm" placeholder="e.g. RVNP/ICT/0101" autocomplete="off" autocapitalize="characters"></label>
-    <button type="button" class="btn primary big" id="idSave">Save and check in</button>
+  <div id="warning" class="card warn-banner" hidden></div>
+
+  <section id="setupCard" class="card" hidden>
+    <h2>Set up this phone</h2>
+    <p class="muted">Choose your class and your name. This phone will be <b>registered to you</b>: it can only check in you, and you can only check in from this phone.</p>
+    <p id="setupMsg" class="small err-text"></p>
+    <div id="setupForm">
+      <label>Class<select id="setupClass"><option value="">Loading…</option></select></label>
+      <label>Your name<select id="setupName" disabled><option value="">Choose your class first</option></select></label>
+      <button type="button" class="btn primary big" id="setupSave" disabled>Register this phone</button>
+    </div>
   </section>
 
   <section id="result" class="card result" hidden aria-live="polite">
@@ -42,16 +47,11 @@
     <h2 id="resultTitle"></h2>
     <p id="resultText"></p>
     <p id="resultSub" class="muted small"></p>
-    <div id="receiptBox" class="receipt" hidden>
-      <p class="receipt-label">Show this to your trainer</p>
+    <details id="receiptBox" class="receipt" hidden>
+      <summary>Receipt (only if your trainer asks to scan it)</summary>
       <div id="receiptCode" class="qr-box"></div>
       <p id="receiptWho" class="muted small"></p>
-    </div>
-  </section>
-
-  <section id="startCard" class="card notice" hidden>
-    <h2>Scan your trainer's lesson QR</h2>
-    <p>Point your phone camera at the QR code on your trainer's screen, or tap the button below. No internet is needed.</p>
+    </details>
   </section>
 
   <section id="profileCard" class="card" hidden>
@@ -60,11 +60,12 @@
         <strong id="pName"></strong>
         <span id="pMeta" class="muted small"></span>
       </div>
-      <span id="pLock" class="pill"></span>
+      <span class="pill synced">Registered to this phone</span>
     </div>
   </section>
 
   <button type="button" class="btn primary big" id="scanBtn">Scan lesson QR</button>
+  <p class="muted small center">Or point your normal camera at your trainer's QR. No internet needed.</p>
 
   <section id="historyCard" class="card" hidden>
     <h2>My check-ins</h2>
@@ -72,6 +73,7 @@
   </section>
 
   <p id="deviceInfo" class="muted small center"></p>
+  <p class="center"><button type="button" class="linkish" id="resetSetup" hidden>Wrong name? Set up again</button></p>
 </main>
 
 <dialog id="scanDialog" class="scan-dialog">
@@ -89,11 +91,12 @@
     <button type="button" class="btn small" id="closeReceipt">Close</button>
   </div>
   <div id="receiptDialogCode" class="qr-box"></div>
-  <p class="qr-note">Show this to your trainer so the check-in is recorded on their phone too.</p>
+  <p class="qr-note">Only needed if your trainer asks to scan it.</p>
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
 
+<script src="config.js"></script>
 <script src="vendor/pouchdb.min.js"></script>
 <script src="vendor/jsQR.js"></script>
 <script src="vendor/qrcode.js"></script>

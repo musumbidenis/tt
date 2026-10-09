@@ -14,7 +14,8 @@
  *   Sessions    one row per lesson register                   (written by the app)
  *   Attendance  one row per trainee per lesson                (written by the app)
  *   CheckIns    every QR check-in — from the student's phone, the trainer's receipt scan, or both
- *   Devices     which phone belongs to which student (delete a row to let a student change phone)
+ *   Devices     which phone belongs to which student — set when the student first logs in
+ *               (delete a row to let a student change phone or fix a wrong choice)
  *   SessionData raw register data used to merge trainer marks and QR check-ins (hidden)
  */
 
@@ -130,6 +131,9 @@ function nowIso_() { return new Date().toISOString(); }
 function doGet(e) {
   var p = (e && e.parameter) || {};
   try {
+    // Student app (no token): the class and name dropdowns for first-time setup.
+    if (p.action === 'classes') return json_(publicClasses_());
+    if (p.action === 'classlist') return json_(classList_(p['class']));
     checkToken_(p.token);
     if (p.action === 'ping') {
       return json_({ ok: true, spreadsheet: SpreadsheetApp.getActiveSpreadsheet().getName(), time: nowIso_() });
@@ -147,6 +151,7 @@ function doPost(e) {
     // Students send check-ins without the trainer token; each one is verified against the
     // lesson code the trainer's phone showed, so a check-in cannot be faked.
     if (body.action === 'checkin') return json_(receiveCheckins_(body.checkins || []));
+    if (body.action === 'register') return json_(registerDevice_(body));
     checkToken_(body.token);
     if (body.action === 'push') return json_(pushSessions_(body.sessions || []));
     if (body.action === 'checkins') return json_({ ok: true, checkins: acceptedCheckins_(body.sessionIds || []) });
@@ -196,6 +201,60 @@ function readRoster_() {
     devices: readTable_('Devices').filter(function (r) { return r.DeviceID && r.AdmNo; })
       .map(function (r) { return { deviceId: r.DeviceID, admNo: r.AdmNo }; })
   };
+}
+
+/* ---------- student app: setup lists and phone registration ---------- */
+
+function publicClasses_() {
+  var withTrainees = {};
+  readTable_('Trainees').forEach(function (r) { if (r.ClassCode && !INACTIVE.test(r.Active || '')) withTrainees[r.ClassCode] = 1; });
+  var named = {};
+  readTable_('Classes').forEach(function (r) { if (r.ClassCode) named[r.ClassCode] = r.ClassName || r.ClassCode; });
+  return {
+    ok: true,
+    classes: Object.keys(withTrainees).sort().map(function (code) { return { code: code, name: named[code] || code }; })
+  };
+}
+
+function classList_(classCode) {
+  if (!classCode) throw new Error('Choose a class');
+  return {
+    ok: true,
+    classCode: classCode,
+    trainees: readTable_('Trainees')
+      .filter(function (r) { return r.ClassCode === classCode && r.AdmNo && !INACTIVE.test(r.Active || ''); })
+      .map(function (r) { return { admNo: r.AdmNo, name: r.Name || r.AdmNo }; })
+      .sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; })
+  };
+}
+
+/** First login on a student phone: ties the phone to the chosen student, once. */
+function registerDevice_(b) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var ctx = loadCtx_();
+    var t = ctx.trainees[String(b.admNo || '').toLowerCase()];
+    if (!t || INACTIVE.test(t.Active || '')) return { ok: false, error: 'That student is not on the class list' };
+    if (b.classCode && t.ClassCode !== b.classCode) return { ok: false, error: t.Name + ' is not in ' + b.classCode };
+    if (!b.deviceId) return { ok: false, error: 'Missing phone ID' };
+    var di = ctx.devT.index[b.deviceId], ai = ctx.byAdm[t.AdmNo.toLowerCase()];
+    if (di !== undefined && ctx.devT.rows[di][1].toLowerCase() !== t.AdmNo.toLowerCase()) {
+      var other = ctx.trainees[ctx.devT.rows[di][1].toLowerCase()];
+      return { ok: false, error: 'This phone is already registered to ' + (other ? other.Name : ctx.devT.rows[di][1]) + '. Ask your trainer to reset it.' };
+    }
+    if (ai !== undefined && ctx.devT.rows[ai][0] !== b.deviceId) {
+      return { ok: false, error: t.Name + ' is already registered on another phone. Ask your trainer to reset it.' };
+    }
+    var cls = readTable_('Classes').filter(function (r) { return r.ClassCode === t.ClassCode; })[0];
+    var reg = di !== undefined ? ctx.devT.rows[di].slice() : [b.deviceId, t.AdmNo, t.Name, t.ClassCode, ctx.now, ctx.now];
+    reg[5] = ctx.now;
+    upsert_(ctx.devT, b.deviceId, reg);
+    saveCtx_(ctx);
+    return { ok: true, admNo: t.AdmNo, name: t.Name, classCode: t.ClassCode, className: cls ? (cls.ClassName || t.ClassCode) : t.ClassCode };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ---------- table helpers (read once, change in memory, write once) ---------- */
