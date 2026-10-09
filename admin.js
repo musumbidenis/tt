@@ -209,14 +209,17 @@ const Admin = (() => {
   function classesHtml() {
     const groups = classGroups();
     const count = (code) => state.trainees.filter((t) => t.classCode === code && t.active !== false).length;
-    const unlinked = state.classes.filter((c) => !c.misClass && state.units.some((u) => u.classCode === c.code)).length;
     return `<p class="muted">Upload the class registers from the MIS system (PDF, or the same register saved as Excel). New students are added; nobody is removed without your say.</p>
       <label class="btn file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Choose class register files<input type="file" id="classFiles" accept=".pdf,.xlsx,.xlsm,.csv" multiple></label>
       <div id="classImports">${classImports.map(importCard).join('')}</div>
       ${groups.size ? `<ul class="mlist">${[...groups.entries()].sort().map(([g, codes]) => `<li><button type="button" class="mrow" data-group="${esc(g)}">
         <span><b>${esc(g)}</b><small>${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</small></span>
         <span class="pill synced">${codes.reduce((a, c) => a + count(c), 0)} students</span></button></li>`).join('')}</ul>` : ''}
-      ${unlinked ? `<p class="muted small">${unlinked} loaded classes have no class list yet.</p>` : ''}`;
+      ${(() => {
+        const empty = state.classes.filter((c) => state.units.some((u) => u.classCode === c.code) && !/[,/]/.test(c.code) && !count(c.code)).map((c) => c.code).sort();
+        return empty.length ? `<details class="mdone"><summary>${empty.length} classes in the loading have no students yet</summary><p class="small">${empty.map(esc).join(' · ')}</p>
+          <p class="muted small">Trainers see an empty register for these. Upload their class registers above and tick the matching stream(s).</p></details>` : '';
+      })()}`;
   }
 
   function importCard(imp, i) {
@@ -270,6 +273,8 @@ const Admin = (() => {
   async function runImport(card, apply) {
     const imp = readImportCard(card);
     if (!imp.misClass) { toast('Enter the class code', 'err'); return; }
+    const loadedClasses = state.classes.some((c) => state.units.some((u) => u.classCode === c.code));
+    if (!imp.streams.length && loadedClasses) { toast('Tick the class or stream(s) from the loading that this list belongs to; trainers mark by those names', 'err'); return; }
     if (!imp.streams.length && !confirm(`No streams ticked. Add all ${imp.students.length} students to a class called ${imp.misClass}?`)) return;
     const btn = card.querySelector(apply ? '[data-apply]' : '[data-preview]');
     busy(btn, true, apply ? 'Saving…' : 'Checking…');

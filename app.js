@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.0.1';
+const APP_VERSION = '4.0.2';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -297,6 +297,10 @@ async function openFromForm(e) {
       toast(`${unitCode} already has ${MAX_LESSONS_PER_WEEK} lessons in ${week ? 'week ' + week : 'this week'}. The register has room for ${MAX_LESSONS_PER_WEEK} a week; open one of those instead.`, 'err');
       return;
     }
+    if (!rosterFor(classCode).length && navigator.onLine && state.auth) {
+      toast('No students on this phone for ' + classCode + ' yet — downloading class lists…');
+      await pullRoster({ silent: true });
+    }
     const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
     const cls = state.classes.find((c) => c.code === classCode);
     const marks = {}, names = {};
@@ -325,10 +329,19 @@ function setCurrent(doc, isNew = false) {
 }
 
 /** Class list for marking: official list + students waiting for approval (yours and other trainers'), minus rejected. */
+/** A combined lesson in the loading ("ICT L6ICT-26J, ICT L6ICT-26M-CT") takes its students from each class it names. */
+function classParts(classCode) {
+  const parts = String(classCode).split(/\s*[,/]\s*/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 2) return [classCode];
+  const prefix = (parts[0].match(/^([A-Z]+)\s/) || [])[1];
+  return [classCode, ...parts.map((x) => (prefix && !/\s/.test(x) ? `${prefix} ${x}` : x))];
+}
 function rosterFor(classCode) {
   const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === classCode).map((r) => lower(r.admNo)));
   const out = new Map();
-  for (const t of activeTraineesFor(classCode)) out.set(lower(t.admNo), { admNo: t.admNo, name: t.name, pending: false });
+  for (const code of classParts(classCode)) {
+    for (const t of activeTraineesFor(code)) if (!out.has(lower(t.admNo))) out.set(lower(t.admNo), { admNo: t.admNo, name: t.name, pending: false });
+  }
   const pend = [...state.meta.pending.filter((p) => p.classCode === classCode),
     ...state.addreqs.filter((a) => a.classCode === classCode && !a.done)];
   for (const p of pend) {
@@ -341,6 +354,8 @@ function rosterFor(classCode) {
 function rosterForCurrent() {
   const s = state.current;
   const list = rosterFor(s.classCode).map((t) => ({ ...t, unlisted: false }));
+  // Students who reach the class list during today's lesson join it with the default mark; older lessons are left as marked.
+  if (s.date === todayISO()) for (const t of list) if (!s.marks[t.admNo]) { s.marks[t.admNo] = s.qr ? 'A' : (state.settings.defaultStatus || 'P'); s.names[t.admNo] = t.name; }
   const listed = new Set(list.map((t) => t.admNo));
   const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === s.classCode).map((r) => r.admNo));
   for (const adm of Object.keys(s.marks || {})) {
@@ -370,7 +385,10 @@ function renderRegister() {
       <div class="seg" role="group" aria-label="Status for ${esc(t.name)}">
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
       </div></li>`;
-  }).join('') : '<li class="empty">No trainees match.</li>';
+  }).join('') : q ? '<li class="empty">No trainees match.</li>'
+    : `<li class="empty roster-empty"><b>No students on ${esc(s.classCode)}'s list on this phone yet.</b>
+      <span>Tap <b>Download class lists</b>. If it stays empty, the MIS Officer needs to upload this class's register under Manage → Class lists, with stream ${esc(s.classCode.split(' ').pop())} ticked.</span>
+      <button type="button" class="btn" data-action="pull-roster">Download class lists</button></li>`;
   renderCounts();
   const log = s.editLog || [];
   $('#editLogInfo').textContent = log.length
@@ -1012,6 +1030,7 @@ async function pullRoster({ silent = false } = {}) {
     await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
     await loadRoster();
     applyRoles();
+    if (state.current) renderRegister();
     renderSheetsStatus();
     if (!silent) toast(`Class lists saved: ${markClasses().length} of your classes, ${r.trainees} students — you can now mark offline`, 'ok');
   } catch (e) {
@@ -1028,11 +1047,11 @@ async function renderSheetsStatus() {
   $('#sheetsStatus').textContent = parts.length ? parts.join(' · ') + '.' : 'Not synced yet.';
 }
 
-/* Refresh class lists automatically when they are more than 6 hours old. */
+/* Refresh class lists automatically when they are more than 30 minutes old. */
 async function maybeRefreshRoster() {
   if (!state.auth || !navigator.onLine) return;
   const log = await getLocal('syncLog');
-  if (!log.lastRoster || Date.now() - new Date(log.lastRoster).getTime() > 6 * 36e5) pullRoster({ silent: true });
+  if (!log.lastRoster || Date.now() - new Date(log.lastRoster).getTime() > 30 * 6e4) pullRoster({ silent: true });
 }
 
 /* When two devices edit the same register, keep the most recent version and
@@ -1418,7 +1437,8 @@ function wire() {
   $('#sessionForm').addEventListener('submit', openFromForm);
   $('#fClass').addEventListener('change', renderUnitSelect);
   $('#fDate').addEventListener('change', renderWeekHint);
-  $('#traineeList').addEventListener('click', (e) => {
+  $('#traineeList').addEventListener('click', async (e) => {
+    if (e.target.closest('[data-action="pull-roster"]')) { await pullRoster(); renderRegister(); return; }
     const b = e.target.closest('button[data-s]'); if (!b) return;
     setMark(b.closest('.trow').dataset.adm, b.dataset.s);
   });
@@ -1495,7 +1515,7 @@ function wire() {
   liveTimer = setTimeout(liveTick, 1500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && state.dirty) saveCurrent();
-    if (document.visibilityState === 'visible' && navigator.onLine) liveTick();
+    if (document.visibilityState === 'visible' && navigator.onLine) { liveTick(); maybeRefreshRoster(); }
   });
   window.addEventListener('pagehide', () => { if (state.dirty) saveCurrent(); });
 

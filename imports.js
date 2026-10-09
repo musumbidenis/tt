@@ -186,17 +186,30 @@ const Imports = (() => {
     return { rows, trainers, subjects: Object.keys(subjects).length, meta, fileName: file.name };
   }
 
+  /** Reads a class code into its parts: loading style "ICT L6CS-25SA" / "ICT L6ICT-26S-A", MIS style "CSCL6-25-S-RS". */
+  function codeParts(code) {
+    const last = norm(code).split(' ').pop();
+    let m = last.match(/^L(\d)([A-Z]+)-(\d{2})([A-Z])-?([A-Z])?\d*$/);
+    if (m) return { level: m[1], prog: m[2], year: m[3], intake: m[4], stream: m[5] || '' };
+    m = last.match(/^([A-Z]+?)L(\d)-?(\d{2})-?([A-Z])(?:-([A-Z]{1,3}))?/);
+    if (m) return { prog: m[1], level: m[2], year: m[3], intake: m[4], stream: m[5] && m[5].length === 1 ? m[5] : '' };
+    return null;
+  }
   /**
    * Suggests which loading classes (streams) an MIS class list belongs to:
    * CSCL6-25-S-RS → CS, level 6, intake 25S → ICT L6CS-25SA / 25SB / 25SC.
+   * A list for one stream (…-26-S-A) is matched to that stream only.
    */
   function suggestStreams(misClass, classCodes) {
-    const m = norm(misClass).match(/^([A-Z]+?)L(\d)-?(\d{2})-?([A-Z])/);
-    if (!m) return classCodes.filter((c) => norm(c) === norm(misClass));
-    let prog = m[1], level = m[2], year = m[3], intake = m[4];
-    if (prog.endsWith('CS') || prog === 'CSC') prog = 'CS';
-    const re = new RegExp(`L${level}${prog}-${year}${intake}(-?[A-Z])?$`);
-    return classCodes.filter((c) => re.test(norm(c).replace(/\s+/g, ' ').split(' ').pop()));
+    const exact = classCodes.filter((c) => norm(c) === norm(misClass) || norm(c).split(' ').pop() === norm(misClass));
+    if (exact.length) return exact;
+    const m = codeParts(misClass);
+    if (!m) return [];
+    const progOk = (a, b) => a === b || a.startsWith(b) || b.startsWith(a);
+    return classCodes.filter((c) => {
+      const p = codeParts(c);
+      return p && p.level === m.level && p.year === m.year && p.intake === m.intake && progOk(p.prog, m.prog) && (!m.stream || p.stream === m.stream);
+    }).sort();
   }
 
   return { classList, loading, suggestStreams, parseRegisterLines, toLines, isAdm };
