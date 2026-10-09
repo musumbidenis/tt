@@ -1,2 +1,6 @@
 node_modules/
 __pycache__/
+.load-d1/
+loadtest/seed.json
+loadtest/cpu-copy.sqlite
+loadtest/__pycache__/

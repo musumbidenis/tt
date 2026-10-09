@@ -64,6 +64,30 @@ async function dump(env) {
   return out;
 }
 
+/* ---------- load-test meter: D1 queries, rows read and rows written per action (the free-plan quotas) ---------- */
+const meter = {};
+function wrapDB(db, t) {
+  const note = (m) => { t.queries++; if (m) { t.read += m.rows_read || 0; t.written += m.rows_written || 0; } };
+  const wrapStmt = (st) => ({
+    bind: (...a) => wrapStmt(st.bind(...a)),
+    all: async () => { const r = await st.all(); note(r.meta); return r; },
+    run: async () => { const r = await st.run(); note(r.meta); return r; },
+    first: async () => { const r = await st.all(); note(r.meta); return (r.results || [])[0] ?? null; },
+  });
+  return { prepare: (sql) => wrapStmt(db.prepare(sql)), exec: async (sql) => { const r = await db.exec(sql); t.queries += r.count || 1; return r; }, batch: (l) => db.batch(l) };
+}
+async function metered(request, env, ctx) {
+  const url = new URL(request.url);
+  let action = url.searchParams.get('action') || '';
+  if (request.method === 'POST') { try { action = JSON.parse(await request.clone().text()).action || '?'; } catch { action = '?'; } }
+  const t = { queries: 0, read: 0, written: 0 };
+  const res = await worker.fetch(request, { ...env, DB: wrapDB(env.DB, t) }, ctx);
+  const m = meter[action] = meter[action] || { n: 0, queries: 0, read: 0, written: 0, maxQueries: 0, maxRead: 0, maxWritten: 0 };
+  m.n++; m.queries += t.queries; m.read += t.read; m.written += t.written;
+  m.maxQueries = Math.max(m.maxQueries, t.queries); m.maxRead = Math.max(m.maxRead, t.read); m.maxWritten = Math.max(m.maxWritten, t.written);
+  return res;
+}
+
 const SEED = ['Chebet Faith Jeptoo', 'Kiprono Collins Rotich', 'Wanjiru Grace Kamau', 'Omondi Kevin Ouma', 'Njeri Esther Wambui', 'Kipchumba Allan Kosgei', 'Atieno Sharon Akinyi', 'Mutua Dennis Musyoka', 'Jelagat Mercy Chepkoech', 'Barasa Victor Wekesa'];
 
 export default {
@@ -89,6 +113,10 @@ export default {
       return new Response(JSON.stringify(r.results || []), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
     if (url.pathname === '/__fold') return new Response(String(await foldOldCheckins(env, true)), { headers: CORS });
-    return worker.fetch(request, env, ctx);
+    if (url.pathname === '/__meter') {
+      if (p.get('reset')) for (const k of Object.keys(meter)) delete meter[k];
+      return new Response(JSON.stringify(meter), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+    return env.METER ? metered(request, env, ctx) : worker.fetch(request, env, ctx);
   },
 };

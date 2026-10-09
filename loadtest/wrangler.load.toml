@@ -1,0 +1,13 @@
+# Local load testing: npx wrangler dev --config loadtest/wrangler.load.toml --local --port 8090
+# Same as worker/wrangler.test.toml, plus METER: counts D1 queries and rows read/written per action (GET /__meter).
+name = "rvnp-attendance-load"
+main = "../worker/dev.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+METER = "1"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rvnp-attendance"
+database_id = "00000000-0000-0000-0000-000000000000"
