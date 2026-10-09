@@ -82,8 +82,9 @@ From then on, the phone works with or without network.
   - the moment the internet comes back;
   - whenever the app is opened;
   - every minute.
-- **Your phone** sends your registers a few seconds after any change. While the app is open and online, it also checks the Sheet about every 30 seconds for new check-ins and saves them into the register for that lesson, that day. An open register updates in front of you, with a **QR** tag and a short notice. Registers that aren't open are updated in the background too.
-- If a student's check-in reaches the Sheet before your lesson does, it waits as "pending". It's confirmed automatically once your phone syncs.
+- **Your phone** sends your registers a few seconds after any change, and the moment you show a lesson QR. **During a live lesson**, while the QR is showing or today's QR register is open, it checks the Sheet every few seconds with a tiny "anything new?" question. A student's scan shows up within about 3–5 seconds of them being online: the counter on the QR screen goes up, and the register marks them Present with a **QR** tag. At other times it checks once a minute while the app is open. Registers that aren't open are updated in the background too.
+- A scan of the code currently on screen is confirmed at once. If a student's check-in reaches the Sheet before your lesson does (for example, your phone was offline), it waits as "pending". It's confirmed automatically once your phone syncs, and the student's phone keeps re-checking every few seconds while it waits.
+- When a new version of the app is published, phones switch to it automatically the next time it loads.
 
 **In the Sheet:**
 - `CheckIns` lists every attempt and its result.

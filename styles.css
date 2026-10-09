@@ -290,3 +290,6 @@ body.student main > #scanBtn { margin: 0 0 1rem; }
 .receipt summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
 .receipt[open] summary { margin-bottom: .5rem; }
 #setupForm select { font-size: 1rem; }
+.qr-live { text-align: center; margin: .25rem 0; font-size: 1rem; }
+.qr-live b { font-size: 1.6rem; color: var(--primary); margin-right: .25rem; }
+.qr-live span { display: block; color: var(--muted); font-size: .85rem; }

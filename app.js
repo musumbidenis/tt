@@ -5,11 +5,14 @@
  */
 'use strict';
 
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.5.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
-const LIVE_POLL_MS = window.__livePollMs || 30000; // how often an open, online app checks the Sheet for new check-ins
+// Live updates: during a live QR lesson the app asks the Sheet a tiny "anything new?" every few seconds;
+// otherwise it checks once a minute while open. Both only run while online and on screen.
+const LIVE_FAST_MS = window.__liveFastMs || 4000;
+const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
   { code: 'L3', label: 'Lesson 3' }, { code: 'L4', label: 'Lesson 4' },
@@ -693,7 +696,7 @@ function toSheetSession(s) {
   };
 }
 
-async function syncSheets({ silent = false } = {}) {
+async function syncSheets({ silent = false, pull = true } = {}) {
   if (!state.settings.sheetsUrl) { if (!silent) { toast('Add your Google Sheets web app URL in Setup first'); switchTab('settings'); } return; }
   if (state.syncing) return;
   if (!navigator.onLine) { if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
@@ -711,7 +714,7 @@ async function syncSheets({ silent = false } = {}) {
   };
   try {
     await pushPending();
-    const qrUpdated = await pullCheckins();
+    const qrUpdated = pull ? await pullCheckins() : 0; // uploads alone skip fetching; the live pulse handles that
     if (qrUpdated) await pushPending();
     await updateLocal('syncLog', (d) => { d.lastSheets = nowISO(); });
     renderSheetsStatus();
@@ -735,7 +738,7 @@ async function syncSheets({ silent = false } = {}) {
 let autoTimer;
 function scheduleAutoSync() {
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true }); }, 5000);
+  autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false }); }, 5000);
 }
 
 async function pullRoster({ silent = false } = {}) {
@@ -863,6 +866,9 @@ async function openLessonQR() {
   const w0 = qrWindow();
   s.qr.intervals.push([w0, w0]);
   markDirty();
+  // Upload straight away, so the Sheet can confirm students' scans from the first second.
+  saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false }); });
+  renderQrLive();
   $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${periodLabel(s.period)}`;
   $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
   $('#lessonQrDialog').showModal();
@@ -873,7 +879,7 @@ async function openLessonQR() {
     if (w !== shown) {
       shown = w;
       const iv = s.qr.intervals[s.qr.intervals.length - 1];
-      if (iv[1] !== w) { iv[1] = w; markDirty(); }
+      if (iv[1] !== w) { iv[1] = w; markDirty(); saveCurrent().then(() => scheduleAutoSync()); }
       const t = await qrToken(s.qr.secret, s._id, w);
       const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, u: state.settings.sheetsUrl, w, t });
       const box = $('#lessonQrCode');
@@ -886,6 +892,42 @@ async function openLessonQR() {
   await tick();
   lessonQrTimer = setInterval(tick, 250);
 }
+/* Live count on the QR screen: who has checked in so far. */
+function renderQrLive() {
+  const s = state.current;
+  const el = $('#lessonQrLive');
+  if (!s || !el) return;
+  const via = Object.entries(s.viaQr || {}).sort((a, b) => String(b[1]).localeCompare(String(a[1])));
+  const total = activeTraineesFor(s.classCode).length;
+  el.innerHTML = `<b>${via.length}</b> of ${total} checked in`
+    + (via.length ? `<span>${via.slice(0, 4).map(([adm]) => esc((s.names?.[adm] || adm).split(' ')[0])).join(', ')}${via.length > 4 ? '…' : ''}</span>` : '<span>Waiting for the first scan…</span>');
+}
+
+function isLiveLesson() {
+  const s = state.current;
+  return $('#lessonQrDialog').open || !!(s && s.qr && s.date === todayISO());
+}
+
+/* One loop decides how often to check: every few seconds during a live lesson, else every minute. */
+let liveTimer = null;
+async function liveTick() {
+  clearTimeout(liveTimer);
+  const live = isLiveLesson();
+  try {
+    if (navigator.onLine && document.visibilityState === 'visible' && state.settings.sheetsUrl && !state.syncing) {
+      if (live) {
+        const res = await callSheets('GET', null, { action: 'pulse', token: state.settings.sheetsToken });
+        // Fetch details only when the Sheet says something changed (or it cannot tell).
+        if (!res.ok || res.last !== state.lastPulse) {
+          state.lastPulse = res.last || '';
+          await syncSheets({ silent: true });
+        } else if ((await pendingSessions()).length) await syncSheets({ silent: true, pull: false });
+      } else await syncSheets({ silent: true });
+    }
+  } catch { /* offline or slow network: try again next round */ }
+  liveTimer = setTimeout(liveTick, live ? LIVE_FAST_MS : LIVE_SLOW_MS);
+}
+
 function closeLessonQR() {
   clearInterval(lessonQrTimer);
   lessonQrTimer = null;
@@ -938,7 +980,7 @@ async function pullCheckins() {
     // Ask again from 2 minutes earlier next time, so nothing written at the same moment is missed.
     await updateLocal('syncLog', (d) => { d.checkinsSince = new Date(new Date(res.serverTime).getTime() - 120000).toISOString(); });
   }
-  if (newOnOpen) toast(`${newOnOpen} student(s) checked in by QR`, 'ok');
+  if (newOnOpen) { toast(`${newOnOpen} student(s) checked in by QR`, 'ok'); renderQrLive(); navigator.vibrate?.(40); }
   return changed;
 }
 
@@ -1103,11 +1145,11 @@ function wire() {
   $('#syncBtn').addEventListener('click', () => syncSheets());
   window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
-  // Automatic sync: every LIVE_POLL_MS while online and the app is open, and whenever it comes back into view.
-  setInterval(() => { if (navigator.onLine && document.visibilityState === 'visible') syncSheets({ silent: true }); }, LIVE_POLL_MS);
+  // Automatic sync: fast during a live lesson, once a minute otherwise, and whenever the app comes back into view.
+  liveTimer = setTimeout(liveTick, 1500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && state.dirty) saveCurrent();
-    if (document.visibilityState === 'visible' && navigator.onLine) syncSheets({ silent: true });
+    if (document.visibilityState === 'visible' && navigator.onLine) liveTick();
   });
   window.addEventListener('pagehide', () => { if (state.dirty) saveCurrent(); });
 
@@ -1136,6 +1178,13 @@ async function init() {
   if (navigator.onLine) setTimeout(() => { syncSheets({ silent: true }); maybeRefreshRoster(); }, 2000);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker not registered', e));
+    // When a new version of the app arrives, switch to it right away (unless something is unsaved or the QR is showing).
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      if (!state.dirty && !$('#lessonQrDialog').open) location.reload();
+      else toast('App updated — it will refresh next time you open it');
+    });
   }
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 }

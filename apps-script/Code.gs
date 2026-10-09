@@ -127,6 +127,8 @@ function hex_(bytes) {
 }
 function hmacHex_(message, secret) { return hex_(Utilities.computeHmacSha256Signature(message, secret)); }
 function classFromSession_(sessionId) { return String(sessionId).split(':')[2] || ''; }
+function lastChange_() { try { return CacheService.getScriptCache().get('LAST_CHECKIN') || ''; } catch (e) { return ''; } }
+function markChanged_() { try { CacheService.getScriptCache().put('LAST_CHECKIN', nowIso_(), 21600); } catch (e) { /* cache is best-effort */ } }
 function nowIso_() { return new Date().toISOString(); }
 
 /* ---------- web app ---------- */
@@ -142,6 +144,8 @@ function doGet(e) {
       return json_({ ok: true, spreadsheet: SpreadsheetApp.getActiveSpreadsheet().getName(), time: nowIso_() });
     }
     if (p.action === 'roster') return json_(readRoster_());
+    // Tiny, fast "anything new?" check used by trainer phones during a live lesson (no Sheet reading).
+    if (p.action === 'pulse') return json_({ ok: true, last: lastChange_() });
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -386,12 +390,17 @@ function verifyCode_(c, dataT) {
   if (!isFinite(w)) return false;
   var intervals = s.qr.intervals || [];
   var inRange = intervals.some(function (iv) { return w >= iv[0] - 1 && w <= iv[1] + 1; });
+  var genuine = hmacHex_(c.sessionId + '|' + w, s.qr.secret).slice(0, CODE_LENGTH) === String(c.token || '').toLowerCase();
   if (!inRange) {
     var lastEnd = intervals.reduce(function (m, iv) { return Math.max(m, iv[1]); }, -Infinity);
-    return w > lastEnd + 1 ? null : false; // later than the newest data we have: wait for the trainer's next sync
+    if (w <= lastEnd + 1) return false;
+    // Shown after the trainer's phone last uploaded. Only that phone can make a genuine code, so a genuine
+    // code for (about) right now is accepted at once; anything else waits for the trainer's next upload.
+    var nowW = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+    if (genuine && Math.abs(w - nowW) <= 3) return true;
+    return null;
   }
-  var expected = hmacHex_(c.sessionId + '|' + w, s.qr.secret).slice(0, CODE_LENGTH);
-  return expected === String(c.token || '').toLowerCase();
+  return genuine;
 }
 
 function loadCtx_() {
@@ -463,6 +472,7 @@ function receiveCheckins_(list) {
       results.push(r);
     });
     saveCtx_(ctx);
+    if (Object.keys(touched).length) markChanged_();
     rebuildSessions_(Object.keys(touched), dataT);
     return { ok: true, results: results };
   } finally {
@@ -472,6 +482,7 @@ function receiveCheckins_(list) {
 
 function reevaluatePending_(ids, ctx, dataT) {
   if (!ids.length) return;
+  var changed = false;
   var want = {}; ids.forEach(function (id) { want[id] = 1; });
   ctx.ciT.rows.forEach(function (r) {
     if (r[CI.STATUS] !== 'pending' || !want[r[CI.SESSION]]) return;
@@ -483,7 +494,9 @@ function reevaluatePending_(ids, ctx, dataT) {
     row[CI.REASON] = v ? '' : 'invalid-code';
     row[CI.UPDATED] = ctx.now;
     upsert_(ctx.ciT, r[CI.ID], row);
+    if (v) changed = true;
   });
+  if (changed) markChanged_();
 }
 
 function acceptedMap_(ids) {

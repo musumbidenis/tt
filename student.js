@@ -202,6 +202,7 @@ async function handleLesson(l) {
     scannedAt: nowISO(), status: 'saved', reason: '',
   };
   await sdb.put(doc);
+  st.retries = 0;
   await mirrorUnsent();
   showResult('ok', 'Attendance recorded', `${doc.unitName} · ${doc.period}${doc.trainer ? ' · ' + doc.trainer : ''}`,
     navigator.onLine ? 'Sending…' : 'Saved safely on this phone — it is sent automatically when you next have internet.');
@@ -246,6 +247,11 @@ async function sync({ manual = false } = {}) {
     await mirrorUnsent();
     render();
   }
+  // While a check-in waits for the trainer's phone, ask again within seconds instead of a minute.
+  const waiting = (await checkins()).some((d) => d.status === 'pending' || d.status === 'saved');
+  clearTimeout(st.retryTimer);
+  if (waiting && navigator.onLine && (st.retries = (st.retries || 0) + 1) <= 20) st.retryTimer = setTimeout(() => sync(), 8000);
+  else if (!waiting) st.retries = 0;
 }
 
 /* ---------- camera ---------- */
@@ -387,7 +393,11 @@ async function init() {
   if (!st.profile && $('#setupCard').hidden) await openSetup();
   await render();
   sync();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !scanning) location.reload(); });
+  }
 }
 
 init().catch((e) => { console.error(e); toast('Start-up error: ' + e.message, 'err'); });
