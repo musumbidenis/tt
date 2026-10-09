@@ -69,21 +69,26 @@ const meter = {};
 function wrapDB(db, t) {
   const note = (m) => { t.queries++; if (m) { t.read += m.rows_read || 0; t.written += m.rows_written || 0; } };
   const wrapStmt = (st) => ({
+    _st: st,
     bind: (...a) => wrapStmt(st.bind(...a)),
-    all: async () => { const r = await st.all(); note(r.meta); return r; },
-    run: async () => { const r = await st.run(); note(r.meta); return r; },
-    first: async () => { const r = await st.all(); note(r.meta); return (r.results || [])[0] ?? null; },
+    all: async () => { t.trips++; const r = await st.all(); note(r.meta); return r; },
+    run: async () => { t.trips++; const r = await st.run(); note(r.meta); return r; },
+    first: async () => { t.trips++; const r = await st.all(); note(r.meta); return (r.results || [])[0] ?? null; },
   });
-  return { prepare: (sql) => wrapStmt(db.prepare(sql)), exec: async (sql) => { const r = await db.exec(sql); t.queries += r.count || 1; return r; }, batch: (l) => db.batch(l) };
+  return {
+    prepare: (sql) => wrapStmt(db.prepare(sql)),
+    exec: async (sql) => { t.trips++; const r = await db.exec(sql); t.queries += r.count || 1; return r; },
+    batch: async (list) => { t.trips++; const res = await db.batch(list.map((x) => x._st || x)); res.forEach((r) => note(r.meta)); return res; },
+  };
 }
 async function metered(request, env, ctx) {
   const url = new URL(request.url);
   let action = url.searchParams.get('action') || '';
   if (request.method === 'POST') { try { action = JSON.parse(await request.clone().text()).action || '?'; } catch { action = '?'; } }
-  const t = { queries: 0, read: 0, written: 0 };
+  const t = { queries: 0, read: 0, written: 0, trips: 0 };
   const res = await worker.fetch(request, { ...env, DB: wrapDB(env.DB, t) }, ctx);
-  const m = meter[action] = meter[action] || { n: 0, queries: 0, read: 0, written: 0, maxQueries: 0, maxRead: 0, maxWritten: 0 };
-  m.n++; m.queries += t.queries; m.read += t.read; m.written += t.written;
+  const m = meter[action] = meter[action] || { n: 0, queries: 0, read: 0, written: 0, trips: 0, maxQueries: 0, maxRead: 0, maxWritten: 0, maxTrips: 0 };
+  m.n++; m.queries += t.queries; m.read += t.read; m.written += t.written; m.trips += t.trips; m.maxTrips = Math.max(m.maxTrips, t.trips);
   m.maxQueries = Math.max(m.maxQueries, t.queries); m.maxRead = Math.max(m.maxRead, t.read); m.maxWritten = Math.max(m.maxWritten, t.written);
   return res;
 }
@@ -102,10 +107,12 @@ export default {
     }
     if (url.pathname === '/__seedClass') {
       for (const [i, nm] of SEED.entries()) await I.run(env, "INSERT OR IGNORE INTO trainees (adm_no,name,class_code,status) VALUES (?,?,'ICT6A','active')", 'RVNP/ICT/01' + (10 + i), nm);
+      await I.setMeta(env, 'roster_v', 'seed-' + Date.now());
       return ok();
     }
     if (url.pathname === '/__addTrainee') {
       await I.run(env, "INSERT OR IGNORE INTO trainees (adm_no,name,class_code,status) VALUES ('RVNP/ICT/0203','Kevin Mwangi Githinji','ICT5B','active')");
+      await I.setMeta(env, 'roster_v', 'seed-' + Date.now());
       return ok();
     }
     if (url.pathname === '/__sql') { // run SQL directly (tests only)

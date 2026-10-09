@@ -1,9 +1,10 @@
 """Load test for the RVNP attendance server (Cloudflare Worker + D1).
 
 Models what the phones really send (see app.js / student.js):
-  LiveTrainer   a trainer showing the lesson QR: "anything new?" pulse every 4 s, register upload
-                about every 20 s (each new QR window), check-in download when the pulse changes,
-                class-list check every 10 min, a new lesson every LESSON_MIN minutes.
+  LiveTrainer   a trainer in a QR lesson. For the first QR_MIN minutes the QR is on screen: "anything new?"
+                every 4 s and a register upload every 2 min; then the QR is closed (one upload) and the
+                register stays open: a check every 16 s. Check-ins are downloaded when the check says
+                something changed. Class-list check every 10 min; a new lesson every LESSON_MIN minutes.
   IdleTrainer   app open but no live lesson: pulse every 60 s, class-list check every 10 min.
   Student       registers the phone once, then scans the lesson QR of their class (valid codes).
   Office        HOD / MIS: overview, requests, a term register now and then.
@@ -19,6 +20,7 @@ SEED = json.load(open(os.environ.get('SEED', os.path.join(os.path.dirname(__file
 SCALE = float(os.environ.get('LOAD_SCALE', '1'))
 PIN = os.environ.get('TRAINER_PIN', '4826')
 LESSON_MIN = float(os.environ.get('LESSON_MIN', '10'))
+QR_MIN = float(os.environ.get('QR_MIN', '5'))
 TODAY = datetime.date.today().isoformat()
 HDR = {'Content-Type': 'text/plain;charset=utf-8'}
 
@@ -67,7 +69,7 @@ class LiveTrainer(Api):
         period = random.choice(['L1', 'L2', 'L3', 'L4', 'L5', 'L6'])
         self.sid = f'session:{TODAY}:{self.stream}:{self.unit}:{period}:{random.randint(0, 1 << 30)}'
         self.secret = hashlib.sha256(os.urandom(16)).hexdigest()[:32]
-        self.w0 = window(); self.started = time.time()
+        self.w0 = window(); self.started = time.time(); self.closed = False
         self.marks = [{'admNo': a, 'name': a, 'status': 'Absent', 'explicit': False} for a in SEED['students'].get(self.stream, [])]
         self.push()
         with lock: live[self.stream] = {'sid': self.sid, 'secret': self.secret}
@@ -79,12 +81,16 @@ class LiveTrainer(Api):
     @task
     def tick(self):
         self.ticks += 1
-        p = self.post({'action': 'pulse', 'auth': self.tok})
-        if p.get('last') != self.last:
-            self.last = p.get('last')
-            out = self.post({'action': 'checkins', 'auth': self.tok, 'sessionIds': [self.sid], 'since': self.since})
-            if out.get('serverTime'): self.since = out['serverTime']
-        if self.ticks % 5 == 0: self.push()                 # a new QR window was shown: upload the register
+        qr_on = time.time() - self.started < QR_MIN * 60
+        if not qr_on and not self.closed:
+            self.closed = True; self.push()                  # QR closed: upload the full register
+        if qr_on or self.ticks % 4 == 0:                     # every 4 s with the QR on screen, else every 16 s
+            p = self.post({'action': 'pulse', 'auth': self.tok})
+            if p.get('last') != self.last:
+                self.last = p.get('last')
+                out = self.post({'action': 'checkins', 'auth': self.tok, 'sessionIds': [self.sid], 'since': self.since})
+                if out.get('serverTime'): self.since = out['serverTime']
+        if qr_on and self.ticks % 30 == 0: self.push()       # every 2 minutes while the QR is shown
         if self.ticks % 150 == 0: self.roster_check()        # every 10 minutes
         if time.time() - self.started > LESSON_MIN * 60: self.new_lesson()
 

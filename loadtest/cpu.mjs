@@ -28,6 +28,7 @@ const D1 = {
     return make([]);
   },
   exec: async (q) => { timed(() => sql.exec(q)); return { count: 1 }; },
+  batch: async (list) => { const out = []; for (const st of list) out.push(await st.all()); return out; },
 };
 const env = { DB: D1, ADMIN_PIN: '' };
 const call = async (body, get) => {

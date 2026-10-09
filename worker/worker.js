@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.0.0';
-const SCHEMA_VERSION = '1';
+export const VERSION = '5.1.0';
+const SCHEMA_VERSION = '2';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 10;       // every term has 10 teaching weeks (the register template has 10 week blocks)
@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS units (class_code TEXT, code TEXT, name TEXT, PRIMARY
 CREATE TABLE IF NOT EXISTS loading (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT COLLATE NOCASE, trainer_name TEXT, lessons_per_week REAL, hours_per_week REAL, population INTEGER, updated_at TEXT, PRIMARY KEY (term_id, class_code, unit_code));
 CREATE TABLE IF NOT EXISTS trainees (adm_no TEXT PRIMARY KEY COLLATE NOCASE, name TEXT, class_code TEXT, status TEXT DEFAULT 'active', mis_class TEXT, added_by TEXT, added_at TEXT, updated_by TEXT, updated_at TEXT, note TEXT);
 CREATE INDEX IF NOT EXISTS trainees_class ON trainees (class_code);
+CREATE INDEX IF NOT EXISTS trainees_mis ON trainees (mis_class);
+CREATE INDEX IF NOT EXISTS classes_mis ON classes (mis_class);
 CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, adm_no TEXT, name TEXT, class_code TEXT, reason TEXT, requested_by TEXT, requested_name TEXT, requested_at TEXT, status TEXT, decided_by TEXT, decided_at TEXT, merged_into TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, date TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, period TEXT, trainer_id TEXT, trainer_name TEXT, present INTEGER, absent INTEGER, late INTEGER, excused INTEGER, total INTEGER, pct REAL, updated_at TEXT, synced_at TEXT, term_id TEXT, week INTEGER, data TEXT);
 CREATE INDEX IF NOT EXISTS sessions_cu ON sessions (class_code, unit_code, date);
@@ -73,20 +75,31 @@ const all = async (env, sql, ...p) => (await q(env, sql, ...p).all()).results ||
 const one = (env, sql, ...p) => q(env, sql, ...p).first();
 const run = (env, sql, ...p) => q(env, sql, ...p).run();
 const IN = '(SELECT value FROM json_each(?))';
+/** Several statements in ONE trip to the database (each item: [sql, ...params]); returns each one's rows. */
+async function many(env, ...items) {
+  items = items.filter(Boolean);
+  if (!items.length) return [];
+  const res = await env.DB.batch(items.map(([sql, ...p]) => env.DB.prepare(sql).bind(...p)));
+  return res.map((r) => r.results || []);
+}
+const ACTIVE_TERM = "(SELECT id FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1)";
 
-/** Inserts or updates many rows with one statement per batch (batches stay well under D1's 2 MB value limit). */
-async function upsertMany(env, table, cols, rows, key, update = cols.filter((c) => !(key || []).includes(c))) {
+/** Statements that insert or update many rows, one per ~900 KB (well under D1's 2 MB value limit). */
+function upsertStmts(table, cols, rows, key, update = cols.filter((c) => !(key || []).includes(c))) {
   const conflict = key ? ` ON CONFLICT(${key.join(',')}) DO ${update.length ? 'UPDATE SET ' + update.map((c) => `${c}=excluded.${c}`).join(',') : 'NOTHING'}` : '';
   const sql = `INSERT INTO ${table} (${cols.join(',')}) SELECT ${cols.map((_, j) => `json_extract(value,'$[${j}]')`).join(',')} FROM json_each(?) WHERE true${conflict}`;
+  const out = [];
   let part = [], size = 2;
-  const flush = async () => { if (part.length) await run(env, sql, '[' + part.join(',') + ']'); part = []; size = 2; };
+  const flush = () => { if (part.length) out.push([sql, '[' + part.join(',') + ']']); part = []; size = 2; };
   for (const r of rows) {
     const item = JSON.stringify(cols.map((c) => (r[c] === undefined ? null : r[c])));
-    if (size + item.length > 900000) await flush();
+    if (size + item.length > 900000) flush();
     part.push(item); size += item.length + 1;
   }
-  await flush();
+  flush();
+  return out;
 }
+const upsertMany = (env, ...a) => many(env, ...upsertStmts(...a));
 
 let schemaReady = false;
 async function ready(env) {
@@ -100,9 +113,12 @@ async function ready(env) {
   schemaReady = true;
 }
 const getMeta = async (env, key) => (await one(env, 'SELECT value FROM meta WHERE key=?', key))?.value ?? null;
-const setMeta = (env, key, value) => run(env, 'INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, String(value));
-const markChanged = (env) => setMeta(env, 'last_change', nowIso());
+const metaStmt = (key, value) => ['INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, String(value)];
+const setMeta = (env, key, value) => many(env, metaStmt(key, value));
+const changedStmt = () => metaStmt('last_change', nowIso());
+const markChanged = (env) => many(env, changedStmt());
 const bumpRoster = (env) => setMeta(env, 'roster_v', nowIso() + '#' + Math.random().toString(36).slice(2, 6));
+const termOut = (r) => (r ? { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean) } : null);
 async function audit(env, me, action, details) {
   await run(env, 'INSERT INTO audit (at,staff_code,name,action,details) VALUES (?,?,?,?,?)', nowIso(), me.code, me.name, action, String(details || '').slice(0, 2000));
 }
@@ -144,12 +160,13 @@ export default {
       if (b.action === 'checkin') return reply(await receiveCheckins(env, b.checkins || []));
       if (b.action === 'register') return reply(await registerDevice(env, b));
       if (b.action === 'login') return reply(await login(env, b));
-      const me = await auth(env, b.auth);
       const h = ACTIONS[b.action];
+      // The sign-in check and the action's first reads go to the database together, in one trip.
+      const [me, pre] = await auth(env, b.auth, h && h.pre ? h.pre(b) : []);
       if (!h) return reply({ ok: false, error: 'Unknown action' });
       if (h.role && !me.roles.some((r) => h.role.includes(r))) fail(`This needs the ${h.role.join(' or ')} role. Ask the MIS Officer.`);
       if (me.mustChange && b.action !== 'setPin') fail('Choose a new PIN first', { mustChange: true });
-      const out = await h.fn(env, b, me);
+      const out = await h.fn(env, b, me, pre);
       if (b.action === 'roster' && ctx?.waitUntil) ctx.waitUntil(foldOldCheckins(env).catch((e) => console.error('fold', e)));
       return reply(out);
     } catch (err) {
@@ -165,17 +182,17 @@ export default {
 const ACTIONS = {
   setPin: { fn: (env, b, me) => setPin(env, b, me) },
   me: { fn: async (env, b, me) => ({ ok: true, staff: me }) },
-  roster: { fn: (env, b, me) => readRoster(env, b, me) },
-  pulse: { fn: async (env) => ({ ok: true, last: (await getMeta(env, 'last_change')) || '' }) },
-  push: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => pushSessions(env, b.sessions || [], me) },
-  checkins: { role: ['TRAINER', 'HOD'], fn: (env, b) => acceptedCheckins(env, b.sessionIds || [], b.since || '') },
+  roster: { fn: (env, b, me, pre) => readRoster(env, b, me, pre) },
+  pulse: { fn: async (env, b, me, pre) => ({ ok: true, last: pre.meta.last_change || '' }) },
+  push: { role: ['TRAINER', 'HOD'], pre: (b) => pushPre(b.sessions || []), fn: (env, b, me, pre) => pushSessions(env, b.sessions || [], me, pre) },
+  checkins: { role: ['TRAINER', 'HOD'], pre: (b) => [checkinsQuery(b.sessionIds || [], b.since || '')], fn: (env, b, me, pre) => acceptedCheckins(b.sessionIds || [], pre.rows[0]) },
   addStudents: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => addStudents(env, b.students || [], me) },
   mySettings: { fn: (env, b, me) => saveMySettings(env, b, me) },
-  report: { fn: (env, b, me) => reportData(env, b, me) },
+  report: { pre: (b) => reportPre(b), fn: (env, b, me, pre) => reportData(env, b, me, pre) },
   submitSignoff: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => submitSignoff(env, b, me) },
   signoffs: { fn: (env, b, me) => listSignoffs(env, me) },
   decideSignoff: { role: ['HOD'], fn: (env, b, me) => decideSignoff(env, b, me) },
-  overview: { role: ['HOD', 'MIS'], fn: (env) => overview(env) },
+  overview: { role: ['HOD', 'MIS'], pre: () => overviewPre(), fn: (env, b, me, pre) => overview(pre) },
   saveTerm: { role: ['MIS'], fn: (env, b, me) => saveTerm(env, b, me) },
   uploadLoading: { role: ['MIS'], fn: (env, b, me) => uploadLoading(env, b, me) },
   importClassList: { role: ['MIS'], fn: (env, b, me) => importClassList(env, b, me) },
@@ -220,11 +237,14 @@ async function makeToken(env, row) {
 async function login(env, b) {
   const code = String(b.staff || '').trim(), pin = String(b.pin || '').trim();
   if (!code || !pin) fail('Enter your staff code and PIN');
-  const lf = await one(env, 'SELECT * FROM login_fails WHERE code=?', code);
+  const [lfRows, staffRows, misRows, secretRows] = await many(env, ['SELECT * FROM login_fails WHERE code=?', code], ['SELECT * FROM staff WHERE code=?', code],
+    ["SELECT 1 AS x FROM staff WHERE active=1 AND upper(roles) LIKE '%MIS%' LIMIT 1"], ["SELECT value FROM meta WHERE key='auth_secret'"]);
+  if (!secretCache && secretRows[0]) secretCache = secretRows[0].value;
+  const lf = lfRows[0];
   if (lf && lf.fails >= 5 && lf.until > nowIso()) fail('Too many wrong PINs. Try again in 15 minutes.');
-  let row = await getStaff(env, code);
+  let row = staffRows[0];
   // First sign-in on a new database: staff code MIS with the ADMIN_PIN secret set on the Worker.
-  if (!row && lower(code) === 'mis' && env.ADMIN_PIN && !(await one(env, "SELECT 1 FROM staff WHERE active=1 AND upper(roles) LIKE '%MIS%'"))) {
+  if (!row && lower(code) === 'mis' && env.ADMIN_PIN && !misRows.length) {
     row = await setStaffPin(env, 'MIS', String(env.ADMIN_PIN), true, { name: 'MIS Officer', roles: 'MIS' });
   }
   if (!row && lower(code) === 'mis' && !env.ADMIN_PIN) fail('First sign-in: add the ADMIN_PIN secret to the Worker (Settings → Variables and Secrets), then try again.');
@@ -238,18 +258,24 @@ async function login(env, b) {
   return { ok: true, token: await makeToken(env, row), staff: staffPublic(row), mustChange: !!row.must_change };
 }
 
-/** Checks a sign-in token: genuine, staff still active, PIN not changed or reset since. */
-async function auth(env, token) {
+/** Checks a sign-in token: genuine, staff still active, PIN not changed or reset since.
+ * Reads the staff row, the change markers and any `extra` statements in one database trip;
+ * returns [me, { meta, rows }] where rows are the results of `extra`. */
+async function auth(env, token, extra = []) {
   const parts = String(token || '').split('|');
   if (parts.length !== 4) fail('Sign in to continue', { authError: true });
+  const wanted = secretCache ? ['last_change', 'roster_v'] : ['last_change', 'roster_v', 'auth_secret'];
+  const [staffRows, metaRows, ...rows] = await many(env, ['SELECT * FROM staff WHERE code=?', parts[0]], [`SELECT key, value FROM meta WHERE key IN (${wanted.map(() => '?').join(',')})`, ...wanted], ...extra);
+  const meta = Object.fromEntries(metaRows.map((r) => [r.key, r.value]));
+  if (!secretCache && meta.auth_secret) secretCache = meta.auth_secret;
   const payload = parts.slice(0, 3).join('|');
   if ((await hmacHex(payload, await authSecret(env))).slice(0, 32) !== parts[3]) fail('Sign in again', { authError: true });
-  const row = await getStaff(env, parts[0]);
+  const row = staffRows[0];
   if (!row || !row.active || String(row.pin_version) !== String(Number(parts[1]))) {
     fail('Your sign-in has ended (PIN changed or account switched off). Sign in again.', { authError: true });
   }
   const p = staffPublic(row);
-  return { code: p.code, name: p.name, roles: p.roles, mustChange: p.mustChange, latePct: p.latePct, excusedPct: p.excusedPct };
+  return [{ code: p.code, name: p.name, roles: p.roles, mustChange: p.mustChange, latePct: p.latePct, excusedPct: p.excusedPct }, { meta, rows }];
 }
 
 async function setPin(env, b, me) {
@@ -268,11 +294,8 @@ async function saveMySettings(env, b, me) {
 }
 
 /* ---------- terms ---------- */
-async function activeTerm(env) {
-  const r = await one(env, "SELECT * FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1");
-  if (!r) return null;
-  return { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean) };
-}
+const TERM_SQL = "SELECT * FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1";
+const activeTerm = async (env) => termOut(await one(env, TERM_SQL));
 function mondayOf(iso) {
   const d = new Date(iso + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
@@ -351,33 +374,31 @@ async function uploadLoading(env, b, me) {
   return { ok: true, term: term.id, rows: rows.length, trainers: info.size, newStaff: added, classes: classes.size };
 }
 
-const loadingFor = (env, termId) => all(env, 'SELECT * FROM loading WHERE term_id=?', termId);
 
 /* ---------- roster for staff phones ---------- */
-async function readRoster(env, b, me) {
-  const version = (await getMeta(env, 'roster_v')) || 'none';
+async function readRoster(env, b, me, pre) {
+  const version = pre.meta.roster_v || 'none';
   if (b.version && b.version === version) return { ok: true, unchanged: true, version, me };
-  const term = await activeTerm(env);
-  const loading = term ? await loadingFor(env, term.id) : [];
+  const [termRows, loading, unitRows, classRows, reqs, staffRows] = await many(env, [TERM_SQL], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`], ['SELECT * FROM units'],
+    ['SELECT * FROM classes'], ["SELECT adm_no, name, class_code, requested_name, reason, status, merged_into FROM requests WHERE status IN ('pending','rejected','merged')"],
+    ['SELECT code, name, late_pct, excused_pct FROM staff']);
+  const term = termOut(termRows[0]);
   const units = loading.length
     ? loading.map((r) => ({ classCode: r.class_code, code: r.unit_code, name: r.unit_name || r.unit_code, trainerCode: r.trainer_code, trainerName: r.trainer_name,
       lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3 }))
-    : (await all(env, 'SELECT * FROM units')).map((r) => ({ classCode: r.class_code, code: r.code, name: r.name || r.code, lessonsPerWeek: 2, hoursPerWeek: 3 }));
+    : unitRows.map((r) => ({ classCode: r.class_code, code: r.code, name: r.name || r.code, lessonsPerWeek: 2, hoursPerWeek: 3 }));
   // Trainers get only the class lists of the classes they teach; the HOD and MIS Officer get all.
-  const everyone = me.roles.includes('HOD') || me.roles.includes('MIS') || !loading.length;
-  let trainees;
-  if (everyone) trainees = await all(env, 'SELECT adm_no, name, class_code, status FROM trainees');
-  else {
-    const mine = new Set();
+  const mine = new Set();
+  if (!(me.roles.includes('HOD') || me.roles.includes('MIS'))) {
     for (const u of loading) if (lower(u.trainer_code) === lower(me.code)) classParts(u.class_code).forEach((c) => mine.add(c));
-    trainees = !mine.size ? await all(env, 'SELECT adm_no, name, class_code, status FROM trainees') : await all(env, `SELECT adm_no, name, class_code, status FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]));
   }
-  const reqs = await all(env, "SELECT adm_no, name, class_code, requested_name, reason, status, merged_into FROM requests WHERE status IN ('pending','rejected','merged')");
+  const trainees = mine.size ? await all(env, `SELECT adm_no, name, class_code, status FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]))
+    : await all(env, 'SELECT adm_no, name, class_code, status FROM trainees');
   const staff = {};
-  for (const r of await all(env, 'SELECT code, name, late_pct, excused_pct FROM staff')) staff[r.code] = { name: r.name, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
+  for (const r of staffRows) staff[r.code] = { name: r.name, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
   return {
     ok: true, version, me, term, weeks: teachingWeeks(term),
-    classes: (await all(env, 'SELECT * FROM classes')).map((r) => ({ code: r.code, name: r.name || r.code, level: r.level || levelOf(r.code), misClass: r.mis_class || '' })),
+    classes: classRows.map((r) => ({ code: r.code, name: r.name || r.code, level: r.level || levelOf(r.code), misClass: r.mis_class || '' })),
     units,
     trainees: trainees.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code, active: active(r) })),
     pending: reqs.filter((r) => r.status === 'pending').map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, requestedBy: r.requested_name, reason: r.reason })),
@@ -389,33 +410,40 @@ async function readRoster(env, b, me) {
 
 /* ---------- student app: setup lists and phone registration ---------- */
 const GROUP = "COALESCE(NULLIF(t.mis_class,''), NULLIF(c.mis_class,''), t.class_code)";
+/** The class dropdown: worked out once and kept until the class lists change (1–2 rows read per phone). */
 async function publicClasses(env) {
+  const [cache, ver] = await many(env, ["SELECT value FROM meta WHERE key='pub_classes'"], ["SELECT value FROM meta WHERE key='roster_v'"]);
+  const v = ver[0]?.value || 'none';
+  if (cache[0]) { const c = JSON.parse(cache[0].value); if (c.v === v) return { ok: true, classes: c.classes }; }
   const rows = await all(env, `SELECT DISTINCT ${GROUP} AS g FROM trainees t LEFT JOIN classes c ON c.code=t.class_code WHERE t.status NOT IN ${GONE} ORDER BY g`);
-  return { ok: true, classes: rows.map((r) => ({ code: r.g, name: r.g })) };
+  const classes = rows.map((r) => ({ code: r.g, name: r.g }));
+  await setMeta(env, 'pub_classes', JSON.stringify({ v, classes }));
+  return { ok: true, classes };
 }
+/** The name dropdown for one class: found through indexes, so only that class's students are read. */
 async function classList(env, group) {
   if (!group) fail('Choose a class');
-  const rows = await all(env, `SELECT t.adm_no, t.name, t.class_code FROM trainees t LEFT JOIN classes c ON c.code=t.class_code WHERE t.status NOT IN ${GONE} AND ${GROUP}=? ORDER BY t.name`, group);
-  return { ok: true, classCode: group, trainees: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code })) };
+  const rows = await all(env, `SELECT t.adm_no, t.name, t.class_code, t.status, t.mis_class, c.mis_class AS cm FROM trainees t LEFT JOIN classes c ON c.code=t.class_code
+    WHERE t.mis_class=?1 OR t.class_code=?1 OR t.class_code IN (SELECT code FROM classes WHERE mis_class=?1)`, group);
+  const list = rows.filter((r) => active(r) && (r.mis_class || r.cm || r.class_code) === group).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { ok: true, classCode: group, trainees: list.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code })) };
 }
 
 /** First login on a student phone: ties the phone to the chosen student, once. */
 async function registerDevice(env, b) {
-  const t = await one(env, 'SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim());
+  const adm = String(b.admNo || '').trim();
+  const [tRows, devRows, admRows] = await many(env, ['SELECT t.*, c.name AS class_name FROM trainees t LEFT JOIN classes c ON c.code=t.class_code WHERE t.adm_no=?', adm],
+    ['SELECT d.*, t.name AS tname FROM devices d LEFT JOIN trainees t ON t.adm_no=d.adm_no WHERE d.device_id=?', String(b.deviceId || '')],
+    ['SELECT * FROM devices WHERE adm_no=?', adm]);
+  const t = tRows[0], dev = devRows[0], byAdm = admRows[0];
   if (!t || !active(t)) return { ok: false, error: 'That student is not on the class list' };
   if (!b.deviceId) return { ok: false, error: 'Missing phone ID' };
-  const dev = await one(env, 'SELECT * FROM devices WHERE device_id=?', b.deviceId);
-  if (dev && lower(dev.adm_no) !== lower(t.adm_no)) {
-    const other = await one(env, 'SELECT name FROM trainees WHERE adm_no=?', dev.adm_no);
-    return { ok: false, error: `This phone is already registered to ${other ? other.name : dev.adm_no}. Ask your trainer to reset it.` };
-  }
-  const byAdm = await one(env, 'SELECT * FROM devices WHERE adm_no=?', t.adm_no);
+  if (dev && lower(dev.adm_no) !== lower(t.adm_no)) return { ok: false, error: `This phone is already registered to ${dev.tname || dev.adm_no}. Ask your trainer to reset it.` };
   if (byAdm && byAdm.device_id !== b.deviceId) return { ok: false, error: `${t.name} is already registered on another phone. Ask your trainer to reset it.` };
   const now = nowIso();
   await run(env, 'INSERT INTO devices (device_id,adm_no,name,class_code,registered_at,last_seen) VALUES (?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET last_seen=excluded.last_seen',
     b.deviceId, t.adm_no, t.name, t.class_code, now, now);
-  const cls = await one(env, 'SELECT name FROM classes WHERE code=?', t.class_code);
-  return { ok: true, admNo: t.adm_no, name: t.name, classCode: t.class_code, className: cls?.name || t.class_code };
+  return { ok: true, admNo: t.adm_no, name: t.name, classCode: t.class_code, className: t.class_name || t.class_code };
 }
 
 /* ---------- class lists (MIS Officer) ---------- */
@@ -623,6 +651,12 @@ function finalMarks(s, accepted) {
   }
   return Object.values(out);
 }
+/** {sessionId: {admNo: {name, scannedAt}}} from check-in rows (only accepted ones count). */
+function acceptedOf(rows) {
+  const map = {};
+  for (const r of rows) if (r.status === undefined || r.status === 'accepted') (map[r.session_id] = map[r.session_id] || {})[r.adm_no] = { name: r.name, scannedAt: r.scanned_at };
+  return map;
+}
 async function acceptedMap(env, ids) {
   const map = {};
   if (!ids.length) return map;
@@ -644,10 +678,16 @@ function sessionRow(s, accepted, term, now) {
 }
 const SCOLS = ['id', 'date', 'class_code', 'unit_code', 'unit_name', 'period', 'trainer_id', 'trainer_name', 'present', 'absent', 'late', 'excused', 'total', 'pct', 'updated_at', 'synced_at', 'term_id', 'week', 'data'];
 
-async function pushSessions(env, sessions, me) {
-  sessions = sessions.filter((s) => s && s.sessionId).slice(0, 50);
-  const ids = sessions.map((s) => s.sessionId);
-  const old = await all(env, `SELECT id, updated_at, json_extract(data, '$.qrFolded') AS folded FROM sessions WHERE id IN ${IN}`, JSON.stringify(ids));
+const pushList = (sessions) => sessions.filter((s) => s && s.sessionId).slice(0, 50);
+/** Read together with the sign-in check: the stored copies, the term, and check-ins for these lessons. */
+function pushPre(sessions) {
+  const J = JSON.stringify(pushList(sessions).map((s) => s.sessionId));
+  return [[`SELECT id, updated_at, json_extract(data, '$.qrFolded') AS folded FROM sessions WHERE id IN ${IN}`, J], [TERM_SQL],
+    [`SELECT * FROM checkins WHERE session_id IN ${IN} AND status IN ('accepted','pending')`, J]];
+}
+async function pushSessions(env, sessions, me, pre) {
+  sessions = pushList(sessions);
+  const [old, termRows, cis] = pre.rows;
   const have = new Map(old.map((r) => [r.id, r.updated_at]));
   const folded = new Map(old.filter((r) => r.folded).map((r) => [r.id, JSON.parse(r.folded)]));
   const results = [], fresh = [];
@@ -659,13 +699,21 @@ async function pushSessions(env, sessions, me) {
     fresh.push(s);
     results.push({ sessionId: s.sessionId, status: have.has(s.sessionId) ? 'updated' : 'added' });
   }
-  if (fresh.length) {
-    const term = await activeTerm(env);
-    const accepted = await acceptedMap(env, fresh.map((s) => s.sessionId));
-    const now = nowIso();
-    await upsertMany(env, 'sessions', SCOLS, fresh.map((s) => sessionRow(s, accepted[s.sessionId], term, now)), ['id']);
-    await reevaluatePending(env, fresh); // student check-ins that arrived before this register
+  if (!fresh.length) return { ok: true, results };
+  // Student check-ins that arrived before this register can be verified now.
+  const byId = new Map(fresh.map((s) => [s.sessionId, s]));
+  const now = nowIso(), ciWrites = [];
+  for (const r of cis) {
+    if (r.status !== 'pending' || !byId.has(r.session_id)) continue;
+    const v = await verifyCode({ sessionId: r.session_id, w: r.w, token: r.code }, byId.get(r.session_id));
+    if (v === null) continue;
+    Object.assign(r, { status: v ? 'accepted' : 'rejected', reason: v ? '' : 'invalid-code', updated_at: now });
+    ciWrites.push(r);
   }
+  const accepted = acceptedOf(cis.filter((r) => r.status === 'accepted'));
+  const term = termOut(termRows[0]);
+  await many(env, ...upsertStmts('sessions', SCOLS, fresh.map((s) => sessionRow(s, accepted[s.sessionId], term, now)), ['id']),
+    ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY), ciWrites.some((r) => r.status === 'accepted') && changedStmt());
   return { ok: true, results };
 }
 
@@ -678,24 +726,32 @@ async function teachesUnit(env, me, classCode, unitCode, term) {
   return !!(await one(env, 'SELECT 1 FROM loading WHERE term_id=? AND class_code=? AND unit_code=? AND trainer_code=?', term.id, classCode, unitCode, me.code));
 }
 
+/** Read together with the sign-in check: everything one term register needs. */
+function reportPre(b) {
+  const c = String(b.classCode || ''), u = String(b.unitCode || '');
+  return [[TERM_SQL], [`SELECT 1 AS x FROM loading WHERE term_id=${ACTIVE_TERM} LIMIT 1`], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM} AND class_code=? AND unit_code=?`, c, u],
+    ['SELECT id, date, data FROM sessions WHERE class_code=? AND unit_code=?', c, u],
+    ["SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN (SELECT id FROM sessions WHERE class_code=? AND unit_code=?)", c, u],
+    ['SELECT * FROM signoffs WHERE class_code=? AND unit_code=?', c, u]];
+}
 /** Every lesson of one class and unit this term, with final marks, for the term register. */
-async function reportData(env, b, me) {
-  const term = await activeTerm(env);
+async function reportData(env, b, me, pre) {
   if (!b.classCode || !b.unitCode) fail('Choose a class and a unit');
-  if (!(await teachesUnit(env, me, b.classCode, b.unitCode, term))) fail('You can only see reports for the units in your loading');
+  const [termRows, anyLoading, loadRows, sessRows, acc, soRows] = pre.rows;
+  const term = termOut(termRows[0]), load = loadRows[0] || null;
+  const staffOnly = !(me.roles.includes('HOD') || me.roles.includes('MIS'));
+  if (staffOnly && term && anyLoading.length && !(load && lower(load.trainer_code) === lower(me.code))) fail('You can only see reports for the units in your loading');
   const weeks = teachingWeeks(term);
   let from = '0000-00-00', to = '9999-12-31';
   if (weeks.length) { from = weeks[0]; const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); to = e.toISOString().slice(0, 10); }
-  const rows = await all(env, 'SELECT id, data FROM sessions WHERE class_code=? AND unit_code=? AND date BETWEEN ? AND ?', b.classCode, b.unitCode, from, to);
-  const accepted = await acceptedMap(env, rows.map((r) => r.id));
-  const lessons = rows.map((r) => {
+  const accepted = acceptedOf(acc);
+  const lessons = sessRows.filter((r) => r.date >= from && r.date <= to).map((r) => {
     const s = JSON.parse(r.data);
     const marks = {}, names = {};
     for (const m of finalMarks(s, accepted[r.id])) { const k = STATUS_CODE[m.status]; if (k) { marks[m.admNo] = k; names[m.admNo] = m.name; } }
     return { id: r.id, date: s.date, period: s.period, trainerId: s.trainerId, trainerName: s.trainerName, updatedAt: s.updatedAt, marks, names };
   });
-  const load = term ? await one(env, 'SELECT * FROM loading WHERE term_id=? AND class_code=? AND unit_code=?', term.id, b.classCode, b.unitCode) : null;
-  const so = await one(env, 'SELECT * FROM signoffs WHERE id=?', signoffId(term, b.classCode, b.unitCode));
+  const so = soRows.find((r) => r.id === signoffId(term, b.classCode, b.unitCode));
   return { ok: true, term, weeks, lessons, serverTime: nowIso(), signoff: so ? signoffOut(so) : null,
     loading: load ? { trainerCode: load.trainer_code, trainerName: load.trainer_name, unitName: load.unit_name, lessonsPerWeek: Number(load.lessons_per_week) || 2, hoursPerWeek: Number(load.hours_per_week) || 3 } : null };
 }
@@ -736,15 +792,20 @@ async function listSignoffs(env, me) {
 }
 
 /** HOD view: for each class and unit in the loading, how many lessons are marked against how many were due. */
-async function overview(env) {
-  const term = await activeTerm(env);
+const overviewPre = () => [[TERM_SQL],
+  [`SELECT class_code, unit_code, COUNT(*) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted FROM sessions
+    WHERE term_id=${ACTIVE_TERM} OR ((term_id IS NULL OR term_id='') AND date >= date((SELECT start_date FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1), '-6 days'))
+    GROUP BY class_code, unit_code`],
+  [`SELECT class_code, unit_code, status FROM signoffs WHERE term_id=${ACTIVE_TERM}`], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`]];
+function overview(pre) {
+  const [termRows, statRows, soRows, loading] = pre.rows;
+  const term = termOut(termRows[0]);
   if (!term) return { ok: true, term: null, rows: [] };
   const weeks = teachingWeeks(term), today = todayIso();
   const elapsed = weeks.filter((w) => w <= today).length;
-  const stats = new Map((await all(env, `SELECT class_code, unit_code, COUNT(*) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted
-    FROM sessions WHERE term_id=? OR ((term_id IS NULL OR term_id='') AND date>=?) GROUP BY class_code, unit_code`, term.id, weeks[0] || '0000')).map((r) => [r.class_code + '|' + r.unit_code, r]));
-  const so = new Map((await all(env, 'SELECT class_code, unit_code, status FROM signoffs WHERE term_id=?', term.id)).map((r) => [r.class_code + '|' + r.unit_code, r.status]));
-  const rows = (await loadingFor(env, term.id)).map((r) => {
+  const stats = new Map(statRows.map((r) => [r.class_code + '|' + r.unit_code, r]));
+  const so = new Map(soRows.map((r) => [r.class_code + '|' + r.unit_code, r.status]));
+  const rows = loading.map((r) => {
     const k = r.class_code + '|' + r.unit_code, s = stats.get(k) || { lessons: 0, last: '', att: 0, counted: 0 };
     return { classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, trainerCode: r.trainer_code, trainerName: r.trainer_name,
       lessons: s.lessons, due: elapsed * (Number(r.lessons_per_week) || 2), last: s.last || '', pct: s.counted ? Math.round((s.att / s.counted) * 100) : null, signoff: so.get(k) || '' };
@@ -780,12 +841,17 @@ async function receiveCheckins(env, list) {
   list = list.filter((c) => c && c.sessionId && c.admNo && c.deviceId).slice(0, 200);
   if (!list.length) return { ok: true, results: [] };
   const now = nowIso();
-  const trainees = new Map((await all(env, `SELECT * FROM trainees WHERE adm_no IN ${IN}`, JSON.stringify(list.map((c) => String(c.admNo))))).map((r) => [lower(r.adm_no), r]));
-  const devById = new Map((await all(env, `SELECT * FROM devices WHERE device_id IN ${IN}`, JSON.stringify(list.map((c) => c.deviceId)))).map((r) => [r.device_id, r]));
-  const devByAdm = new Map((await all(env, `SELECT * FROM devices WHERE adm_no IN ${IN}`, JSON.stringify(list.map((c) => String(c.admNo))))).map((r) => [lower(r.adm_no), r]));
+  const adms = JSON.stringify(list.map((c) => String(c.admNo))), sids = JSON.stringify([...new Set(list.map((c) => c.sessionId))]);
+  // Everything needed is read in one trip, and everything changed is written in one more.
+  const [tRows, dRows, aRows, cRows, sRows, termRows] = await many(env, [`SELECT * FROM trainees WHERE adm_no IN ${IN}`, adms],
+    [`SELECT * FROM devices WHERE device_id IN ${IN}`, JSON.stringify(list.map((c) => c.deviceId))], [`SELECT * FROM devices WHERE adm_no IN ${IN}`, adms],
+    [`SELECT * FROM checkins WHERE session_id IN ${IN}`, sids], [`SELECT id, data FROM sessions WHERE id IN ${IN}`, sids], [TERM_SQL]);
+  const trainees = new Map(tRows.map((r) => [lower(r.adm_no), r]));
+  const devById = new Map(dRows.map((r) => [r.device_id, r]));
+  const devByAdm = new Map(aRows.map((r) => [lower(r.adm_no), r]));
   const ids = list.map((c) => { const t = trainees.get(lower(c.admNo)); return `${c.sessionId}|${t ? t.adm_no : c.admNo}|${c.deviceId}`; });
-  const existing = new Map((await all(env, `SELECT * FROM checkins WHERE session_id IN ${IN}`, JSON.stringify([...new Set(list.map((c) => c.sessionId))]))).map((r) => [ciId(r), r]));
-  const sessions = new Map((await all(env, `SELECT id, data FROM sessions WHERE id IN ${IN}`, JSON.stringify([...new Set(list.map((c) => c.sessionId))]))).map((r) => [r.id, JSON.parse(r.data)]));
+  const existing = new Map(cRows.map((r) => [ciId(r), r]));
+  const sessions = new Map(sRows.map((r) => [r.id, JSON.parse(r.data)]));
   const results = [], ciWrites = [], devWrites = new Map(), touched = new Set();
   for (let i = 0; i < list.length; i++) {
     const c = list[i], t = trainees.get(lower(c.admNo)), adm = t ? t.adm_no : String(c.admNo), id = ids[i];
@@ -808,46 +874,22 @@ async function receiveCheckins(env, list) {
           if (v === false) reason = 'invalid-code';
         }
       }
-      if (!existing.has(id) || row.status !== status || row.reason !== reason) { Object.assign(row, { status, reason, updated_at: now }); ciWrites.push(row); }
+      if (!existing.has(id) || row.status !== status || row.reason !== reason) { Object.assign(row, { status, reason, updated_at: now }); ciWrites.push(row); existing.set(id, row); }
     }
     if (row.status === 'accepted') touched.add(c.sessionId);
     results.push({ id, status: row.status, reason: row.reason, name: t ? t.name : '', classCode: t ? t.class_code : '' });
   }
-  await upsertMany(env, 'checkins', CICOLS, ciWrites, CIKEY);
-  if (devWrites.size) await upsertMany(env, 'devices', ['device_id', 'adm_no', 'name', 'class_code', 'registered_at', 'last_seen'], [...devWrites.values()], ['device_id'], ['last_seen']);
-  const newlyAccepted = ciWrites.filter((r) => r.status === 'accepted').map((r) => r.session_id);
-  if (newlyAccepted.length) {
-    await markChanged(env);
-    await recount(env, [...new Set(newlyAccepted)].filter((id) => sessions.has(id)).map((id) => sessions.get(id)));
-  }
+  // Lessons with newly accepted check-ins get their counts updated in the same write.
+  const newly = [...new Set(ciWrites.filter((r) => r.status === 'accepted').map((r) => r.session_id))].filter((id) => sessions.has(id));
+  const accepted = acceptedOf([...existing.values()].filter((r) => r.status === 'accepted'));
+  const term = termOut(termRows[0]);
+  await many(env, ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY),
+    ...upsertStmts('devices', ['device_id', 'adm_no', 'name', 'class_code', 'registered_at', 'last_seen'], [...devWrites.values()], ['device_id'], ['last_seen']),
+    newly.length && changedStmt(), ...upsertStmts('sessions', SCOLS, newly.map((id) => sessionRow(sessions.get(id), accepted[id], term, now)), ['id']));
   return { ok: true, results };
 }
 
-/** Updates the summary counts of lessons after QR check-ins were accepted. */
-async function recount(env, list) {
-  if (!list.length) return;
-  const term = await activeTerm(env);
-  const accepted = await acceptedMap(env, list.map((s) => s.sessionId));
-  const now = nowIso();
-  await upsertMany(env, 'sessions', SCOLS, list.map((s) => sessionRow(s, accepted[s.sessionId], term, now)), ['id']);
-}
 
-/** When a lesson arrives, check-ins that were waiting for it are verified. */
-async function reevaluatePending(env, sessions) {
-  const byId = new Map(sessions.map((s) => [s.sessionId, s]));
-  const pend = await all(env, `SELECT * FROM checkins WHERE status='pending' AND session_id IN ${IN}`, JSON.stringify([...byId.keys()]));
-  if (!pend.length) return;
-  const now = nowIso(), writes = [];
-  for (const r of pend) {
-    const v = await verifyCode({ sessionId: r.session_id, w: r.w, token: r.code }, byId.get(r.session_id));
-    if (v === null) continue;
-    writes.push({ ...r, status: v ? 'accepted' : 'rejected', reason: v ? '' : 'invalid-code', updated_at: now });
-  }
-  if (!writes.length) return;
-  await upsertMany(env, 'checkins', CICOLS, writes, CIKEY);
-  const acc = [...new Set(writes.filter((w) => w.status === 'accepted').map((w) => w.session_id))];
-  if (acc.length) { await markChanged(env); await recount(env, acc.map((id) => byId.get(id))); }
-}
 
 /**
  * Keeps the database small for years: once a lesson is 5 months old (trainer phones stop asking about
@@ -878,17 +920,23 @@ export async function foldOldCheckins(env, force = false) {
   return ids.length;
 }
 
-/** For the trainer's phone: check-ins accepted since its last check (all of them when since is empty). */
-async function acceptedCheckins(env, ids, since) {
-  const serverTime = nowIso();
+/** For the trainer's phone: check-ins accepted since its last check (all of them when since is empty).
+ * With "since", only the recent check-ins are read (a few rows) instead of every check-in of these lessons. */
+function checkinsQuery(ids, since) {
+  if (!ids.length) return ['SELECT 1 AS x WHERE 0'];
+  return since ? ["SELECT session_id, adm_no, name, scanned_at FROM checkins INDEXED BY checkins_updated WHERE updated_at > ? AND status='accepted'", since]
+    : [`SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN ${IN}`, JSON.stringify(ids.slice(0, 2000))];
+}
+function acceptedCheckins(ids, rows) {
   const want = new Set(ids.slice(0, 2000));
-  // With "since", read only the recent check-ins (a few rows) instead of every check-in of these lessons.
-  const rows = !want.size ? [] : since
-    ? (await all(env, "SELECT session_id, adm_no, name, scanned_at FROM checkins INDEXED BY checkins_updated WHERE updated_at > ? AND status='accepted'", since)).filter((r) => want.has(r.session_id))
-    : await all(env, `SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN ${IN}`, JSON.stringify([...want]));
   const out = {};
-  for (const r of rows) (out[r.session_id] = out[r.session_id] || []).push({ admNo: r.adm_no, name: r.name, scannedAt: r.scanned_at });
-  return { ok: true, serverTime, count: rows.length, checkins: out };
+  let count = 0;
+  for (const r of rows) {
+    if (!want.has(r.session_id)) continue;
+    (out[r.session_id] = out[r.session_id] || []).push({ admNo: r.adm_no, name: r.name, scannedAt: r.scanned_at });
+    count++;
+  }
+  return { ok: true, serverTime: nowIso(), count, checkins: out };
 }
 
 /* ---------- moving in from the Google Sheet ---------- */
@@ -948,5 +996,5 @@ async function importSheet(env, b, me) {
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */
-export const internals = { all, one, run, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf,
+export const internals = { all, one, run, many, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf,
   resetCaches() { schemaReady = false; secretCache = null; keys.clear(); } };

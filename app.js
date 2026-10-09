@@ -7,14 +7,18 @@
  */
 'use strict';
 
-const APP_VERSION = '4.1.1';
+const APP_VERSION = '4.2.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
-// Live updates: during a live QR lesson the app asks the server a tiny "anything new?" every few seconds;
-// otherwise it checks once a minute while open. Both only run while online and on screen.
+// Live updates: while the lesson QR is on screen the app asks the server a tiny "anything new?" every few
+// seconds; with today's QR register open, every 15 seconds; otherwise once a minute. Only while online and on screen.
 const LIVE_FAST_MS = window.__liveFastMs || 4000;
 const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
+const LIVE_MID_MS = window.__liveMidMs || Math.min(15000, LIVE_SLOW_MS);
+// While the QR is shown, the register (whose QR record grows every 20 s) is uploaded at most every 2 minutes,
+// and again when the QR is closed. The server accepts genuine codes for "right now" without waiting for it.
+const QR_UPLOAD_MS = window.__qrUploadMs || 120000;
 const MAX_LESSONS_PER_WEEK = 3; // the register has 3 lesson cells per week
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
@@ -930,6 +934,11 @@ async function pendingSessions() {
   const [sessions, map] = await Promise.all([byPrefix('session:'), sheetsSyncMap()]);
   return sessions.filter((s) => map[s._id] !== s._rev);
 }
+/** The register whose QR is on screen waits until 2 minutes after its last upload (unless a sync is forced). */
+const qrSentAt = {};
+function heldBack(s) {
+  return $('#lessonQrDialog').open && state.current && s._id === state.current._id && Date.now() - (qrSentAt[s._id] || 0) < QR_UPLOAD_MS;
+}
 async function refreshPending() {
   const pending = await pendingSessions();
   const unsentReqs = state.addreqs.filter((a) => !a.sentAt).length;
@@ -977,7 +986,7 @@ async function pushRequests() {
   return unsent.length;
 }
 
-async function syncSheets({ silent = false, pull = true } = {}) {
+async function syncSheets({ silent = false, pull = true, force = !silent } = {}) {
   if (!state.auth || state.auth.mustChange) { if (!silent) showSignin(); return; }
   if (state.syncing) return;
   if (!navigator.onLine) { if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
@@ -986,10 +995,11 @@ async function syncSheets({ silent = false, pull = true } = {}) {
   $('#syncBtn').classList.add('syncing');
   let sent = 0;
   const pushPending = async () => {
-    for (const batch of chunk(await pendingSessions(), 20)) {
+    for (const batch of chunk((await pendingSessions()).filter((s) => force || !heldBack(s)), 20)) {
       const res = await api('push', { deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
       if (!res.ok) throw new Error(res.error || 'The server rejected the upload');
       await markSent((map) => { for (const s of batch) map[s._id] = s._rev; });
+      for (const s of batch) qrSentAt[s._id] = Date.now();
       sent += batch.length;
     }
   };
@@ -1164,7 +1174,7 @@ async function openLessonQR() {
   s.qr.intervals.push([w0, w0]);
   markDirty();
   // Upload straight away, so the server can confirm students' scans from the first second.
-  saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false }); });
+  saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false, force: true }); });
   renderQrLive();
   $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${periodLabel(s.period)}`;
   $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
@@ -1206,7 +1216,7 @@ function isLiveLesson() {
   return $('#lessonQrDialog').open || !!(s && s.qr && s.date === todayISO());
 }
 
-/* One loop decides how often to check: every few seconds during a live lesson, else every minute. */
+/* One loop decides how often to check: every few seconds while the QR is shown, every 15 s with today's QR register open, else every minute. */
 let liveTimer = null, liveBusy = false;
 async function liveTick() {
   clearTimeout(liveTimer);
@@ -1220,12 +1230,16 @@ async function liveTick() {
       if (!res.ok || res.last !== state.lastPulse) {
         state.lastPulse = res.last || '';
         await syncSheets({ silent: true });
-      } else if ((await pendingSessions()).length || state.addreqs.some((a) => !a.sentAt)) await syncSheets({ silent: true, pull: false });
+      } else if ((await pendingSessions()).some((s) => !heldBack(s)) || state.addreqs.some((a) => !a.sentAt)) await syncSheets({ silent: true, pull: false });
     }
   } catch { /* offline or slow network: try again next round */ }
   liveBusy = false;
   clearTimeout(liveTimer);
-  liveTimer = setTimeout(liveTick, isLiveLesson() ? LIVE_FAST_MS : LIVE_SLOW_MS);
+  liveTimer = setTimeout(liveTick, liveDelay());
+}
+function liveDelay() {
+  if ($('#lessonQrDialog').open) return LIVE_FAST_MS;
+  return isLiveLesson() ? LIVE_MID_MS : LIVE_SLOW_MS;
 }
 /* Switch to fast checking straight away when a live lesson starts, instead of waiting out a slow round. */
 function goLive() {
@@ -1236,7 +1250,11 @@ function closeLessonQR() {
   clearInterval(lessonQrTimer);
   lessonQrTimer = null;
   if ($('#lessonQrDialog').open) $('#lessonQrDialog').close();
-  if (state.dirty) saveCurrent();
+  // Upload the register now, with the full record of which codes were shown.
+  Promise.resolve(state.dirty && saveCurrent()).then(() => {
+    if (!navigator.onLine || !state.auth) return;
+    if (state.syncing) scheduleAutoSync(); else syncSheets({ silent: true, pull: false, force: true });
+  });
 }
 
 /* Fetch check-ins that reached the server since the last check and save them into the

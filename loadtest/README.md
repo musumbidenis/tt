@@ -10,7 +10,8 @@ section below.
 | `live_probe.py` | **Safe for the live server**: read-only, measures real network and database delays. |
 | `seed.py` | Fills the local test database (1,200 students by default; `STREAMS=334 TRAINERS=200` for 10,000). |
 | `cpu.mjs` | The Worker's own CPU time per request (the free plan allows 10 ms). |
-| `wrangler.load.toml` | Local server with a meter of database rows read and written per request. |
+| `wrangler.load.toml` | Local server with a meter of database trips, rows read and rows written per request. |
+| `summarize.py`, `compare.py`, `daymodel.py` | Read a run's results, compare two runs, and estimate a school day's use of the free plan. |
 
 ## Running locally
 
@@ -34,14 +35,40 @@ pip install locust
 STAFF=MIS PIN=your-pin locust -f live_probe.py --host https://rvnp-attendance.ictpoe.workers.dev --headless -u 10 -r 2 -t 3m
 ```
 
-## First results (9 Oct 2026, local server, 2-core machine)
+## Results
 
-- No errors at any load. Peak lesson start, twice the department (40 live lessons, 1,200 students
-  scanning): 35 requests/s, median 160 ms, 95% under 540 ms.
-- Saturation: about 230 requests/s on 2 cores, still no errors; delays grow as requests queue.
-- Worker CPU per request: under 4 ms at department size. At 10,000 students the full class-list
-  download takes about 18 ms (over the 10 ms free limit).
-- Daily free-plan use for the ICT department: about a third of the 100,000 requests if a QR
-  register stays open 15 minutes, nearly all of it at 60 minutes (the 4-second "anything new?" check).
-  Rows read: about 11% normally, but **156% on a day when every student sets up their phone**
-  (the class and name lists read the whole student table on every phone).
+Local server on a 2-core machine, twice the ICT department at a lesson start: 40 QR lessons, 1,200
+students setting up their phones and scanning, 80 more trainers with the app open. 4 minutes each.
+
+| | Before (9 Oct) | After (10 Oct) |
+|---|---|---|
+| Errors | 0 | 0 |
+| Replies within (95%) | 540 ms | 220 ms |
+| Database trips | 27,970 | 10,603 |
+| Rows read | 7.4 million | 0.26 million |
+| Register uploads | 476 | 84 |
+
+Database trips per request (each trip crosses from the Worker to the database):
+
+| Request | Before | After |
+|---|---|---|
+| Student check-in | 11 | 2 |
+| Register upload | 6 | 2 |
+| "Anything new?" | 2 | 1 |
+| Trainer's check-in download | 2 | 1 |
+| Term register, HOD overview | 5 | 1 |
+| Phone setup: class list / names | 1 (3,612 and 2,438 rows read) | 1 (5 and 95 rows read) |
+
+A school day for the ICT department on the free plan (96 QR lessons, `daymodel.py`):
+
+| Day | Requests before → after | Rows read before → after |
+|---|---|---|
+| Register open 15 min per lesson | 33% → 21% | 14% → 13% |
+| Register open 60 min per lesson | 98% → 39% | 17% → 15% |
+| First day of term, 1,200 phones set up | 37% → 25% | **160% → 16%** |
+
+Worker CPU per request stays under 4 ms (median) at department size; the free plan allows 10 ms.
+At 10,000 students (a whole institution) the full class-list download for the HOD/MIS takes about
+18 ms and would need to come in parts.
+
+Saturation (before): about 230 requests/s on 2 cores with no errors; replies slow down as requests queue.

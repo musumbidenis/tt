@@ -41,6 +41,8 @@ Everything is done in the Cloudflare dashboard in a browser. Nothing to install.
 6. **Set the first MIS PIN**: open **Settings → Variables and Secrets → Add**. Type: **Secret**, name: `ADMIN_PIN`, value: a 6-digit PIN only you know. Click **Deploy**.
 7. Copy the Worker's address from its page (it looks like `https://rvnp-attendance.<your-subdomain>.workers.dev`). Open it in a browser with `?action=ping` on the end: you should see `"ok":true`. Then put it in [`config.js`](config.js), or send it to whoever maintains the app, so every phone finds the database by itself.
 
+8. **Make it faster from Kenya** (recommended): open **Settings → General → Placement** and choose **Smart**. Cloudflare then runs the Worker next to the database instead of next to each phone, so the several database steps in each request don't each cross the distance. It decides by itself within about 15 minutes, and switches back if it would be slower.
+
 The tables are created by themselves the first time anyone uses the app. Then sign in to the app with staff code **`MIS`** and the `ADMIN_PIN`; you'll be asked to choose your own PIN straight away.
 
 **Updating later**: open the Worker → **Edit code**, paste the new `worker/worker.js`, click **Deploy**. The address and the data stay the same.
@@ -188,6 +190,7 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
   - when the MIS Officer resets a PIN or switches an account off, that person is signed out on every phone;
   - easy PINs like 1234 or 0000 are refused.
 - The class register PDFs, loading workbook and Excel template stay on the computer that opens them. Only the rows the MIS Officer confirms are sent to the database.
-- Phones ask for new class lists every 10 minutes, but the answer is a few bytes unless something changed. During a live QR lesson they ask a tiny "anything new?" every few seconds.
+- Phones ask for new class lists every 10 minutes, but the answer is a few bytes unless something changed. While the lesson QR is on screen they ask a tiny "anything new?" every 4 seconds; with today's QR register open, every 15 seconds; otherwise once a minute. During a QR lesson the register is uploaded every 2 minutes and when the QR is closed (the server accepts students' genuine codes straight away without waiting for it).
+- Load tests and their results are in [`loadtest/`](loadtest/README.md).
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.2`) so phones fetch the new version.
 - **Testing the Worker on a computer** (for developers): `npx wrangler dev` with `worker/dev.js` as the main file and a local D1 binding called `DB` adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.
