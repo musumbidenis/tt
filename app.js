@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.0.1';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -850,15 +850,31 @@ async function callSheets(method, body, params = {}) {
       ? { method: 'GET', signal: ctrl.signal, redirect: 'follow' }
       // text/plain keeps this a "simple" request, so Apps Script needs no CORS preflight
       : { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, signal: ctrl.signal, redirect: 'follow' };
-    const res = await fetch(url.toString(), opts);
-    const text = await res.text();
-    try { return JSON.parse(text); }
-    catch { throw new Error('Unexpected reply from the server — check the Apps Script deployment is set to "Anyone" and is the latest version'); }
+    let res = await fetch(url.toString(), opts);
+    let text = await res.text();
+    let parsed = tryJson(text);
+    if (!parsed) { // Google sometimes answers with a temporary error page: try once more
+      await new Promise((r) => setTimeout(r, 1500));
+      res = await fetch(url.toString(), opts);
+      text = await res.text();
+      parsed = tryJson(text);
+    }
+    if (parsed) return parsed;
+    throw new Error(`The server did not answer properly (${res.status}${googleMessage(text) ? ': ' + googleMessage(text) : ''}). Try again in a moment; if it keeps happening, check the Apps Script deployment is the latest version and set to "Anyone".`);
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('Google Sheets took too long to answer');
     if (e instanceof TypeError) throw new Error('No connection to Google Sheets');
     throw e;
   } finally { clearTimeout(timer); }
+}
+
+function tryJson(text) { try { return JSON.parse(text); } catch { return null; } }
+/** The readable part of a Google error page, so the message says what actually went wrong. */
+function googleMessage(html) {
+  const t = String(html || '');
+  const pick = t.match(/<div[^>]*class="?errorMessage"?[^>]*>([\s\S]*?)<\/div>/i) || t.match(/<title>([\s\S]*?)<\/title>/i);
+  const raw = pick ? pick[1] : t.replace(/<[^>]+>/g, ' ');
+  return raw.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 /** Signed-in call. If the sign-in has ended, shows the sign-in screen (nothing on the phone is lost). */
@@ -1490,7 +1506,35 @@ function wire() {
   });
 }
 
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('Service worker not registered', e));
+  // When a new version of the app arrives, switch to it right away (unless something is unsaved or the QR is showing).
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    if (!state.dirty && !$('#lessonQrDialog')?.open) location.reload();
+    else toast('App updated — it will refresh next time you open it');
+  });
+}
+
+/** If start-up fails (for example, parts of two app versions were cached), clear the app's cached files once and reload.
+ *  Registers and other data in the phone's database are not touched. */
+async function repairAndReload(err) {
+  console.error(err);
+  let tried = false;
+  try { tried = sessionStorage.getItem('rvnp_repair') === '1'; sessionStorage.setItem('rvnp_repair', '1'); } catch { /* private mode */ }
+  if (tried) { toast('Start-up error: ' + err.message + '. Close and reopen the app.', 'err'); return; }
+  toast('Updating the app…');
+  try {
+    for (const r of (await navigator.serviceWorker?.getRegistrations?.()) || []) await r.unregister();
+    for (const k of (await caches?.keys?.()) || []) await caches.delete(k);
+  } catch { /* best effort */ }
+  location.reload();
+}
+
 async function init() {
+  registerServiceWorker();
   fillSelect($('#fPeriod'), PERIODS.map((p) => ({ value: p.code, label: p.label })));
   $('#fDate').value = todayISO();
   await loadDevice();
@@ -1511,16 +1555,7 @@ async function init() {
     switchTab(homeTab());
     if (navigator.onLine) setTimeout(() => { syncSheets({ silent: true }); maybeRefreshRoster(); }, 2000);
   }
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker not registered', e));
-    // When a new version of the app arrives, switch to it right away (unless something is unsaved or the QR is showing).
-    const hadController = !!navigator.serviceWorker.controller;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!hadController) return;
-      if (!state.dirty && !$('#lessonQrDialog').open) location.reload();
-      else toast('App updated — it will refresh next time you open it');
-    });
-  }
+  try { sessionStorage.removeItem('rvnp_repair'); } catch { /* private mode */ }
 }
 
-init().catch((e) => { console.error(e); toast('Start-up error: ' + e.message, 'err'); });
+init().catch(repairAndReload);

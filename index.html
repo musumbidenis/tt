@@ -296,6 +296,8 @@
 
 <dialog id="adminDialog" class="sheet-dialog wide"><div id="adminDialogBody"></div></dialog>
 
+<!-- Kept for one release: lets phones still running version 3.x start up on this page and update themselves. -->
+<div id="legacyShim" hidden aria-hidden="true"><form id="sheetsForm"><input id="setName"><input id="setStaff"><input id="setSheetsUrl"><input id="setSheetsToken"><button type="button" id="testSheets"></button></form><input type="file" id="importTrainees"><input type="file" id="importUnits"><input type="date" id="rFrom"><input type="date" id="rTo"><button type="button" id="exportReport"></button><table id="reportTable"></table></div>
 <div id="printArea" class="print-area" aria-hidden="true"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 

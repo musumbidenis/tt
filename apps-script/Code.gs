@@ -165,7 +165,7 @@ function doGet(e) {
     // Student app (no sign-in): the class and name dropdowns for first-time setup.
     if (p.action === 'classes') return json_(publicClasses_());
     if (p.action === 'classlist') return json_(classList_(p['class']));
-    if (p.action === 'ping') return json_({ ok: true, time: nowIso_() });
+    if (p.action === 'ping') return json_({ ok: true, version: '4.0.1', time: nowIso_() });
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_(errorOut_(err));

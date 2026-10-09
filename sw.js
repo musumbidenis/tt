@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.0.0';
+const CACHE = 'rvnp-attendance-v4.0.1';
 const ASSETS = [
   './',
   './index.html',
@@ -29,7 +29,8 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache, so a new version is never mixed with files from the old one.
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -49,19 +50,23 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
+  // The app's files come from this version's cache only, so all of them always match.
+  // A new version arrives as a new service worker (bump CACHE), never file by file.
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const cached = await cache.match(req, { ignoreSearch: true });
-    const network = fetch(req)
-      .then((res) => { if (res.ok && res.type === 'basic') cache.put(req, res.clone()); return res; })
-      .catch(() => null);
-    if (cached) { event.waitUntil(network); return cached; }
-    const res = await network;
-    if (res) return res;
-    if (req.mode === 'navigate') {
-      const page = url.pathname.endsWith('student.html') ? './student.html' : './index.html';
-      return (await cache.match(page)) || Response.error();
+    if (cached) return cached;
+    try {
+      const res = await fetch(req);
+      // Files used only sometimes (the PDF reader for the MIS Officer) are kept after their first use.
+      if (res.ok && res.type === 'basic' && url.pathname.includes('/vendor/')) cache.put(req, res.clone());
+      return res;
+    } catch {
+      if (req.mode === 'navigate') {
+        const page = url.pathname.endsWith('student.html') ? './student.html' : './index.html';
+        return (await cache.match(page)) || Response.error();
+      }
+      return Response.error();
     }
-    return Response.error();
   })());
 });
