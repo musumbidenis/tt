@@ -1,17 +1,17 @@
 /* RVNP Attendance Register — offline-first, for the ICT Department.
  * Storage: PouchDB (IndexedDB) on the device.
- * Sync:    straight to Google Sheets through an Apps Script web app. Staff sign in once with
- *          their staff code and PIN; registers are pushed whenever the phone is online, and
- *          class lists and loading come back from the Sheet.
+ * Sync:    to the online database (Cloudflare Worker + D1; the older Apps Script + Google Sheet also works).
+ *          Staff sign in once with their staff code and PIN; registers are pushed whenever the phone
+ *          is online, and class lists and loading come back from the server.
  * Roles:   TRAINER marks; HOD approves term registers; MIS sets up terms, loading and class lists.
  */
 'use strict';
 
-const APP_VERSION = '4.0.2';
+const APP_VERSION = '4.1.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
-// Live updates: during a live QR lesson the app asks the Sheet a tiny "anything new?" every few seconds;
+// Live updates: during a live QR lesson the app asks the server a tiny "anything new?" every few seconds;
 // otherwise it checks once a minute while open. Both only run while online and on screen.
 const LIVE_FAST_MS = window.__liveFastMs || 4000;
 const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
@@ -59,7 +59,13 @@ const lower = (s) => String(s ?? '').trim().toLowerCase();
 const me = () => state.auth?.staff || null;
 const hasRole = (r) => !!me()?.roles?.includes(r);
 const trainerLabel = () => me()?.name || 'Unknown trainer';
-const serverUrl = () => state.settings.serverUrl || window.ATTENDANCE_CONFIG?.sheetsUrl || '';
+/* The server: the address in config.js, unless this phone was given another one. An old Google Apps Script
+ * address saved on the phone gives way once config.js points at the new database. */
+const OLD_SERVER = /script\.google(usercontent)?\.com/;
+const serverUrl = () => {
+  const own = state.settings.serverUrl || '', cfg = window.ATTENDANCE_CONFIG?.serverUrl || window.ATTENDANCE_CONFIG?.sheetsUrl || '';
+  return own && !(OLD_SERVER.test(own) && cfg && !OLD_SERVER.test(cfg)) ? own : cfg;
+};
 
 let toastTimer;
 function toast(msg, kind = '') {
@@ -167,7 +173,7 @@ function normaliseRoster(input) {
   return { classes, units, trainees };
 }
 
-/* Replace the roster docs on this device with the Sheet's. */
+/* Replace the roster docs on this device with the server's. */
 async function replaceRoster(incoming) {
   const norm = normaliseRoster(incoming);
   const lists = { class: norm.classes, unit: norm.units, trainee: norm.trainees };
@@ -625,7 +631,7 @@ async function renderSessions() {
     return `<button class="sitem" data-id="${esc(s._id)}">
       <span class="s-title">${esc(s.classCode)} · ${esc(s.unitCode)} — ${esc(periodLabel(s.period))}</span>
       <span class="s-badges">
-        <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'In Google Sheets' : 'Waiting to sync'}</span>
+        <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'Sent' : 'Waiting to sync'}</span>
         ${isLocked(s) ? '<span class="pill locked">Locked</span>' : ''}
       </span>
       <span class="s-meta">${s.week ? `Week ${s.week}, ` : ''}${esc(fmtDate(s.date))} · P ${c.P} · A ${c.A} · L ${c.L} · E ${c.E}</span>
@@ -649,7 +655,7 @@ function renderReportUnitSelect() {
   fillSelect($('#rUnit'), opts, undefined, opts.length ? null : 'No units');
 }
 
-/** Lessons for one class and unit this term: this phone's registers, plus the Sheet's copy when online. */
+/** Lessons for one class and unit this term: this phone's registers, plus the server's copy when online. */
 async function reportSource(classCode, unitCode) {
   const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
   const range = termRange();
@@ -703,7 +709,7 @@ async function renderReport() {
   state.report = { r, unit, cls, classCode, unitCode, mine, signoff: src.server?.signoff || null, term: src.server?.term || state.meta.term };
 
   $('#reportSource').textContent = src.server
-    ? (src.server.cached ? `From Google Sheets as of ${fmtTime(src.server.cached)}` : 'Up to date with Google Sheets')
+    ? (src.server.cached ? `From the server as of ${fmtTime(src.server.cached)}` : 'Up to date with the server')
       + (src.localCount ? ` · includes this phone's ${src.localCount} register(s)` : '')
     : src.localCount ? 'From the registers on this phone (connect to include other phones)' : (mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.');
   $('#reportSummary').innerHTML = `
@@ -856,7 +862,7 @@ function printQRCards() {
   setTimeout(() => window.print(), 50);
 }
 
-/* ---------------- Google Sheets (Apps Script web app) ---------------- */
+/* ---------------- Server (Cloudflare Worker, or the older Google Apps Script) ---------------- */
 async function callSheets(method, body, params = {}) {
   if (!serverUrl()) throw new Error('No server address set. Ask the MIS Officer for the app link.');
   const url = new URL(serverUrl());
@@ -878,16 +884,16 @@ async function callSheets(method, body, params = {}) {
       parsed = tryJson(text);
     }
     if (parsed) return parsed;
-    throw new Error(`The server did not answer properly (${res.status}${googleMessage(text) ? ': ' + googleMessage(text) : ''}). Try again in a moment; if it keeps happening, check the Apps Script deployment is the latest version and set to "Anyone".`);
+    throw new Error(`The server did not answer properly (${res.status}${googleMessage(text) ? ': ' + googleMessage(text) : ''}). Try again in a moment; if it keeps happening, tell the MIS Officer.`);
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('Google Sheets took too long to answer');
-    if (e instanceof TypeError) throw new Error('No connection to Google Sheets');
+    if (e.name === 'AbortError') throw new Error('The server took too long to answer');
+    if (e instanceof TypeError) throw new Error('No connection to the server');
     throw e;
   } finally { clearTimeout(timer); }
 }
 
 function tryJson(text) { try { return JSON.parse(text); } catch { return null; } }
-/** The readable part of a Google error page, so the message says what actually went wrong. */
+/** The readable part of an error page, so the message says what actually went wrong. */
 function googleMessage(html) {
   const t = String(html || '');
   const pick = t.match(/<div[^>]*class="?errorMessage"?[^>]*>([\s\S]*?)<\/div>/i) || t.match(/<title>([\s\S]*?)<\/title>/i);
@@ -906,7 +912,20 @@ async function api(action, body = {}) {
   return res;
 }
 
-async function sheetsSyncMap() { return (await getLocal('sheetsSync', { map: {} })).map || {}; }
+/* Which register versions the server has. Kept per server address: after a move to a new server every
+ * register on this phone is sent again, so nothing is left behind. */
+const LEGACY_SERVER = 'https://script.google.com/macros/s/AKfycbw3bSI2h4GrfV2BBmZOqDkyioa4tYZz3ND_PL-0JurcQKneg9TNBwbuLMPBh3qqIKOxTA/exec';
+async function sheetsSyncMap() {
+  const d = await getLocal('sheetsSync', { map: {} });
+  return (d.server || LEGACY_SERVER) === serverUrl() ? d.map || {} : {};
+}
+function markSent(fn) {
+  return updateLocal('sheetsSync', (d) => {
+    if ((d.server || LEGACY_SERVER) !== serverUrl()) d.map = {};
+    d.server = serverUrl(); d.map = d.map || {};
+    fn(d.map);
+  }, { map: {} });
+}
 async function pendingSessions() {
   const [sessions, map] = await Promise.all([byPrefix('session:'), sheetsSyncMap()]);
   return sessions.filter((s) => map[s._id] !== s._rev);
@@ -918,7 +937,7 @@ async function refreshPending() {
   const el = $('#pendingCount');
   el.textContent = n;
   el.classList.toggle('zero', n === 0);
-  // Long-unsent registers matter most for QR lessons: students' scans are verified only once the lesson reaches the Sheet.
+  // Long-unsent registers matter most for QR lessons: students' scans are verified only once the lesson reaches the server.
   const oldest = pending.reduce((m, s) => (!m || s.updatedAt < m ? s.updatedAt : m), '');
   const days = oldest ? Math.floor((Date.now() - new Date(oldest).getTime()) / 864e5) : 0;
   const qr = pending.filter((s) => s.qr).length;
@@ -969,8 +988,8 @@ async function syncSheets({ silent = false, pull = true } = {}) {
   const pushPending = async () => {
     for (const batch of chunk(await pendingSessions(), 20)) {
       const res = await api('push', { deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
-      if (!res.ok) throw new Error(res.error || 'Google Sheets rejected the upload');
-      await updateLocal('sheetsSync', (d) => { d.map = d.map || {}; for (const s of batch) d.map[s._id] = s._rev; }, { map: {} });
+      if (!res.ok) throw new Error(res.error || 'The server rejected the upload');
+      await markSent((map) => { for (const s of batch) map[s._id] = s._rev; });
       sent += batch.length;
     }
   };
@@ -986,7 +1005,7 @@ async function syncSheets({ silent = false, pull = true } = {}) {
       if (sent) parts.push(`Sent ${sent} register(s)`);
       if (reqs) parts.push(`${reqs} added student(s) sent to the MIS Officer`);
       if (qrUpdated) parts.push(`QR check-ins added to ${qrUpdated} register(s)`);
-      toast(parts.join(' · ') || 'Everything is already in Google Sheets', 'ok');
+      toast(parts.join(' · ') || 'Everything is already sent', 'ok');
     }
   } catch (e) {
     $('#sheetsStatus').textContent = `Sync stopped${sent ? ` after ${sent} register(s)` : ''}: ${e.message}`;
@@ -1010,9 +1029,18 @@ async function pullRoster({ silent = false } = {}) {
   const btn = $('#pullRoster'); btn.disabled = true;
   if (!silent) $('#sheetsStatus').textContent = 'Downloading class lists…';
   try {
-    const res = await api('roster');
+    const log0 = await getLocal('syncLog');
+    // Background checks send the version this phone has; the server then answers "unchanged" in a few bytes.
+    const have = silent && state.trainees.length && log0.rosterServer === serverUrl() ? log0.rosterVersion || '' : '';
+    const res = await api('roster', have ? { version: have } : {});
     if (!res.ok) throw new Error(res.error || 'Could not read the class lists');
-    if (!(res.trainees || []).length && state.trainees.length) throw new Error('the Trainees tab is empty — kept the class lists already on this phone');
+    if (res.unchanged) {
+      if (res.me) await saveAuth({ ...state.auth, staff: { ...state.auth.staff, ...res.me, roles: res.me.roles } });
+      await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
+      renderSheetsStatus();
+      return;
+    }
+    if (!(res.trainees || []).length && state.trainees.length) throw new Error('the server has no students yet — kept the class lists already on this phone');
     const r = await replaceRoster(res);
     await updateLocal('meta', (d) => {
       Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {} });
@@ -1027,7 +1055,7 @@ async function pullRoster({ silent = false } = {}) {
       if (s.latePct !== undefined) await saveSettings({ latePct: s.latePct, excusedPct: s.excusedPct });
       fillSettingsForms();
     }
-    await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
+    await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); d.rosterVersion = res.version || ''; d.rosterServer = serverUrl(); });
     await loadRoster();
     applyRoles();
     if (state.current) renderRegister();
@@ -1047,11 +1075,11 @@ async function renderSheetsStatus() {
   $('#sheetsStatus').textContent = parts.length ? parts.join(' · ') + '.' : 'Not synced yet.';
 }
 
-/* Refresh class lists automatically when they are more than 30 minutes old. */
+/* Check for new class lists when they are more than 10 minutes old (an unchanged list costs almost nothing). */
 async function maybeRefreshRoster() {
   if (!state.auth || !navigator.onLine) return;
   const log = await getLocal('syncLog');
-  if (!log.lastRoster || Date.now() - new Date(log.lastRoster).getTime() > 30 * 6e4) pullRoster({ silent: true });
+  if (!log.lastRoster || log.rosterServer !== serverUrl() || Date.now() - new Date(log.lastRoster).getTime() > 10 * 6e4) pullRoster({ silent: true });
 }
 
 /* When two devices edit the same register, keep the most recent version and
@@ -1101,8 +1129,8 @@ const onDbChange = debounce(async () => {
 
 /* ---------------- QR check-in: students scan a code the trainer shows ----------------
  * The lesson QR changes every QR_WINDOW seconds. Each code is an HMAC of the lesson and the
- * time window, made with a secret that only this phone (and later the Sheet) knows, so
- * students cannot make their own codes. The Sheet checks every check-in against it. */
+ * time window, made with a secret that only this phone (and later the server) knows, so
+ * students cannot make their own codes. The server checks every check-in against it. */
 const QR_WINDOW = 20; // seconds — must match WINDOW_SECONDS in Code.gs
 const qrWindow = (t = Date.now()) => Math.floor(t / 1000 / QR_WINDOW);
 const b64url = (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -1135,7 +1163,7 @@ async function openLessonQR() {
   const w0 = qrWindow();
   s.qr.intervals.push([w0, w0]);
   markDirty();
-  // Upload straight away, so the Sheet can confirm students' scans from the first second.
+  // Upload straight away, so the server can confirm students' scans from the first second.
   saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false }); });
   renderQrLive();
   $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${periodLabel(s.period)}`;
@@ -1187,14 +1215,12 @@ async function liveTick() {
   const live = isLiveLesson();
   try {
     if (navigator.onLine && document.visibilityState === 'visible' && state.auth && !state.auth.mustChange && !state.syncing) {
-      if (live) {
-        const res = await api('pulse');
-        // Fetch details only when the Sheet says something changed (or it cannot tell).
-        if (!res.ok || res.last !== state.lastPulse) {
-          state.lastPulse = res.last || '';
-          await syncSheets({ silent: true });
-        } else if ((await pendingSessions()).length) await syncSheets({ silent: true, pull: false });
-      } else await syncSheets({ silent: true });
+      // A tiny "anything new?" first; fetch details only when the server says something changed (or it cannot tell).
+      const res = await api('pulse');
+      if (!res.ok || res.last !== state.lastPulse) {
+        state.lastPulse = res.last || '';
+        await syncSheets({ silent: true });
+      } else if ((await pendingSessions()).length || state.addreqs.some((a) => !a.sentAt)) await syncSheets({ silent: true, pull: false });
     }
   } catch { /* offline or slow network: try again next round */ }
   liveBusy = false;
@@ -1213,14 +1239,15 @@ function closeLessonQR() {
   if (state.dirty) saveCurrent();
 }
 
-/* Fetch check-ins that reached the Sheet since the last check and save them into the
+/* Fetch check-ins that reached the server since the last check and save them into the
  * register for that lesson. Runs automatically whenever the phone is online. */
 async function pullCheckins() {
   const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10); // students may sync months late
   const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
   if (!sessions.length) return 0;
   const log = await getLocal('syncLog');
-  const res = await api('checkins', { sessionIds: sessions.map((s) => s._id), since: log.checkinsSince || '' });
+  const since0 = (log.checkinsServer || LEGACY_SERVER) === serverUrl() ? log.checkinsSince || '' : '';
+  const res = await api('checkins', { sessionIds: sessions.map((s) => s._id), since: since0 });
   if (!res.ok) throw new Error(res.error || 'Could not read QR check-ins');
   const synced = await sheetsSyncMap();
   let changed = 0, newOnOpen = 0;
@@ -1249,14 +1276,14 @@ async function pullCheckins() {
     } else {
       try {
         const r = await db.put(doc);
-        // The Sheet already has these check-ins, so a register that was in sync stays in sync.
-        if (wasSynced) await updateLocal('sheetsSync', (d) => { d.map = d.map || {}; d.map[doc._id] = r.rev; }, { map: {} });
+        // The server already has these check-ins, so a register that was in sync stays in sync.
+        if (wasSynced) await markSent((map) => { map[doc._id] = r.rev; });
       } catch (e) { if (e.status !== 409) throw e; }
     }
   }
   if (res.serverTime) {
     // Ask again from 2 minutes earlier next time, so nothing written at the same moment is missed.
-    await updateLocal('syncLog', (d) => { d.checkinsSince = new Date(new Date(res.serverTime).getTime() - 120000).toISOString(); });
+    await updateLocal('syncLog', (d) => { d.checkinsSince = new Date(new Date(res.serverTime).getTime() - 120000).toISOString(); d.checkinsServer = serverUrl(); });
   }
   if (newOnOpen) { toast(`${newOnOpen} student(s) checked in by QR`, 'ok'); renderQrLive(); navigator.vibrate?.(40); }
   return changed;

@@ -1,0 +1,11 @@
+# Local testing only: npx wrangler dev --config worker/wrangler.test.toml --local
+# Runs dev.js (worker.js plus test helpers such as /__reset and /__dump) against a local D1 database.
+# The real Worker is set up in the Cloudflare dashboard (see README) and runs worker.js alone.
+name = "rvnp-attendance-test"
+main = "dev.js"
+compatibility_date = "2025-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rvnp-attendance"
+database_id = "00000000-0000-0000-0000-000000000000"

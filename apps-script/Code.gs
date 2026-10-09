@@ -68,6 +68,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('Attendance')
     .addItem('Set up sheets', 'setup')
     .addItem('Create or reset an MIS Officer sign-in', 'resetMisAccount')
+    .addItem('Export everything for the new database', 'exportForCloudflare')
     .addToUi();
 }
 
@@ -144,6 +145,13 @@ function hmacHex_(message, secret) { return hex_(Utilities.computeHmacSha256Sign
 function sha256Hex_(s) { return hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)); }
 function classFromSession_(sessionId) { return String(sessionId).split(':')[2] || ''; }
 function unitFromSession_(sessionId) { return String(sessionId).split(':')[3] || ''; }
+/** A combined lesson ("ICT L6ICT-26J, ICT L6ICT-26M-CT") belongs to each class it names. */
+function classParts_(code) {
+  var parts = String(code).split(/\s*[,\/]\s*/).map(function (x) { return x.trim(); }).filter(Boolean);
+  if (parts.length < 2) return [code];
+  var m = /^([A-Z]+)\s/.exec(parts[0]), prefix = m ? m[1] : '';
+  return [code].concat(parts.map(function (x) { return prefix && !/\s/.test(x) ? prefix + ' ' + x : x; }));
+}
 function lastChange_() { try { return CacheService.getScriptCache().get('LAST_CHECKIN') || ''; } catch (e) { return ''; } }
 function markChanged_() { try { CacheService.getScriptCache().put('LAST_CHECKIN', nowIso_(), 21600); } catch (e) { /* cache is best-effort */ } }
 function nowIso_() { return new Date().toISOString(); }
@@ -165,7 +173,7 @@ function doGet(e) {
     // Student app (no sign-in): the class and name dropdowns for first-time setup.
     if (p.action === 'classes') return json_(publicClasses_());
     if (p.action === 'classlist') return json_(classList_(p['class']));
-    if (p.action === 'ping') return json_({ ok: true, version: '4.0.1', time: nowIso_() });
+    if (p.action === 'ping') return json_({ ok: true, version: '4.1.0', time: nowIso_() });
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_(errorOut_(err));
@@ -1114,7 +1122,7 @@ function evaluateClaim_(c, ctx, dataT) {
   if (row[CI.STATUS] !== 'accepted') {
     var status, reason = '';
     if (!t || !traineeActive_(t)) { status = 'rejected'; reason = 'unknown-student'; }
-    else if (classFromSession_(c.sessionId) !== t.ClassCode) { status = 'rejected'; reason = 'wrong-class'; }
+    else if (classParts_(classFromSession_(c.sessionId)).indexOf(t.ClassCode) === -1) { status = 'rejected'; reason = 'wrong-class'; }
     else {
       var di = ctx.devT.index[c.deviceId], ai = ctx.byAdm[lower_(adm)];
       if (di !== undefined && lower_(ctx.devT.rows[di][1]) !== lower_(adm)) { status = 'rejected'; reason = 'device-other-student'; }
@@ -1203,4 +1211,26 @@ function acceptedCheckins_(ids, since) {
     count++;
   });
   return { ok: true, serverTime: serverTime, count: count, checkins: out };
+}
+
+/* ---------- moving to the Cloudflare database ---------- */
+
+/**
+ * Writes every tab to one file in your Google Drive ("RVNP attendance export … .json").
+ * Download it, then in the app (signed in as MIS Officer, connected to the new database)
+ * open Manage > Bring in data from the Google Sheet and choose the file. PINs keep working.
+ */
+function exportForCloudflare() {
+  var tabs = {};
+  Object.keys(SHEETS).forEach(function (name) {
+    if (name === 'Sessions' || name === 'Attendance') return; // rebuilt from SessionData by the new database
+    tabs[name] = readTable_(name);
+  });
+  var out = { format: 'rvnp-sheet-export', version: 1, exportedAt: nowIso_(), tabs: tabs };
+  var file = DriveApp.createFile('RVNP attendance export ' + todayIso_() + '.json', JSON.stringify(out), 'application/json');
+  var msg = 'Export saved to your Google Drive:\n\n' + file.getName() + '\n' + file.getUrl() +
+    '\n\nDownload it, then in the app open Manage > Bring in data from the Google Sheet.';
+  Logger.log(msg);
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* run from the editor: see the log */ }
+  return file.getUrl();
 }

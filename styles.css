@@ -527,6 +527,9 @@ details.advanced[open] summary { margin-bottom: .75rem; }
 .rolechip:has(input:checked) { background: var(--p-soft); border-color: var(--p); color: var(--p); }
 .mdone { margin-top: .75rem; }
 .mdone summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: .9375rem; }
+ol.steps { margin: .75rem 0; padding-left: 1.25rem; }
+ol.steps li { margin: .35rem 0; line-height: 1.45; }
+#m-move label.btn { display: inline-flex; margin-top: .25rem; }
 .weeks { list-style: none; padding: 0; margin: .5rem 0 1rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: .35rem; }
 .weeks li { white-space: nowrap; }
 .weeks li { background: var(--sunk); border-radius: var(--r-sm); padding: .35rem .6rem; font-size: .875rem; }

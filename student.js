@@ -1,7 +1,7 @@
 /* Student check-in — works offline.
- * First login (online, once): the student picks their class and name; the Sheet ties this
+ * First login (online, once): the student picks their class and name; the server ties this
  * phone to that student. After that, scanning the trainer's lesson QR works with no internet:
- * the class is checked on the phone, the check-in is stored, and it is sent to the Sheet
+ * the class is checked on the phone, the check-in is stored, and it is sent to the server
  * whenever there is internet — even months later. */
 'use strict';
 
@@ -52,8 +52,19 @@ async function saveProfile(p) {
   });
   ls.set('rvnp_profile', JSON.stringify(p || null)); // second copy, used if the database is ever lost
 }
+/* An old Google Apps Script address gives way once config.js points at the new database. */
+const OLD_SERVER = /script\.google(usercontent)?\.com/;
+const configUrl = () => window.ATTENDANCE_CONFIG?.serverUrl || window.ATTENDANCE_CONFIG?.sheetsUrl || '';
+const outdated = (url) => OLD_SERVER.test(url || '') && configUrl() && !OLD_SERVER.test(configUrl());
+/** A combined lesson ("ICT L6ICT-26J, ICT L6ICT-26M-CT") is for students of each class it names. */
+function classParts(classCode) {
+  const parts = String(classCode).split(/\s*[,/]\s*/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 2) return [classCode];
+  const prefix = (parts[0].match(/^([A-Z]+)\s/) || [])[1];
+  return [classCode, ...parts.map((x) => (prefix && !/\s/.test(x) ? `${prefix} ${x}` : x))];
+}
 async function saveSheetsUrl(url) {
-  if (!url || url === st.sheetsUrl) return;
+  if (!url || url === st.sheetsUrl || outdated(url)) return;
   st.sheetsUrl = url;
   await updateLocal('settings', (d) => { d.sheetsUrl = url; });
   ls.set('rvnp_sheets_url', url);
@@ -91,7 +102,7 @@ async function restoreUnsent() {
 }
 
 async function api(method, params, body) {
-  if (!st.sheetsUrl) throw new Error('The app is not connected to the attendance Sheet yet — open the student link from your trainer');
+  if (!st.sheetsUrl) throw new Error('The app is not connected to the attendance server yet — open the student link from your trainer');
   const url = new URL(st.sheetsUrl);
   for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
   const res = await fetch(url.toString(), method === 'GET' ? { redirect: 'follow' }
@@ -187,7 +198,7 @@ async function handleLesson(l) {
     await openSetup();
     return;
   }
-  if (l.c !== p.classCode) {
+  if (!classParts(l.c).includes(p.classCode)) {
     showResult('err', 'Not your class', `This code is for ${l.c}. You are registered in ${p.classCode}.`);
     return;
   }
@@ -218,7 +229,7 @@ async function handleScanned(text) {
   await handleLesson(l);
 }
 
-/* ---------- sending to the Sheet ---------- */
+/* ---------- sending to the server ---------- */
 async function sync({ manual = false } = {}) {
   if (!st.profile || !st.sheetsUrl || st.syncing) return;
   if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this phone'); return; }
@@ -230,7 +241,7 @@ async function sync({ manual = false } = {}) {
     for (let i = 0; i < docs.length; i += 100) {
       const part = docs.slice(i, i + 100);
       const res = await api('POST', null, { action: 'checkin', checkins: part.map((d) => ({ sessionId: d.sessionId, classCode: d.classCode, admNo: d.admNo, deviceId: d.deviceId, w: d.w, token: d.token, scannedAt: d.scannedAt })) });
-      if (!res.ok) throw new Error(res.error || 'The Sheet did not accept the check-ins');
+      if (!res.ok) throw new Error(res.error || 'The server did not accept the check-ins');
       const byId = new Map((res.results || []).map((r) => [String(r.id).toLowerCase(), r]));
       for (const d of part) {
         const r = byId.get(`${d.sessionId}|${d.admNo}|${d.deviceId}`.toLowerCase());
@@ -382,7 +393,7 @@ async function init() {
     try { const copy = JSON.parse(ls.get('rvnp_profile') || 'null'); if (copy?.admNo) await saveProfile(copy); } catch { /* none */ }
   }
   const settings = await getLocal('settings');
-  st.sheetsUrl = settings.sheetsUrl || ls.get('rvnp_sheets_url') || window.ATTENDANCE_CONFIG?.sheetsUrl || '';
+  st.sheetsUrl = [settings.sheetsUrl, ls.get('rvnp_sheets_url'), configUrl()].find((u) => u && !outdated(u)) || '';
   const restored = await restoreUnsent();
   if (restored) toast(`Recovered ${restored} unsent check-in(s)`, 'ok');
   updateNet();

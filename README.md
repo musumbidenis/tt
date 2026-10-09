@@ -1,11 +1,17 @@
 # RVNP Attendance Register (ICT Department)
 
-Trainers mark attendance on their phones **with no internet**. Whenever a phone is online, its registers go straight into a **Google Sheet**. Class lists, trainer loading and term dates come back from the same Sheet.
+Trainers mark attendance on their phones **with no internet**. Whenever a phone is online, its registers go straight into an **online database**. Class lists, trainer loading and term dates come back from the same database.
 
-There's no server, database or card needed. It uses just GitHub Pages (for the app) and your Google account (for the data).
+The database is **Cloudflare D1** (a real SQL database), reached through a small **Cloudflare Worker**. Both are free on Cloudflare's free plan, with no card needed, and far beyond what one department uses:
+
+| Free limit | What the department uses |
+|---|---|
+| 500 MB per database | a year of registers for the whole department is roughly 50 MB |
+| 100,000 requests a day | 60 trainers marking all day is a few thousand |
+| 5 million rows read a day | most requests read a handful of rows |
 
 ```
-Phone (works offline) ──when online──▶ Apps Script web app ──▶ Google Sheet
+Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 database
 ```
 
 - Trainer app: **https://musumbidenis.github.io/tt/**
@@ -23,27 +29,35 @@ One person can have several roles; for example, an HOD who also teaches. Roles a
 
 ---
 
-## 1. Set up the Google Sheet (once)
+## 1. Set up the database (once, about 10 minutes)
 
-1. Create a Google Sheet, for example "RVNP ICT Attendance".
-2. Open **Extensions → Apps Script**. Paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs), then **Save**.
-3. Choose the function **setup** and click **Run**, then approve the permissions. It:
-   - creates all the tabs;
-   - shows the first **MIS Officer sign-in**: staff code `MIS` and a one-time PIN. Write it down. You can make a new one any time from the **Attendance** menu in the Sheet.
-4. Click **Deploy → New deployment**, set the type to **Web app**, and set:
-   - Execute as: **Me**
-   - Who has access: **Anyone**
+Everything is done in the Cloudflare dashboard in a browser. Nothing to install.
 
-   Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
-5. Put that URL in [`config.js`](config.js) in this repository, so every phone finds the Sheet by itself.
+1. Sign up at **https://dash.cloudflare.com/sign-up** (free plan, email only).
+2. **Create the database**: open **Storage & Databases → D1 SQL Database → Create Database**. Name it `rvnp-attendance` and click **Create**.
+3. **Create the Worker**: open **Workers & Pages → Create application → Start with Hello World! → Get started**. Name it `rvnp-attendance` and click **Deploy**. (The first time, Cloudflare asks you to pick a `workers.dev` subdomain; any name is fine.)
+4. **Put in the code**: on the Worker's page click **Edit code** (the **</>** icon), delete everything in the file, paste in everything from [`worker/worker.js`](worker/worker.js), and click **Deploy**.
+5. **Connect the database**: on the Worker's page open the **Bindings** tab → **Add binding → D1 database**. Variable name: `DB` (capitals). Database: `rvnp-attendance`. Click **Add binding**.
+6. **Set the first MIS PIN**: open **Settings → Variables and Secrets → Add**. Type: **Secret**, name: `ADMIN_PIN`, value: a 6-digit PIN only you know. Click **Deploy**.
+7. Copy the Worker's address from its page (it looks like `https://rvnp-attendance.<your-subdomain>.workers.dev`). Open it in a browser with `?action=ping` on the end: you should see `"ok":true`. Then put it in [`config.js`](config.js), or send it to whoever maintains the app, so every phone finds the database by itself.
 
-If you edit `Code.gs` later, go to **Deploy → Manage deployments → Edit → Version: New version → Deploy**. That keeps the same URL.
+The tables are created by themselves the first time anyone uses the app. Then sign in to the app with staff code **`MIS`** and the `ADMIN_PIN`; you'll be asked to choose your own PIN straight away.
 
-### Upgrading from the earlier version (the one with an access token)
+**Updating later**: open the Worker → **Edit code**, paste the new `worker/worker.js`, click **Deploy**. The address and the data stay the same.
 
-1. Paste the new `Code.gs` and deploy a **new version**, as above.
-2. Run **setup** once. It adds the new tabs (Staff, Terms, Loading, Requests, SignOffs, AuditLog), keeps all your data, and shows the MIS sign-in.
-3. The old access token is no longer used. Everyone signs in with their own staff code and PIN. Registers already on phones are kept and sent after the trainer signs in.
+**Locked out?** In the dashboard open the D1 database → **Console**, run `DELETE FROM staff WHERE code = 'MIS';`, and sign in again with `MIS` and the `ADMIN_PIN` (change the secret first if you've forgotten it). Nothing else is touched.
+
+### Moving from the Google Sheet
+
+If you used the earlier Google Sheet version, bring everything across once:
+
+1. In the Google Sheet open **Extensions → Apps Script**, paste in the latest [`apps-script/Code.gs`](apps-script/Code.gs) and **Save**.
+2. Reload the Sheet and choose **Attendance → Export everything for the new database**. Allow access when Google asks. It saves a file in your Google Drive; download it.
+3. In the app, signed in as MIS Officer, open **Manage → Bring in data from the Google Sheet** and choose that file.
+
+Staff, their PINs, terms, loading, class lists, registers, QR check-ins, student phones and sign-offs all come across. Running it again does no harm, so you can repeat it if a few registers reached the Sheet after the first run. Once `config.js` points at the Worker, phones switch over on their own: trainers sign in once more, and every register on their phone is sent to the new database.
+
+The Apps Script version still works as a fallback (set it up with `setup`, deploy as a web app for **Anyone**, and put its `/exec` address in `config.js`), but the Cloudflare database is the one to use.
 
 ## 2. MIS Officer: start of each term
 
@@ -122,32 +136,36 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 **One-time setup for each student (needs internet once):**
 1. Students open https://musumbidenis.github.io/tt/student.html. Trainers can also share the link from **Me → Student app link**.
 2. The student chooses their **class** (as on the MIS list, for example *CSCL6-25-S-RS*), then their **name**, and taps **Register this phone**. The app knows which stream they're in.
-3. The Sheet ties that phone to that student in the `Devices` tab:
+3. The database ties that phone to that student:
    - the phone can only check in that student;
    - that student can only check in from that phone;
    - a registered phone can't be switched to someone else.
 
 **Every lesson (trainer and students can all be offline):**
 1. Open the register and tap **Show lesson QR**. The code is made on your phone, unique to the lesson, and changes every 20 seconds. Trainees who don't scan count as **absent** unless you mark them.
-2. Students scan it with the app or their normal camera. The phone checks the class straight away, so a student from another class is refused.
-3. Whenever each phone gets internet, it syncs. The Sheet verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
+2. Students scan it with the app or their normal camera. The phone checks the class straight away, so a student from another class is refused. In a combined lesson (two classes in one loading row), students of both classes can check in.
+3. Whenever each phone gets internet, it syncs. The server verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
 
 Syncing is automatic on both sides. During a live lesson, the trainer's phone checks every few seconds with a tiny "anything new?" question. A student's scan shows up within about 3–5 seconds of them being online.
 
-## In the Sheet
+## In the database
 
-| Tab | What it holds |
+You can look at, search or download any table from the dashboard: **D1 → rvnp-attendance → Explore Data** (or **Console** for SQL).
+
+| Table | What it holds |
 |---|---|
-| `Staff` | Accounts and roles. PINs are stored only as salted hashes. |
-| `Terms` | Term dates and breaks; one is active. |
-| `Loading` | Who teaches which unit to which class, per term. |
-| `Classes` | Streams from the loading, linked to their MIS class list (`MisClass`). |
-| `Trainees` | The official class lists. `Status` is active or withdrawn. |
-| `Requests` | Students added by trainers, and the MIS Officer's decisions. |
-| `Sessions` / `Attendance` | One row per lesson and one per student per lesson, with `TermID` and `Week`. `Source` is `trainer`, `qr` or `default`. |
-| `SignOffs` | Term registers submitted to the HOD, and the decisions. |
-| `CheckIns` / `Devices` | Student QR check-ins and which phone belongs to whom. Delete a `Devices` row to let a student set up a new phone. |
-| `AuditLog` | Who changed what in Manage. |
+| `staff` | Accounts and roles. PINs are stored only as salted hashes. |
+| `terms` | Term dates and breaks; one is active. |
+| `loading` | Who teaches which unit to which class, per term. |
+| `classes` | Streams from the loading, linked to their MIS class list (`mis_class`). |
+| `trainees` | The official class lists. `status` is active or withdrawn. |
+| `requests` | Students added by trainers, and the MIS Officer's decisions. |
+| `sessions` | One row per lesson with its counts, `term_id` and `week`; `data` holds every student's mark. |
+| `signoffs` | Term registers submitted to the HOD, and the decisions. |
+| `checkins` / `devices` | Student QR check-ins and which phone belongs to whom. Delete a `devices` row to let a student set up a new phone. |
+| `audit` | Who changed what in Manage. |
+
+D1 keeps its own history: **D1 → rvnp-attendance → Time Travel** can put the whole database back to any minute in the last 7 days.
 
 ## How long data stays on a phone
 
@@ -158,7 +176,7 @@ Registers and check-ins are stored in the phone browser's database (IndexedDB). 
 | **Protected storage** | The app asks the browser to keep its data permanently. Browsers usually grant this once the app is **added to the home screen**. |
 | **Second copy** | The phone ID, the student's registration and all unsent check-ins are also kept in a second storage area. They're restored automatically if the main database is ever lost. |
 | **Reminders** | Students see a warning when check-ins have waited 3+ days. Trainers see one when registers have waited 2+ days. |
-| **No expiry at the Sheet** | A check-in that syncs months later is verified exactly like one sent the same day. |
+| **No expiry at the server** | A check-in that syncs months later is verified exactly like one sent the same day. |
 | **Trainer backup** | **Me → Export backup** saves everything on the phone to a file, including the lesson secrets that verify students' scans. |
 
 What can still lose unsent data: clearing the browser's data or uninstalling the browser; on iPhones, not opening the app for 7 days unless it was added to the home screen; and losing the phone before it syncs.
@@ -169,6 +187,7 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
   - 5 wrong PINs lock that staff code for 15 minutes;
   - when the MIS Officer resets a PIN or switches an account off, that person is signed out on every phone;
   - easy PINs like 1234 or 0000 are refused.
-- The class register PDFs, loading workbook and Excel template stay on the computer that opens them. Only the rows the MIS Officer confirms are sent to the Sheet.
-- A Google Sheet holds up to 10 million cells, enough for several hundred thousand attendance rows. Start a new Sheet each year if it gets large.
-- When you change any app file, bump `CACHE` in `sw.js` (for example `v4.0.1`) so phones fetch the new version.
+- The class register PDFs, loading workbook and Excel template stay on the computer that opens them. Only the rows the MIS Officer confirms are sent to the database.
+- Phones ask for new class lists every 10 minutes, but the answer is a few bytes unless something changed. During a live QR lesson they ask a tiny "anything new?" every few seconds.
+- When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.1`) so phones fetch the new version.
+- **Testing the Worker on a computer** (for developers): `npx wrangler dev` with `worker/dev.js` as the main file and a local D1 binding called `DB` adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.

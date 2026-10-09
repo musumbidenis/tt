@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>RVNP Attendance Register</title>
-<meta name="description" content="Offline-first attendance register for RVNP ICT Department, synced to Google Sheets">
+<meta name="description" content="Offline-first attendance register for RVNP ICT Department">
 <meta name="theme-color" content="#0b5d33">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -66,7 +66,7 @@
   </div>
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
-    <button id="syncBtn" class="btn small" title="Send waiting registers to Google Sheets">
+    <button id="syncBtn" class="btn small" title="Send waiting registers to the server">
       <svg class="i sync-icon" aria-hidden="true"><use href="#i-sync"/></svg> Sync <span id="pendingCount" class="count">0</span>
     </button>
   </div>
@@ -144,7 +144,7 @@
       <select id="sSync" aria-label="Filter by sync status">
         <option value="">All registers</option>
         <option value="pending">Waiting to sync</option>
-        <option value="synced">In Google Sheets</option>
+        <option value="synced">Sent</option>
       </select>
     </div>
     <div id="sessionList" class="session-list"></div>

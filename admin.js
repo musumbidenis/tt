@@ -1,7 +1,7 @@
 /* Manage tab — sections shown by role.
  *   HOD:  registers waiting for approval, department overview, students waiting for the MIS Officer
  *   MIS:  term, trainer loading, class lists, student requests, staff
- * Everything here talks to the Sheet, so it needs internet (marking does not). */
+ * Everything here talks to the server, so it needs internet (marking does not). */
 'use strict';
 
 const Admin = (() => {
@@ -14,14 +14,14 @@ const Admin = (() => {
   const section = (id, title, inner, extra = '') => `<section class="card msec" id="${id}">
     <div class="msec-head"><h2>${title}</h2>${extra}</div>${inner}</section>`;
   const busy = (btn, on, label) => { if (!btn) return; btn.disabled = on; if (label) btn.dataset.label = btn.dataset.label || btn.textContent; btn.textContent = on ? label : (btn.dataset.label || btn.textContent); };
-  const need = (res) => { if (!res.ok) throw new Error(res.error || 'The Sheet refused that'); return res; };
+  const need = (res) => { if (!res.ok) throw new Error(res.error || 'The server refused that'); return res; };
   const dialog = (html) => { $('#adminDialogBody').innerHTML = html; $('#adminDialog').showModal(); };
   const closeDialog = () => $('#adminDialog').close();
 
   async function render() {
     if (!(hasRole('HOD') || hasRole('MIS'))) { box().innerHTML = ''; return; }
     if (!navigator.onLine) {
-      box().innerHTML = '<div class="card notice"><h2>Manage needs internet</h2><p>Approvals, uploads and staff changes go straight to the Sheet. Marking registers still works offline.</p></div>';
+      box().innerHTML = '<div class="card notice"><h2>Manage needs internet</h2><p>Approvals, uploads and staff changes go straight to the server. Marking registers still works offline.</p></div>';
       return;
     }
     const parts = [];
@@ -32,6 +32,7 @@ const Admin = (() => {
       parts.push(section('m-loading', 'Trainer loading', loadingHtml()));
       parts.push(section('m-classes', 'Class lists', classesHtml()));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
+      if (!OLD_SERVER.test(serverUrl())) parts.push(section('m-move', 'Bring in data from the Google Sheet', moveHtml()));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'));
     box().innerHTML = parts.join('');
     const jobs = [];
@@ -347,6 +348,50 @@ const Admin = (() => {
     } catch (e) { toast(e.message, 'err'); loadStaff(); }
   }
 
+  /* ---------- MIS: one-time move from the Google Sheet ---------- */
+  const MOVE_ORDER = ['Staff', 'Terms', 'Classes', 'Units', 'Loading', 'Trainees', 'Requests', 'Devices', 'CheckIns', 'SessionData', 'SignOffs', 'AuditLog'];
+  const MOVE_LABEL = { Staff: 'staff', Terms: 'terms', Classes: 'classes', Units: 'units', Loading: 'loading rows', Trainees: 'students', Requests: 'added students',
+    Devices: 'student phones', CheckIns: 'QR check-ins', SessionData: 'registers', SignOffs: 'sign-offs', AuditLog: 'history entries' };
+  function moveHtml() {
+    return `<details class="mdone"><summary>Only needed once, if you used the Google Sheet before</summary>
+      <ol class="steps small">
+        <li>Open the Google Sheet and paste the latest <code>apps-script/Code.gs</code> into Extensions › Apps Script, then save.</li>
+        <li>Back in the Sheet, reload it and choose <b>Attendance › Export everything for the new database</b>. Allow access when Google asks.</li>
+        <li>Download the export file it saved in your Google Drive, then choose it here.</li>
+      </ol>
+      <p class="muted small">Everything is copied: staff (their PINs keep working), terms, loading, class lists, registers, QR check-ins and sign-offs. Running it twice does no harm.</p>
+      <label class="btn">Choose the export file<input type="file" id="sheetExport" accept=".json,application/json" hidden></label>
+      <p id="moveStatus" class="muted small" aria-live="polite"></p></details>`;
+  }
+  async function importSheetFile(file) {
+    const status = $('#moveStatus');
+    let data;
+    try { data = JSON.parse(await file.text()); } catch { data = null; }
+    if (!data || data.format !== 'rvnp-sheet-export' || !data.tabs) { status.textContent = 'That is not an export file from the attendance Sheet.'; status.className = 'err-text small'; return; }
+    status.className = 'muted small';
+    const done = [];
+    try {
+      for (const tab of MOVE_ORDER) {
+        const rows = (data.tabs[tab] || []).filter((r) => Object.values(r).some((v) => String(v).trim() !== ''));
+        if (!rows.length) continue;
+        const size = tab === 'SessionData' ? 15 : 200;
+        let saved = 0;
+        for (let i = 0; i < rows.length; i += size) {
+          status.textContent = `Copying ${MOVE_LABEL[tab]}… ${Math.min(i + size, rows.length)} of ${rows.length}`;
+          saved += need(await api('importSheet', { tab, rows: rows.slice(i, i + size) })).saved || 0;
+        }
+        done.push(`${saved} ${MOVE_LABEL[tab]}`);
+      }
+      status.textContent = 'Copied: ' + (done.join(', ') || 'nothing (the export was empty)') + '.';
+      toast('Data from the Google Sheet is now in the new database', 'ok');
+      pullRoster({ silent: true });
+      loadRequests(); loadStaff();
+    } catch (e) {
+      status.textContent = `Stopped${done.length ? ' after ' + done.join(', ') : ''}: ${e.message}. Choose the file again to carry on.`;
+      status.className = 'err-text small';
+    }
+  }
+
   /* ---------- badge on the Manage tab ---------- */
   function refreshBadge() {
     const dot = $('#manageCount'); if (!dot) return;
@@ -387,6 +432,7 @@ const Admin = (() => {
     const t = e.target;
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
+    if (t.id === 'sheetExport' && t.files[0]) { importSheetFile(t.files[0]); t.value = ''; }
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');
     if (t.matches('.import .streams input, .import .misCode')) { const card = t.closest('.import'); const imp = readImportCard(card); imp.diff = null; card.outerHTML = importCard(imp, Number(card.dataset.i)); }
     if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
