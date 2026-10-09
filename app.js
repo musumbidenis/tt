@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.2.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -111,10 +111,7 @@ function normaliseRoster(input) {
   const classes = new Map();
   for (const c of input.classes || []) {
     const code = pick(c, ['code', 'classcode', 'ClassCode']);
-    if (code) {
-      const joinKey = pick(c, ['joinKey']);
-      classes.set(code, { _id: 'class:' + code, type: 'class', code, name: pick(c, ['name', 'classname', 'ClassName']) || code, ...(joinKey ? { joinKey } : {}) });
-    }
+    if (code) classes.set(code, { _id: 'class:' + code, type: 'class', code, name: pick(c, ['name', 'classname', 'ClassName']) || code });
   }
   const trainees = [];
   for (const t of input.trainees || []) {
@@ -301,7 +298,7 @@ function renderRegister() {
   $('#traineeList').innerHTML = rows.length ? rows.map((t) => {
     const st = s.marks?.[t.admNo] || '';
     return `<li class="trow${t.unlisted ? ' unlisted' : ''}" data-adm="${esc(t.admNo)}">
-      <div class="tinfo"><span class="tname">${esc(t.name)}${s.viaQr?.[t.admNo] ? ' <span class="qrtag" title="Checked in by scanning the lesson QR">QR</span>' : ''}</span><span class="tadm">${esc(t.admNo)}</span></div>
+      <div class="tinfo"><span class="tname">${esc(t.name)}${qrTag(s, t.admNo)}</span><span class="tadm">${esc(t.admNo)}</span></div>
       <div class="seg" role="group" aria-label="Status for ${esc(t.name)}">
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
       </div></li>`;
@@ -311,6 +308,15 @@ function renderRegister() {
   $('#editLogInfo').textContent = log.length
     ? `Edited after locking ${log.length} time(s). Last: ${fmtTime(log[log.length - 1].at)} by ${log[log.length - 1].by} — "${log[log.length - 1].reason}"`
     : '';
+}
+
+function qrTag(s, adm) {
+  const refused = s.qrRefused?.[adm];
+  if (refused) return ` <span class="qrtag bad" title="QR check-in refused by the Sheet: ${esc(refused)}">QR ✕</span>`;
+  if (!s.viaQr?.[adm]) return '';
+  const v = s.qrVerified?.[adm];
+  const title = v ? `QR check-in confirmed (${v})` : s.receipts?.[adm] ? 'Receipt scanned on this phone' : 'Checked in by QR';
+  return ` <span class="qrtag" title="${esc(title)}">${v === 'Both' ? 'QR ✓✓' : 'QR'}</span>`;
 }
 
 function countMarks(s) {
@@ -469,6 +475,7 @@ async function startScan() {
 }
 
 async function handleScan(raw) {
+  if (String(raw).startsWith(RECEIPT_PREFIX)) return handleReceipt(raw);
   let adm = String(raw).trim();
   try { const j = JSON.parse(adm); if (j && (j.adm || j.admNo)) adm = String(j.adm || j.admNo).trim(); } catch { /* plain text code */ }
   const s = state.current;
@@ -661,6 +668,7 @@ function toSheetSession(s) {
     marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
       .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo] })),
     ...(s.qr ? { qr: { secret: s.qr.secret, intervals: s.qr.intervals } } : {}),
+    receipts: Object.entries(s.receipts || {}).map(([admNo, r]) => ({ admNo, deviceId: r.deviceId, w: r.w, token: r.token, scannedAt: r.scannedAt, capturedAt: r.capturedAt })),
   };
 }
 
@@ -718,6 +726,11 @@ async function pullRoster({ silent = false } = {}) {
     if (!res.ok) throw new Error(res.error || 'Could not read the class lists');
     if (!(res.trainees || []).length && state.trainees.length) throw new Error('the Trainees tab is empty — kept the class lists already on this phone');
     const r = await replaceRoster(res, ['class', 'unit', 'trainee']);
+    if (Array.isArray(res.devices)) {
+      // Phones registered in the Sheet, so receipts from someone else's phone are refused offline.
+      const server = Object.fromEntries(res.devices.map((x) => [x.deviceId, x.admNo]));
+      await updateLocal('phones', (d) => { d.server = server; d.local = Object.fromEntries(Object.entries(d.local || {}).filter(([k]) => !server[k])); });
+    }
     await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
     renderSheetsStatus();
     if (!silent) toast(`Class lists saved: ${r.classes} classes, ${r.trainees} trainees — you can now mark offline`, 'ok');
@@ -846,7 +859,7 @@ async function openLessonQR() {
       const iv = s.qr.intervals[s.qr.intervals.length - 1];
       if (iv[1] !== w) { iv[1] = w; markDirty(); }
       const t = await qrToken(s.qr.secret, s._id, w);
-      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, w, t });
+      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, u: state.settings.sheetsUrl, w, t });
       const box = $('#lessonQrCode');
       box.innerHTML = qrSvg(url, 6);
       box.dataset.url = url;
@@ -864,22 +877,72 @@ function closeLessonQR() {
   if (state.dirty) saveCurrent();
 }
 
-function showJoinQR(classCode) {
-  const cls = state.classes.find((c) => c.code === classCode);
-  if (!cls) { toast('Choose a class first', 'err'); return; }
-  if (!cls.joinKey || !state.settings.sheetsUrl) {
-    toast('Paste the latest Code.gs into your Sheet, deploy a new version, then tap Setup → Download class lists', 'err');
+/* ---------------- receipts: the student's phone shows a QR, the trainer scans it ----------------
+ * This is the trainer-side record of each check-in, captured offline with the student's phone ID.
+ * It is checked on the spot against the class list, the lesson code and the registered phones. */
+const RECEIPT_PREFIX = 'rvnp-receipt:';
+const decodeB64 = (b64) => {
+  const t = b64.replace(/-/g, '+').replace(/_/g, '/');
+  return JSON.parse(decodeURIComponent(escape(atob(t + '='.repeat((4 - (t.length % 4)) % 4)))));
+};
+
+async function handleReceipt(raw) {
+  const out = $('#scanResult');
+  const fail = (msg) => { out.textContent = msg; out.className = 'scan-result err'; navigator.vibrate?.([60, 60, 60]); };
+  let r;
+  try { r = decodeB64(String(raw).slice(RECEIPT_PREFIX.length)); } catch { fail('Unreadable receipt'); return; }
+  const s = state.current;
+  if (!s) { fail('Open the lesson register first'); return; }
+  if (r.s !== s._id) { fail('This receipt is for a different lesson'); return; }
+  if (!s.qr) { fail('Show the lesson QR for this register first'); return; }
+  const adm = String(r.a || '').trim();
+  const t = activeTraineesFor(s.classCode).find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
+  if (!t) {
+    const other = state.trainees.find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
+    fail(other ? `${other.name} is in ${other.classCode}, not this class` : `${adm || 'This admission number'} is not on the class list`);
     return;
   }
-  const url = studentPageUrl() + '#j=' + b64url({ v: 1, u: state.settings.sheetsUrl, c: cls.code, cn: cls.name, k: cls.joinKey });
-  $('#joinQrTitle').textContent = `${cls.code} — ${cls.name}`;
-  $('#joinQrCode').innerHTML = qrSvg(url, 5);
-  $('#joinQrCode').dataset.url = url;
-  $('#joinQrLink').value = url;
-  $('#joinQrDialog').showModal();
+  // The code on the receipt must be one this phone showed for this lesson, at that time.
+  const w = Number(r.w);
+  const inTime = (s.qr.intervals || []).some(([a, b]) => w >= a - 1 && w <= b + 1);
+  if (!inTime || (await qrToken(s.qr.secret, s._id, w)) !== String(r.t || '').toLowerCase()) {
+    fail(`${t.name}: the code on this phone is not from this lesson`);
+    return;
+  }
+  // One phone per student, one student per phone.
+  const book = await getLocal('phones');
+  const phones = { ...(book.local || {}), ...(book.server || {}) };
+  const owner = phones[r.d];
+  if (owner && owner.toLowerCase() !== t.admNo.toLowerCase()) {
+    fail(`This phone is registered to ${state.trainees.find((x) => x.admNo === owner)?.name || owner}`);
+    return;
+  }
+  const own = Object.entries(phones).find(([, a]) => a.toLowerCase() === t.admNo.toLowerCase());
+  if (own && own[0] !== r.d) { fail(`${t.name} is registered on a different phone`); return; }
+  s.receipts = s.receipts || {};
+  const prev = s.receipts[t.admNo];
+  if (prev && prev.deviceId !== r.d) { fail(`${t.name} was already confirmed on a different phone`); return; }
+  const usedBy = Object.entries(s.receipts).find(([a, x]) => x.deviceId === r.d && a !== t.admNo);
+  if (usedBy) { fail(`This phone already checked in ${s.names[usedBy[0]] || usedBy[0]}`); return; }
+  if (prev) { out.textContent = `${t.name} — already confirmed`; out.className = 'scan-result ok'; return; }
+  if (!(await ensureEditable())) return;
+
+  s.receipts[t.admNo] = { deviceId: r.d, w, token: String(r.t).toLowerCase(), scannedAt: r.at || '', capturedAt: nowISO() };
+  s.viaQr = { ...(s.viaQr || {}), [t.admNo]: r.at || nowISO() };
+  if (s.qrRefused) delete s.qrRefused[t.admNo];
+  if (!s.explicit?.[t.admNo]) s.marks[t.admNo] = 'P';
+  s.names[t.admNo] = t.name;
+  await updateLocal('phones', (d) => { d.local = { ...(d.local || {}), [r.d]: t.admNo }; });
+  renderRegister();
+  markDirty();
+  out.textContent = `${t.name} — confirmed ✓`;
+  out.className = 'scan-result ok';
+  navigator.vibrate?.(80);
+  const row = $(`.trow[data-adm="${CSS.escape(t.admNo)}"]`);
+  if (row) { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); }
 }
 
-/* After sending registers, fetch the QR check-ins the Sheet accepted and show them in the registers. */
+/* After sending registers, fetch what the Sheet decided about QR check-ins and show it in the registers. */
 async function pullCheckins() {
   const since = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
   const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
@@ -888,17 +951,28 @@ async function pullCheckins() {
   if (!res.ok) throw new Error(res.error || 'Could not read QR check-ins');
   let changed = 0;
   for (const stored of sessions) {
-    const list = res.checkins?.[stored._id] || [];
-    if (!list.length) continue;
+    const data = res.checkins?.[stored._id];
+    if (!data) continue;
     const open = state.current && state.current._id === stored._id;
     const doc = open ? state.current : stored;
-    doc.viaQr = doc.viaQr || {};
+    doc.viaQr = doc.viaQr || {}; doc.qrVerified = doc.qrVerified || {}; doc.qrRefused = doc.qrRefused || {};
     let touched = false;
-    for (const c of list) {
-      if (doc.viaQr[c.admNo]) continue;
-      doc.viaQr[c.admNo] = c.scannedAt || nowISO();
-      if (!doc.explicit?.[c.admNo]) doc.marks[c.admNo] = 'P';
-      if (!doc.names[c.admNo]) doc.names[c.admNo] = c.name || c.admNo;
+    const acceptedAdm = new Set((data.accepted || []).map((c) => c.admNo));
+    for (const c of data.accepted || []) {
+      if (doc.qrVerified[c.admNo] !== c.verification) { doc.qrVerified[c.admNo] = c.verification; touched = true; }
+      if (doc.qrRefused[c.admNo]) { delete doc.qrRefused[c.admNo]; touched = true; }
+      if (!doc.viaQr[c.admNo]) {
+        doc.viaQr[c.admNo] = c.scannedAt || nowISO();
+        if (!doc.explicit?.[c.admNo]) doc.marks[c.admNo] = 'P';
+        if (!doc.names[c.admNo]) doc.names[c.admNo] = c.name || c.admNo;
+        touched = true;
+      }
+    }
+    for (const c of data.rejected || []) {
+      if (acceptedAdm.has(c.admNo) || doc.qrRefused[c.admNo] === c.reason) continue;
+      doc.qrRefused[c.admNo] = c.reason;
+      delete doc.viaQr[c.admNo];
+      if (!doc.explicit?.[c.admNo] && doc.marks[c.admNo] === 'P') doc.marks[c.admNo] = 'A';
       touched = true;
     }
     if (!touched) continue;
@@ -1002,12 +1076,7 @@ function wire() {
   $('#lessonQrBtn').addEventListener('click', openLessonQR);
   $('#closeLessonQr').addEventListener('click', closeLessonQR);
   $('#lessonQrDialog').addEventListener('close', closeLessonQR);
-  $('#joinQrBtn').addEventListener('click', () => showJoinQR($('#rClass').value));
-  $('#closeJoinQr').addEventListener('click', () => $('#joinQrDialog').close());
-  $('#copyJoinLink').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText($('#joinQrLink').value); toast('Link copied — paste it in the class WhatsApp group', 'ok'); }
-    catch { $('#joinQrLink').select(); toast('Select and copy the link'); }
-  });
+  $('#collectReceipts').addEventListener('click', () => { closeLessonQR(); startScan(); });
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);
 

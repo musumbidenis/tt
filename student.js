@@ -1,18 +1,21 @@
 /* Student check-in — works offline.
- * A student registers this phone once (class join link, while online), then scans the
- * trainer's lesson QR. Check-ins are kept on the phone and sent to the Google Sheet when
- * there is internet; the Sheet verifies each one and ties the phone to the student. */
+ * The student scans the trainer's lesson QR (no joining needed). The first time, they type
+ * their admission number; their class comes from the Google Sheet. Each check-in is kept on
+ * the phone, shown as a receipt QR for the trainer to scan (the trainer-side record), and
+ * sent to the Sheet when there is internet. The Sheet ties this phone to the student on the
+ * first submission and confirms the check-in when both records match. */
 'use strict';
 
 const sdb = new PouchDB('rvnp_student', { auto_compaction: true });
+const RECEIPT_PREFIX = 'rvnp-receipt:';
 const REASONS = {
   'wrong-class': 'Not your class',
   'device-other-student': 'This phone is registered to another student',
   'student-other-device': 'You are registered on another phone — see your trainer',
   'invalid-code': 'Code not valid (expired, or not from your trainer)',
-  'unknown-student': 'Admission number not found — choose your name again',
+  'unknown-student': 'Admission number not found',
 };
-const st = { deviceId: '', profile: null, join: null, roster: [], syncing: false };
+const st = { deviceId: '', profile: null, pendingLesson: null, syncing: false };
 
 /* ---------- helpers ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -21,6 +24,7 @@ const nowISO = () => new Date().toISOString();
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const fmtDate = (d) => (d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : '');
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+const b64url = (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 let toastTimer;
 function toast(msg, kind = '') {
@@ -40,17 +44,27 @@ async function updateLocal(id, fn) {
 }
 async function saveProfile(p) {
   st.profile = p;
-  await updateLocal('profile', (d) => { for (const k of Object.keys(d)) if (k !== '_id' && k !== '_rev') delete d[k]; Object.assign(d, p || {}); });
+  await updateLocal('profile', (d) => {
+    for (const k of Object.keys(d)) if (k !== '_id' && k !== '_rev') delete d[k];
+    Object.assign(d, p || {});
+  });
 }
 
 function decodeB64(b64) {
   const s = b64.replace(/-/g, '+').replace(/_/g, '/');
   return JSON.parse(decodeURIComponent(escape(atob(s + '='.repeat((4 - (s.length % 4)) % 4)))));
 }
-function parseLink(text) {
-  const m = /#(l|j)=([A-Za-z0-9_-]+)/.exec(String(text || ''));
+function parseLesson(text) {
+  const m = /#l=([A-Za-z0-9_-]+)/.exec(String(text || ''));
   if (!m) return null;
-  try { return { kind: m[1], data: decodeB64(m[2]) }; } catch { return null; }
+  try { return decodeB64(m[1]); } catch { return null; }
+}
+function qrSvg(text, cell = 5) {
+  const qr = qrcode(0, 'M'); qr.addData(text); qr.make();
+  return qr.createSvgTag({ cellSize: cell, margin: 2, scalable: true });
+}
+function receiptText(d) {
+  return RECEIPT_PREFIX + b64url({ v: 1, s: d.sessionId, a: d.admNo, d: d.deviceId, w: d.w, t: d.token, at: d.scannedAt });
 }
 
 async function checkins() {
@@ -58,111 +72,91 @@ async function checkins() {
   return r.rows.map((x) => x.doc);
 }
 
-function showResult(kind, title, text, sub = '') {
+function showResult(kind, title, text, sub = '', receiptDoc = null) {
   const box = $('#result');
   box.hidden = false;
   box.className = 'card result ' + kind;
-  $('#resultIcon').textContent = kind === 'ok' ? '✓' : kind === 'wait' ? '…' : '✕';
+  $('#resultIcon').textContent = kind === 'ok' ? '✓' : '✕';
   $('#resultTitle').textContent = title;
   $('#resultText').textContent = text;
   $('#resultSub').textContent = sub;
+  $('#receiptBox').hidden = !receiptDoc;
+  if (receiptDoc) {
+    const txt = receiptText(receiptDoc);
+    $('#receiptCode').innerHTML = qrSvg(txt, 5);
+    $('#receiptCode').dataset.receipt = txt;
+    $('#receiptWho').textContent = `${st.profile?.name || receiptDoc.admNo} · phone ${st.deviceId}`;
+  }
   navigator.vibrate?.(kind === 'ok' ? 120 : [80, 60, 80]);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/* ---------- joining a class (once, online) ---------- */
-async function handleJoin(j) {
-  if (!j || !j.u || !j.c || !j.k) { showResult('err', 'This join link is incomplete', 'Ask your trainer for the class join QR again.'); return; }
-  const p = st.profile;
-  if (p?.locked) {
-    if (p.classCode === j.c) {
-      if (p.sheetsUrl !== j.u) await saveProfile({ ...p, sheetsUrl: j.u });
-      showResult('ok', 'Already registered', `${p.name} — ${p.className}`);
-    } else {
-      showResult('err', 'This phone is already registered', `It belongs to ${p.name} in ${p.classCode}. Ask your trainer if this is wrong.`);
+/* ---------- identity (once) ---------- */
+function askIdentity(why = '') {
+  $('#idCard').hidden = false;
+  $('#idWhy').textContent = why;
+  $('#idAdm').value = '';
+  $('#idAdm').focus();
+  render();
+}
+
+async function saveIdentity() {
+  const adm = $('#idAdm').value.trim().toUpperCase();
+  if (!adm) { toast('Type your admission number', 'err'); return; }
+  if (!confirm(`Register this phone to ${adm}?\n\nAfter it is confirmed, this phone can only check in ${adm}.`)) return;
+  const old = st.profile;
+  await saveProfile({ admNo: adm, sheetsUrl: old?.sheetsUrl || st.pendingLesson?.u || '', confirmed: false, registeredAt: nowISO() });
+  // Check-ins saved under a wrong admission number are re-sent under the new one.
+  for (const d of await checkins()) {
+    if (d.status === 'rejected' && (d.reason === 'unknown-student' || d.reason === 'wrong-class') || (d.status === 'saved' && d.admNo !== adm)) {
+      Object.assign(d, { admNo: adm, status: 'saved', reason: '' });
+      await sdb.put(d);
     }
-    return;
   }
-  st.join = j;
-  await updateLocal('join', (d) => Object.assign(d, j));
-  await openJoin();
-}
-
-async function openJoin(reason = '') {
-  const j = st.join; if (!j) return;
-  $('#joinCard').hidden = false;
-  $('#joinClass').textContent = `${j.c} — ${j.cn || ''}`;
-  st.roster = [];
-  if (navigator.onLine) {
-    try {
-      const url = new URL(j.u);
-      url.searchParams.set('action', 'classlist'); url.searchParams.set('class', j.c); url.searchParams.set('key', j.k);
-      const res = await (await fetch(url.toString(), { redirect: 'follow' })).json();
-      if (!res.ok) throw new Error(res.error || 'Could not load the class list');
-      st.roster = res.trainees || [];
-    } catch (e) { reason = e.message.includes('join code') ? e.message : 'Could not load the class list (' + e.message + ').'; }
-  } else reason = reason || 'You are offline, so the class list can\'t load.';
-  const manual = !st.roster.length;
-  $('#joinPick').hidden = manual;
-  $('#joinManual').hidden = !manual;
-  $('#joinManualWhy').textContent = manual ? `${reason} Type your admission number — it is checked when you next have internet.` : '';
-  renderJoinList();
-  render();
-}
-
-function renderJoinList() {
-  const q = $('#joinSearch').value.trim().toLowerCase();
-  const list = st.roster.filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
-  $('#joinList').innerHTML = list.map((t) => `<li><button type="button" data-adm="${esc(t.admNo)}" data-name="${esc(t.name)}">
-    <b>${esc(t.name)}</b><span>${esc(t.admNo)}</span></button></li>`).join('') || '<li class="empty">No match</li>';
-}
-
-async function chooseIdentity(admNo, name, confirmed) {
-  const j = st.join; if (!j) return;
-  if (!admNo) { toast('Enter your admission number', 'err'); return; }
-  if (!confirm(`Register this phone to ${name || admNo} (${admNo})?\n\nAfter your first check-in this can't be changed on this phone.`)) return;
-  await saveProfile({ admNo, name: name || admNo, classCode: j.c, className: j.cn || j.c, sheetsUrl: j.u, joinKey: j.k, locked: false, confirmed: !!confirmed, registeredAt: nowISO() });
-  st.join = null;
-  await updateLocal('join', (d) => { for (const k of Object.keys(d)) if (k !== '_id' && k !== '_rev') delete d[k]; });
-  $('#joinCard').hidden = true;
-  showResult('ok', 'Phone registered', `${name || admNo} — ${j.cn || j.c}`, 'Now scan your trainer\'s lesson QR in class. Tip: add this page to your home screen.');
-  render();
+  $('#idCard').hidden = true;
+  const l = st.pendingLesson;
+  st.pendingLesson = null;
+  if (l) await handleLesson(l);
+  else { await render(); sync(); }
 }
 
 /* ---------- recording a check-in (offline) ---------- */
 async function handleLesson(l) {
   if (!l || !l.s || !l.c || l.w === undefined || !l.t) { showResult('err', 'Not a lesson code', 'Scan the QR on your trainer\'s screen.'); return; }
   const p = st.profile;
-  if (!p) { showResult('err', 'Register this phone first', 'Open your class join link from your trainer while online, then scan again.'); render(); return; }
-  if (l.c !== p.classCode) { showResult('err', 'Not your class', `This code is for ${l.c}. You are registered in ${p.classCode}.`); return; }
+  if (!p) {
+    st.pendingLesson = l;
+    showResult('ok', `${l.un || 'Lesson'} · ${l.p || ''}`, 'One more step: type your admission number below.');
+    askIdentity();
+    return;
+  }
+  if (p.classCode && l.c !== p.classCode) {
+    showResult('err', 'Not your class', `This code is for ${l.c}. You are in ${p.classCode}.`);
+    return;
+  }
+  if (l.u && p.sheetsUrl !== l.u) await saveProfile({ ...p, sheetsUrl: l.u });
   const id = 'checkin:' + l.s;
   try {
     const existing = await sdb.get(id);
-    const identityProblem = existing.status === 'rejected' && ['unknown-student', 'wrong-class'].includes(existing.reason);
-    if (!identityProblem || existing.admNo === p.admNo) {
-      showResult('ok', 'Already recorded', `${l.un || ''} · ${l.p || ''}`, `Recorded ${fmtTime(existing.scannedAt)}`);
-      return;
-    }
-    await sdb.remove(existing); // recorded under a wrong admission number — record again for the right one
+    showResult('ok', 'Already recorded', `${l.un || ''} · ${l.p || ''}`, `Recorded ${fmtTime(existing.scannedAt)}`, existing);
+    return;
   } catch (e) { if (e.status !== 404) throw e; }
   const doc = {
     _id: id, type: 'checkin', sessionId: l.s, classCode: l.c, unitName: l.un || '', period: l.p || '', trainer: l.n || '',
-    date: String(l.s).split(':')[1] || '', w: l.w, token: l.t, admNo: p.admNo, deviceId: st.deviceId,
-    scannedAt: nowISO(), status: 'saved', reason: '',
+    date: String(l.s).split(':')[1] || '', w: l.w, token: l.t, admNo: st.profile.admNo, deviceId: st.deviceId,
+    scannedAt: nowISO(), status: 'saved', reason: '', verification: '',
   };
   await sdb.put(doc);
-  if (!p.locked) await saveProfile({ ...p, locked: true }); // first submission ties this phone to this student
   showResult('ok', 'Attendance recorded', `${doc.unitName} · ${doc.period}${doc.trainer ? ' · ' + doc.trainer : ''}`,
-    navigator.onLine ? 'Sending to your trainer…' : 'Saved on this phone — it will be sent when you have internet.');
+    navigator.onLine ? 'Sending…' : 'Saved on this phone — sent when you have internet.', doc);
   await render();
   sync();
 }
 
-async function handleLink(text) {
-  const link = parseLink(text);
-  if (!link) return false;
-  if (link.kind === 'j') await handleJoin(link.data);
-  else await handleLesson(link.data);
+async function handleScanned(text) {
+  const l = parseLesson(text);
+  if (!l) { toast('That is not a lesson QR', 'err'); return false; }
+  await handleLesson(l);
   return true;
 }
 
@@ -171,7 +165,10 @@ async function sync({ manual = false } = {}) {
   const p = st.profile;
   if (!p?.sheetsUrl || st.syncing) return;
   if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this phone'); return; }
-  const docs = (await checkins()).filter((d) => d.status === 'saved' || d.status === 'pending');
+  const recent = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
+  // Also re-check recent confirmed ones until the trainer's receipt is matched too.
+  const docs = (await checkins()).filter((d) => d.status === 'saved' || d.status === 'pending'
+    || (d.status === 'accepted' && d.verification !== 'Both' && d.date >= recent));
   if (!docs.length) { if (manual) toast('Nothing waiting to send', 'ok'); return; }
   st.syncing = true;
   $('#syncBtn').classList.add('syncing');
@@ -182,23 +179,28 @@ async function sync({ manual = false } = {}) {
     })).json();
     if (!res.ok) throw new Error(res.error || 'The Sheet did not accept the check-ins');
     const byId = new Map((res.results || []).map((r) => [String(r.id).toLowerCase(), r]));
-    let identityBad = false, confirmed = false;
+    let known = null, bound = false, unknown = false, otherClass = null;
     for (const d of docs) {
       const r = byId.get(`${d.sessionId}|${d.admNo}|${d.deviceId}`.toLowerCase());
       if (!r) continue;
-      d.status = r.status; d.reason = r.reason || ''; d.checkedAt = nowISO();
+      Object.assign(d, { status: r.status, reason: r.reason || '', verification: r.verification || '', checkedAt: nowISO() });
       await sdb.put(d);
-      if (r.reason === 'unknown-student' || r.reason === 'wrong-class') identityBad = true;
-      if (r.status === 'accepted' || r.status === 'pending' || r.reason === 'invalid-code') confirmed = true;
+      if (r.name) known = { name: r.name, classCode: r.classCode };
+      if (r.status === 'accepted' || r.status === 'pending' || r.reason === 'invalid-code') bound = true;
+      if (r.reason === 'unknown-student') unknown = true;
+      if (r.reason === 'wrong-class') otherClass = d.classCode;
     }
-    if (identityBad && !confirmed && !(await checkins()).some((d) => d.status === 'accepted')) {
-      const p0 = st.profile;
-      st.join = { u: p0.sheetsUrl, c: p0.classCode, cn: p0.className, k: p0.joinKey };
-      await saveProfile(null);
-      await updateLocal('join', (d) => Object.assign(d, st.join));
-      showResult('err', 'Admission number not found', 'Choose your name from the class list below.');
-      openJoin();
-    } else if (confirmed && !st.profile.confirmed) await saveProfile({ ...st.profile, confirmed: true });
+    const prof = st.profile;
+    if (known) await saveProfile({ ...prof, name: known.name, classCode: known.classCode, confirmed: prof.confirmed || bound });
+    else if (bound && !prof.confirmed) await saveProfile({ ...prof, confirmed: true });
+    if (!st.profile.confirmed) {
+      if (unknown) {
+        showResult('err', 'Admission number not found', `${prof.admNo} is not on the class lists.`);
+        askIdentity('That admission number was not found. Type it again.');
+      } else if (otherClass && known) {
+        showResult('err', 'Not your class', `${prof.admNo} (${known.name}) is in ${known.classCode}, but the lesson was for ${otherClass}.`, 'If that is not you, tap "Change admission number".');
+      }
+    }
     if (manual) toast('Check-ins sent', 'ok');
   } catch (e) {
     if (manual) toast('Could not send: ' + e.message, 'err');
@@ -239,7 +241,7 @@ async function startScan() {
         }
       }
     } catch { /* keep trying */ }
-    if (code && parseLink(code)) { stopScan(); await handleLink(code); return; }
+    if (code && parseLesson(code)) { stopScan(); await handleScanned(code); return; }
     setTimeout(tick, detector ? 120 : 200);
   };
   tick();
@@ -253,30 +255,49 @@ function stopScan() {
 /* ---------- screen ---------- */
 async function render() {
   const p = st.profile;
-  $('#who').textContent = p ? `${p.name} · ${p.classCode}` : 'Not registered';
-  $('#noProfile').hidden = !!p || !!st.join;
+  $('#who').textContent = p ? `${p.name || p.admNo}${p.classCode ? ' · ' + p.classCode : ''}` : 'Scan your trainer\'s QR to start';
+  const list = (await checkins()).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt)));
+  $('#startCard').hidden = !!p || !$('#idCard').hidden || !$('#result').hidden;
   $('#profileCard').hidden = !p;
   if (p) {
-    $('#pName').textContent = p.name;
-    $('#pMeta').textContent = `${p.admNo} · ${p.className}`;
+    $('#pName').textContent = p.name || p.admNo;
+    $('#pMeta').textContent = [p.admNo, p.classCode].filter(Boolean).join(' · ') + (p.name ? '' : ' · name appears after your first sync');
     const lock = $('#pLock');
-    lock.textContent = p.locked ? 'Registered to this phone' : 'Not confirmed yet';
-    lock.className = 'pill ' + (p.locked ? 'synced' : 'pending');
-    $('#changeMe').hidden = !!p.locked;
+    lock.textContent = p.confirmed ? 'Registered to this phone' : 'Waiting for confirmation';
+    lock.className = 'pill ' + (p.confirmed ? 'synced' : 'pending');
+    let change = $('#changeAdm');
+    if (!p.confirmed) {
+      if (!change) {
+        change = document.createElement('button');
+        change.id = 'changeAdm'; change.type = 'button'; change.className = 'btn ghost small';
+        change.textContent = 'Change admission number';
+        change.addEventListener('click', () => askIdentity());
+        $('#profileCard').appendChild(change);
+      }
+    } else change?.remove();
   }
-  const list = (await checkins()).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt)));
   $('#historyCard').hidden = !list.length;
   $('#history').innerHTML = list.map((d) => {
-    const label = d.status === 'accepted' ? ['synced', 'Confirmed']
+    const label = d.status === 'accepted' ? ['synced', d.verification === 'Both' ? 'Confirmed by you and your trainer' : 'Confirmed']
       : d.status === 'pending' ? ['pending', 'Sent — waiting for trainer']
       : d.status === 'rejected' ? ['rejected', REASONS[d.reason] || 'Not accepted']
       : ['pending', 'Saved on phone'];
-    return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} · ${esc(d.period)} · scanned ${esc(fmtTime(d.scannedAt))}</span></div>
+    return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} · ${esc(d.period)} · ${esc(fmtTime(d.scannedAt))}</span>
+      <button type="button" class="linkish" data-receipt="${esc(d._id)}">Show receipt</button></div>
       <span class="pill ${label[0]}">${esc(label[1])}</span></li>`;
   }).join('');
   const waiting = list.filter((d) => d.status === 'saved' || d.status === 'pending').length;
   const el = $('#pendingCount'); el.textContent = waiting; el.classList.toggle('zero', waiting === 0);
   $('#deviceInfo').textContent = `Phone ID ${st.deviceId}`;
+}
+
+async function showReceipt(id) {
+  const d = await sdb.get(id);
+  $('#receiptDialogSub').textContent = `${d.unitName} · ${d.period} · ${st.profile?.name || d.admNo}`;
+  const txt = receiptText(d);
+  $('#receiptDialogCode').innerHTML = qrSvg(txt, 6);
+  $('#receiptDialogCode').dataset.receipt = txt;
+  $('#receiptDialog').showModal();
 }
 
 function updateNet() {
@@ -287,8 +308,8 @@ function updateNet() {
 async function consumeHash() {
   if (!location.hash) return;
   const h = location.hash;
-  history.replaceState(null, '', location.pathname + location.search); // reloads must not record twice
-  await handleLink(h);
+  history.replaceState(null, '', location.pathname + location.search); // a reload must not record twice
+  await handleScanned(h);
 }
 
 async function init() {
@@ -296,24 +317,15 @@ async function init() {
   st.deviceId = dev.deviceId;
   const prof = await getLocal('profile');
   if (prof.admNo) { const { _id, _rev, ...p } = prof; st.profile = p; }
-  const j = await getLocal('join');
-  if (j.c && !st.profile?.locked) { const { _id, _rev, ...jj } = j; st.join = jj; }
   updateNet();
 
-  $('#joinSearch').addEventListener('input', renderJoinList);
-  $('#joinList').addEventListener('click', (e) => { const b = e.target.closest('button[data-adm]'); if (b) chooseIdentity(b.dataset.adm, b.dataset.name, true); });
-  $('#joinManualBtn').addEventListener('click', () => chooseIdentity($('#joinAdm').value.trim(), $('#joinName').value.trim(), false));
-  $('#changeMe').addEventListener('click', async () => {
-    const p = st.profile; if (!p || p.locked) return;
-    st.join = { u: p.sheetsUrl, c: p.classCode, cn: p.className, k: p.joinKey };
-    await saveProfile(null);
-    await updateLocal('join', (d) => Object.assign(d, st.join));
-    $('#result').hidden = true;
-    openJoin();
-  });
+  $('#idSave').addEventListener('click', saveIdentity);
+  $('#idAdm').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveIdentity(); });
   $('#scanBtn').addEventListener('click', startScan);
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);
+  $('#closeReceipt').addEventListener('click', () => $('#receiptDialog').close());
+  $('#history').addEventListener('click', (e) => { const b = e.target.closest('[data-receipt]'); if (b) showReceipt(b.dataset.receipt); });
   $('#syncBtn').addEventListener('click', () => sync({ manual: true }));
   window.addEventListener('hashchange', consumeHash);
   window.addEventListener('online', () => { updateNet(); sync(); });
@@ -321,7 +333,6 @@ async function init() {
   setInterval(() => sync(), 2 * 60 * 1000);
 
   await consumeHash();
-  if (st.join && $('#joinCard').hidden) await openJoin();
   await render();
   sync();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});

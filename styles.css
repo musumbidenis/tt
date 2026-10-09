@@ -280,3 +280,9 @@ tr.below .bar i { background: var(--a); }
 .history li span.muted { display: block; }
 .pill.rejected { background: var(--a-soft); color: var(--a); white-space: normal; text-align: right; }
 body.student .topbar .btn.syncing { opacity: .7; }
+.qrtag.bad { background: var(--a-soft); color: var(--a); }
+.receipt { margin-top: .75rem; padding-top: .75rem; border-top: 1px dashed var(--line); }
+.receipt-label { font-weight: 700; margin: 0 0 .5rem; }
+.receipt .qr-box svg { width: min(70vw, 260px); }
+.linkish { background: none; border: 0; padding: 0; margin-top: .15rem; color: var(--primary); font: inherit; font-size: .82rem; text-decoration: underline; cursor: pointer; }
+body.student main > #scanBtn { margin: 0 0 1rem; }

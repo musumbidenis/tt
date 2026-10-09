@@ -61,39 +61,43 @@ From then on, the phone works with or without network.
 
 ## QR check-in (students mark themselves)
 
-Students record their own attendance by scanning a QR code on the trainer's phone. **Both phones can be offline**; everything is checked when they sync.
+Students record their own attendance by scanning the trainer's lesson QR. **Both phones can be offline the whole lesson.** There's no joining step, because each student's class already comes from the `Trainees` tab.
 
-**Once per class (needs internet):**
-1. In **Reports**, choose the class and tap **Student join QR**. Students scan it with their normal camera, or you tap **Copy link** and post it in the class WhatsApp group.
-2. Each student picks their own name. That phone is now tied to that student and that class.
-3. The tie becomes permanent on their **first check-in**, and the Sheet records it in the `Devices` tab.
-
-**Every lesson:**
-1. Open the register and tap **QR for students**, then show the code to the class.
-   - The code changes every 20 seconds, so a photo forwarded to someone outside the room soon stops working.
+**In the lesson:**
+1. Open the register and tap **QR for students**, then show it to the class.
+   - The code is made on your phone, offline, and changes every 20 seconds. Each code is unique to this lesson and this moment, and can't be faked.
    - Trainees who don't scan count as **absent** unless you mark them yourself.
-2. Students scan with their phone camera. The check-in page opens even without internet and saves the check-in on the phone. It's sent to the Sheet when they next have internet.
-3. When your phone syncs, the Sheet checks every check-in. Then the check-ins appear in your register with a **QR** tag.
+2. Each student scans it with their phone camera.
+   - The first time, they type their admission number. That's the only setup.
+   - Their phone saves the check-in and shows a small **receipt QR**.
+3. Tap **Collect receipts** (or **Scan receipts / ID cards** in the register) and scan the students' receipts, about a second each. This is the record on **your** phone, saved with the student's phone ID. Your phone checks it on the spot, offline, and refuses:
+   - a student who isn't in this class;
+   - a code that isn't from this lesson, whether fake, from another lesson, or out of time;
+   - a phone registered to a different student, or a student whose registered phone is a different one;
+   - a second student on the same phone.
 
-**What the Sheet enforces:**
+**After the lesson, whenever each phone has internet:** both sides sync to the Sheet. The Sheet runs the same checks again and matches the two records:
 
-| Rule | What happens |
+| Verification | Meaning |
 |---|---|
-| One phone per student | A check-in for a student from a different phone is refused. |
-| One student per phone | A phone registered to one student can't check in anyone else. |
-| Own class only | Scanning another class's lesson code is refused straight away on the phone. |
-| Real, current code only | The code must be one your phone actually showed, at the time it was showing. Fake or old codes are refused. |
-| Your mark wins | If you tap a status for a trainee yourself, it beats their scan. A scan beats the default "absent". |
+| **Both** | The student's phone and your receipt scan agree. The record is confirmed by both. |
+| **Student only** | The student scanned a genuine code, but you didn't scan their receipt. |
+| **Trainer only** | You scanned their receipt; their phone hasn't synced yet. It becomes **Both** when it does. |
 
-Every attempt, accepted or refused (and why), is listed in the `CheckIns` tab. The `Attendance` tab's `Source` column shows whether each mark came from you (`trainer`), a scan (`qr`) or the default.
+**Who wins:** a mark you tap yourself beats a QR check-in, and a QR check-in beats the default "absent".
 
-**A student changes or loses their phone:** delete their row in the `Devices` tab. Their next check-in from the new phone registers it.
+**Where to look in the Sheet:**
+- `CheckIns` lists every attempt, from either phone, with its result and verification.
+- `Devices` shows which phone belongs to which student. The first submission registers the phone; delete a student's row to let them change phone.
+- `Attendance` → `Source` shows `trainer`, `default`, `qr (both)`, `qr (student only)` or `qr (trainer only)`.
 
-**Students should** add the check-in page to their home screen and use the same browser every time, because check-ins are stored in that browser.
+**Students should:**
+- open https://musumbidenis.github.io/tt/student.html **once while online**, so the page works offline afterwards, and add it to the home screen;
+- always use the same browser.
 
 ## Good to know
 
-- **After updating `Code.gs`**, use **Deploy → Manage deployments → Edit → Version: New version → Deploy**. That keeps the same URL, and phones pick up the change. New tabs (`CheckIns`, `Devices`) are created automatically.
-- The access token is shared with trainers. Anyone who has it can send registers to the Sheet. If it leaks, use **Attendance → Generate a new access token** in the Sheet and update the phones. A new token also changes every class join code, so share new join QRs. Students who are already registered aren't affected.
+- **After updating `Code.gs`**, use **Deploy → Manage deployments → Edit → Version: New version → Deploy**. That keeps the same URL, and phones pick up the change. New tabs (`CheckIns`, `Devices`) are created automatically. Then tap **Setup → Download class lists**, so your phone also gets the list of registered student phones for offline checks.
+- The access token is shared with trainers. Anyone who has it can send registers to the Sheet. If it leaks, use **Attendance → Generate a new access token** in the Sheet and update the phones. 
 - A Google Sheet holds up to 10 million cells. At 14 columns per trainee record, that's several hundred thousand attendance rows. When a year's Sheet gets large, start a new Sheet for the next year and deploy the script there.
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v3.0.1`) so phones fetch the new version.
