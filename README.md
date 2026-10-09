@@ -189,5 +189,5 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
   - easy PINs like 1234 or 0000 are refused.
 - The class register PDFs, loading workbook and Excel template stay on the computer that opens them. Only the rows the MIS Officer confirms are sent to the database.
 - Phones ask for new class lists every 10 minutes, but the answer is a few bytes unless something changed. During a live QR lesson they ask a tiny "anything new?" every few seconds.
-- When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.1`) so phones fetch the new version.
+- When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.2`) so phones fetch the new version.
 - **Testing the Worker on a computer** (for developers): `npx wrangler dev` with `worker/dev.js` as the main file and a local D1 binding called `DB` adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.
