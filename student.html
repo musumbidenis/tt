@@ -23,7 +23,7 @@
   </div>
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
-    <button id="syncBtn" class="btn small" title="Send saved check-ins">Send <span id="pendingCount" class="count zero">0</span></button>
+    <button id="syncBtn" class="btn small" title="Check-ins are sent automatically; tap to send now">Send <span id="pendingCount" class="count zero">0</span></button>
   </div>
 </header>
 </div>
@@ -47,11 +47,6 @@
     <h2 id="resultTitle"></h2>
     <p id="resultText"></p>
     <p id="resultSub" class="muted small"></p>
-    <details id="receiptBox" class="receipt" hidden>
-      <summary>Receipt (only if your trainer asks to scan it)</summary>
-      <div id="receiptCode" class="qr-box"></div>
-      <p id="receiptWho" class="muted small"></p>
-    </details>
   </section>
 
   <section id="profileCard" class="card" hidden>
@@ -85,21 +80,11 @@
   <p class="scan-result">Point the camera at the code on your trainer's screen</p>
 </dialog>
 
-<dialog id="receiptDialog" class="qr-dialog">
-  <div class="qr-head">
-    <div><strong>Receipt</strong><span id="receiptDialogSub" class="muted small"></span></div>
-    <button type="button" class="btn small" id="closeReceipt">Close</button>
-  </div>
-  <div id="receiptDialogCode" class="qr-box"></div>
-  <p class="qr-note">Only needed if your trainer asks to scan it.</p>
-</dialog>
-
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="config.js"></script>
 <script src="vendor/pouchdb.min.js"></script>
 <script src="vendor/jsQR.js"></script>
-<script src="vendor/qrcode.js"></script>
 <script src="student.js"></script>
 </body>
 </html>

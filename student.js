@@ -6,7 +6,6 @@
 'use strict';
 
 const sdb = new PouchDB('rvnp_student', { auto_compaction: true });
-const RECEIPT_PREFIX = 'rvnp-receipt:';
 const REASONS = {
   'wrong-class': 'Not your class',
   'device-other-student': 'This phone is registered to another student',
@@ -23,7 +22,6 @@ const nowISO = () => new Date().toISOString();
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const fmtDate = (d) => (d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-const b64url = (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const ls = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage full or blocked */ } },
@@ -69,11 +67,6 @@ function parseLesson(text) {
   if (!m) return null;
   try { return decodeB64(m[1]); } catch { return null; }
 }
-function qrSvg(text, cell = 5) {
-  const qr = qrcode(0, 'M'); qr.addData(text); qr.make();
-  return qr.createSvgTag({ cellSize: cell, margin: 2, scalable: true });
-}
-const receiptText = (d) => RECEIPT_PREFIX + b64url({ v: 1, s: d.sessionId, a: d.admNo, d: d.deviceId, w: d.w, t: d.token, at: d.scannedAt });
 
 async function checkins() {
   const r = await sdb.allDocs({ include_docs: true, startkey: 'checkin:', endkey: 'checkin:￰' });
@@ -105,7 +98,7 @@ async function api(method, params, body) {
   return res.json();
 }
 
-function showResult(kind, title, text, sub = '', receiptDoc = null) {
+function showResult(kind, title, text, sub = '') {
   const box = $('#result');
   box.hidden = false;
   box.className = 'card result ' + kind;
@@ -113,14 +106,6 @@ function showResult(kind, title, text, sub = '', receiptDoc = null) {
   $('#resultTitle').textContent = title;
   $('#resultText').textContent = text;
   $('#resultSub').textContent = sub;
-  $('#receiptBox').hidden = !receiptDoc;
-  $('#receiptBox').open = false;
-  if (receiptDoc) {
-    const txt = receiptText(receiptDoc);
-    $('#receiptCode').innerHTML = qrSvg(txt, 5);
-    $('#receiptCode').dataset.receipt = txt;
-    $('#receiptWho').textContent = `${st.profile?.name || receiptDoc.admNo} · phone ${st.deviceId}`;
-  }
   navigator.vibrate?.(kind === 'ok' ? 120 : [80, 60, 80]);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -208,18 +193,18 @@ async function handleLesson(l) {
   const id = 'checkin:' + l.s;
   try {
     const existing = await sdb.get(id);
-    showResult('ok', 'Already recorded', `${l.un || ''} · ${l.p || ''}`, `Recorded ${fmtTime(existing.scannedAt)}`, existing);
+    showResult('ok', 'Already recorded', `${l.un || ''} · ${l.p || ''}`, `Recorded ${fmtTime(existing.scannedAt)}`);
     return;
   } catch (e) { if (e.status !== 404) throw e; }
   const doc = {
     _id: id, type: 'checkin', sessionId: l.s, classCode: l.c, unitName: l.un || '', period: l.p || '', trainer: l.n || '',
     date: String(l.s).split(':')[1] || '', w: l.w, token: l.t, admNo: p.admNo, deviceId: st.deviceId,
-    scannedAt: nowISO(), status: 'saved', reason: '', verification: '',
+    scannedAt: nowISO(), status: 'saved', reason: '',
   };
   await sdb.put(doc);
   await mirrorUnsent();
   showResult('ok', 'Attendance recorded', `${doc.unitName} · ${doc.period}${doc.trainer ? ' · ' + doc.trainer : ''}`,
-    navigator.onLine ? 'Sending…' : 'Saved safely on this phone — it is sent when you next have internet.', doc);
+    navigator.onLine ? 'Sending…' : 'Saved safely on this phone — it is sent automatically when you next have internet.');
   await render();
   sync();
 }
@@ -234,9 +219,7 @@ async function handleScanned(text) {
 async function sync({ manual = false } = {}) {
   if (!st.profile || !st.sheetsUrl || st.syncing) return;
   if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this phone'); return; }
-  const recent = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
-  const docs = (await checkins()).filter((d) => d.status === 'saved' || d.status === 'pending'
-    || (d.status === 'accepted' && d.verification !== 'Both' && d.date >= recent)); // trainer may still scan the receipt
+  const docs = (await checkins()).filter((d) => d.status === 'saved' || d.status === 'pending');
   if (!docs.length) { if (manual) toast('Nothing waiting to send', 'ok'); return; }
   st.syncing = true;
   $('#syncBtn').classList.add('syncing');
@@ -249,7 +232,7 @@ async function sync({ manual = false } = {}) {
       for (const d of part) {
         const r = byId.get(`${d.sessionId}|${d.admNo}|${d.deviceId}`.toLowerCase());
         if (!r) continue;
-        Object.assign(d, { status: r.status, reason: r.reason || '', verification: r.verification || '', checkedAt: nowISO() });
+        Object.assign(d, { status: r.status, reason: r.reason || '', checkedAt: nowISO() });
         await sdb.put(d);
       }
     }
@@ -319,12 +302,12 @@ async function render() {
   const list = (await checkins()).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt)));
   $('#historyCard').hidden = !list.length;
   $('#history').innerHTML = list.map((d) => {
-    const label = d.status === 'accepted' ? ['synced', d.verification === 'Both' ? 'Confirmed (trainer scanned receipt)' : 'Confirmed']
+    const label = d.status === 'accepted' ? ['synced', 'Confirmed']
       : d.status === 'pending' ? ['pending', 'Sent — waiting for trainer to sync']
       : d.status === 'rejected' ? ['rejected', REASONS[d.reason] || 'Not accepted']
       : ['pending', 'Saved on phone'];
     return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} · ${esc(d.period)} · ${esc(fmtTime(d.scannedAt))}</span>
-      <button type="button" class="linkish" data-receipt="${esc(d._id)}">Receipt</button></div>
+</div>
       <span class="pill ${label[0]}">${esc(label[1])}</span></li>`;
   }).join('');
   const unsent = list.filter((d) => d.status === 'saved');
@@ -343,15 +326,6 @@ async function render() {
   } else warn.hidden = true;
 
   $('#deviceInfo').textContent = `Phone ID ${st.deviceId}` + (st.storage === 'protected' ? ' · storage protected ✓' : '');
-}
-
-async function showReceipt(id) {
-  const d = await sdb.get(id);
-  $('#receiptDialogSub').textContent = `${d.unitName} · ${d.period} · ${st.profile?.name || d.admNo}`;
-  const txt = receiptText(d);
-  $('#receiptDialogCode').innerHTML = qrSvg(txt, 6);
-  $('#receiptDialogCode').dataset.receipt = txt;
-  $('#receiptDialog').showModal();
 }
 
 function updateNet() {
@@ -400,13 +374,13 @@ async function init() {
   $('#scanBtn').addEventListener('click', startScan);
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);
-  $('#closeReceipt').addEventListener('click', () => $('#receiptDialog').close());
-  $('#history').addEventListener('click', (e) => { const b = e.target.closest('[data-receipt]'); if (b) showReceipt(b.dataset.receipt); });
   $('#syncBtn').addEventListener('click', () => sync({ manual: true }));
   window.addEventListener('hashchange', consumeHash);
   window.addEventListener('online', () => { updateNet(); if (!st.profile && !$('#setupCard').hidden) openSetup(); sync(); });
   window.addEventListener('offline', updateNet);
-  setInterval(() => sync(), 2 * 60 * 1000);
+  // Automatic sending: on every scan, when the internet comes back, when the app is opened, and every minute.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
+  setInterval(() => sync(), 60 * 1000);
 
   await protectStorage();
   await consumeHash();

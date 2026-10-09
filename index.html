@@ -69,7 +69,7 @@
         <input type="search" id="regSearch" placeholder="Search name or admission no." aria-label="Search trainees">
         <button type="button" class="btn ghost" id="allPresent">All present</button>
         <button type="button" class="btn ghost" id="allAbsent">All absent</button>
-        <button type="button" class="btn" id="scanBtn">Scan receipts / ID cards</button>
+        <button type="button" class="btn" id="scanBtn">Scan ID cards</button>
         <button type="button" class="btn primary" id="lessonQrBtn">QR for students</button>
       </div>
 
@@ -179,11 +179,11 @@
 
 <dialog id="scanDialog" class="scan-dialog">
   <div class="scan-head">
-    <strong>Scan receipts or ID cards</strong>
+    <strong>Scan trainee ID cards</strong>
     <button type="button" class="btn small ghost" id="stopScan">Done</button>
   </div>
   <div class="video-wrap"><video id="scanVideo" playsinline muted></video><div class="frame"></div></div>
-  <label class="scan-mode">ID cards mark trainees as
+  <label class="scan-mode">Mark scanned trainees as
     <select id="scanAs"><option value="P">Present</option><option value="L">Late</option></select>
   </label>
   <p id="scanResult" class="scan-result">Point the camera at a card</p>
@@ -196,8 +196,7 @@
   </div>
   <div id="lessonQrCode" class="qr-box"></div>
   <div class="qr-timer"><i id="lessonQrBar"></i></div>
-  <p class="qr-note">Students: scan with your phone camera — no internet needed. The code changes every 20 seconds.</p>
-  <button type="button" class="btn ghost" id="collectReceipts" style="width:100%">Scan students' receipts (optional)</button>
+  <p class="qr-note">Students: scan with your phone camera — no internet needed. The code changes every 20 seconds. Check-ins appear here automatically once phones are online.</p>
 </dialog>
 
 <dialog id="studentLinkDialog" class="qr-dialog">

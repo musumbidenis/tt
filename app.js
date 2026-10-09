@@ -5,10 +5,11 @@
  */
 'use strict';
 
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.4.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
+const LIVE_POLL_MS = window.__livePollMs || 30000; // how often an open, online app checks the Sheet for new check-ins
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
   { code: 'L3', label: 'Lesson 3' }, { code: 'L4', label: 'Lesson 4' },
@@ -325,12 +326,7 @@ function renderRegister() {
 }
 
 function qrTag(s, adm) {
-  const refused = s.qrRefused?.[adm];
-  if (refused) return ` <span class="qrtag bad" title="QR check-in refused by the Sheet: ${esc(refused)}">QR ✕</span>`;
-  if (!s.viaQr?.[adm]) return '';
-  const v = s.qrVerified?.[adm];
-  const title = v ? `QR check-in confirmed (${v})` : s.receipts?.[adm] ? 'Receipt scanned on this phone' : 'Checked in by QR';
-  return ` <span class="qrtag" title="${esc(title)}">${v === 'Both' ? 'QR ✓✓' : 'QR'}</span>`;
+  return s.viaQr?.[adm] ? ` <span class="qrtag" title="Checked in by scanning the lesson QR (${esc(fmtTime(s.viaQr[adm]))})">QR</span>` : '';
 }
 
 function countMarks(s) {
@@ -489,7 +485,6 @@ async function startScan() {
 }
 
 async function handleScan(raw) {
-  if (String(raw).startsWith(RECEIPT_PREFIX)) return handleReceipt(raw);
   let adm = String(raw).trim();
   try { const j = JSON.parse(adm); if (j && (j.adm || j.admNo)) adm = String(j.adm || j.admNo).trim(); } catch { /* plain text code */ }
   const s = state.current;
@@ -695,7 +690,6 @@ function toSheetSession(s) {
     marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
       .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo] })),
     ...(s.qr ? { qr: { secret: s.qr.secret, intervals: s.qr.intervals } } : {}),
-    receipts: Object.entries(s.receipts || {}).map(([admNo, r]) => ({ admNo, deviceId: r.deviceId, w: r.w, token: r.token, scannedAt: r.scannedAt, capturedAt: r.capturedAt })),
   };
 }
 
@@ -741,7 +735,7 @@ async function syncSheets({ silent = false } = {}) {
 let autoTimer;
 function scheduleAutoSync() {
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true }); }, 15000);
+  autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true }); }, 5000);
 }
 
 async function pullRoster({ silent = false } = {}) {
@@ -753,11 +747,6 @@ async function pullRoster({ silent = false } = {}) {
     if (!res.ok) throw new Error(res.error || 'Could not read the class lists');
     if (!(res.trainees || []).length && state.trainees.length) throw new Error('the Trainees tab is empty — kept the class lists already on this phone');
     const r = await replaceRoster(res, ['class', 'unit', 'trainee']);
-    if (Array.isArray(res.devices)) {
-      // Phones registered in the Sheet, so receipts from someone else's phone are refused offline.
-      const server = Object.fromEntries(res.devices.map((x) => [x.deviceId, x.admNo]));
-      await updateLocal('phones', (d) => { d.server = server; d.local = Object.fromEntries(Object.entries(d.local || {}).filter(([k]) => !server[k])); });
-    }
     await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
     renderSheetsStatus();
     if (!silent) toast(`Class lists saved: ${r.classes} classes, ${r.trainees} trainees — you can now mark offline`, 'ok');
@@ -904,112 +893,52 @@ function closeLessonQR() {
   if (state.dirty) saveCurrent();
 }
 
-/* ---------------- receipts: the student's phone shows a QR, the trainer scans it ----------------
- * This is the trainer-side record of each check-in, captured offline with the student's phone ID.
- * It is checked on the spot against the class list, the lesson code and the registered phones. */
-const RECEIPT_PREFIX = 'rvnp-receipt:';
-const decodeB64 = (b64) => {
-  const t = b64.replace(/-/g, '+').replace(/_/g, '/');
-  return JSON.parse(decodeURIComponent(escape(atob(t + '='.repeat((4 - (t.length % 4)) % 4)))));
-};
-
-async function handleReceipt(raw) {
-  const out = $('#scanResult');
-  const fail = (msg) => { out.textContent = msg; out.className = 'scan-result err'; navigator.vibrate?.([60, 60, 60]); };
-  let r;
-  try { r = decodeB64(String(raw).slice(RECEIPT_PREFIX.length)); } catch { fail('Unreadable receipt'); return; }
-  const s = state.current;
-  if (!s) { fail('Open the lesson register first'); return; }
-  if (r.s !== s._id) { fail('This receipt is for a different lesson'); return; }
-  if (!s.qr) { fail('Show the lesson QR for this register first'); return; }
-  const adm = String(r.a || '').trim();
-  const t = activeTraineesFor(s.classCode).find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
-  if (!t) {
-    const other = state.trainees.find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
-    fail(other ? `${other.name} is in ${other.classCode}, not this class` : `${adm || 'This admission number'} is not on the class list`);
-    return;
-  }
-  // The code on the receipt must be one this phone showed for this lesson, at that time.
-  const w = Number(r.w);
-  const inTime = (s.qr.intervals || []).some(([a, b]) => w >= a - 1 && w <= b + 1);
-  if (!inTime || (await qrToken(s.qr.secret, s._id, w)) !== String(r.t || '').toLowerCase()) {
-    fail(`${t.name}: the code on this phone is not from this lesson`);
-    return;
-  }
-  // One phone per student, one student per phone.
-  const book = await getLocal('phones');
-  const phones = { ...(book.local || {}), ...(book.server || {}) };
-  const owner = phones[r.d];
-  if (owner && owner.toLowerCase() !== t.admNo.toLowerCase()) {
-    fail(`This phone is registered to ${state.trainees.find((x) => x.admNo === owner)?.name || owner}`);
-    return;
-  }
-  const own = Object.entries(phones).find(([, a]) => a.toLowerCase() === t.admNo.toLowerCase());
-  if (own && own[0] !== r.d) { fail(`${t.name} is registered on a different phone`); return; }
-  s.receipts = s.receipts || {};
-  const prev = s.receipts[t.admNo];
-  if (prev && prev.deviceId !== r.d) { fail(`${t.name} was already confirmed on a different phone`); return; }
-  const usedBy = Object.entries(s.receipts).find(([a, x]) => x.deviceId === r.d && a !== t.admNo);
-  if (usedBy) { fail(`This phone already checked in ${s.names[usedBy[0]] || usedBy[0]}`); return; }
-  if (prev) { out.textContent = `${t.name} — already confirmed`; out.className = 'scan-result ok'; return; }
-  if (!(await ensureEditable())) return;
-
-  s.receipts[t.admNo] = { deviceId: r.d, w, token: String(r.t).toLowerCase(), scannedAt: r.at || '', capturedAt: nowISO() };
-  s.viaQr = { ...(s.viaQr || {}), [t.admNo]: r.at || nowISO() };
-  if (s.qrRefused) delete s.qrRefused[t.admNo];
-  if (!s.explicit?.[t.admNo]) s.marks[t.admNo] = 'P';
-  s.names[t.admNo] = t.name;
-  await updateLocal('phones', (d) => { d.local = { ...(d.local || {}), [r.d]: t.admNo }; });
-  renderRegister();
-  markDirty();
-  out.textContent = `${t.name} — confirmed ✓`;
-  out.className = 'scan-result ok';
-  navigator.vibrate?.(80);
-  const row = $(`.trow[data-adm="${CSS.escape(t.admNo)}"]`);
-  if (row) { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); }
-}
-
-/* After sending registers, fetch what the Sheet decided about QR check-ins and show it in the registers. */
+/* Fetch check-ins that reached the Sheet since the last check and save them into the
+ * register for that lesson. Runs automatically whenever the phone is online. */
 async function pullCheckins() {
   const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10); // students may sync months late
   const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
   if (!sessions.length) return 0;
-  const res = await callSheets('POST', { action: 'checkins', token: state.settings.sheetsToken, sessionIds: sessions.map((s) => s._id) });
+  const log = await getLocal('syncLog');
+  const res = await callSheets('POST', { action: 'checkins', token: state.settings.sheetsToken, sessionIds: sessions.map((s) => s._id), since: log.checkinsSince || '' });
   if (!res.ok) throw new Error(res.error || 'Could not read QR check-ins');
-  let changed = 0;
+  const synced = await sheetsSyncMap();
+  let changed = 0, newOnOpen = 0;
   for (const stored of sessions) {
-    const data = res.checkins?.[stored._id];
-    if (!data) continue;
+    const list = res.checkins?.[stored._id] || [];
+    if (!list.length) continue;
     const open = state.current && state.current._id === stored._id;
     const doc = open ? state.current : stored;
-    doc.viaQr = doc.viaQr || {}; doc.qrVerified = doc.qrVerified || {}; doc.qrRefused = doc.qrRefused || {};
-    let touched = false;
-    const acceptedAdm = new Set((data.accepted || []).map((c) => c.admNo));
-    for (const c of data.accepted || []) {
-      if (doc.qrVerified[c.admNo] !== c.verification) { doc.qrVerified[c.admNo] = c.verification; touched = true; }
-      if (doc.qrRefused[c.admNo]) { delete doc.qrRefused[c.admNo]; touched = true; }
-      if (!doc.viaQr[c.admNo]) {
-        doc.viaQr[c.admNo] = c.scannedAt || nowISO();
-        if (!doc.explicit?.[c.admNo]) doc.marks[c.admNo] = 'P';
-        if (!doc.names[c.admNo]) doc.names[c.admNo] = c.name || c.admNo;
-        touched = true;
-      }
+    const wasSynced = !open && synced[stored._id] === stored._rev;
+    doc.viaQr = doc.viaQr || {};
+    let added = 0;
+    for (const c of list) {
+      if (doc.viaQr[c.admNo]) continue;
+      doc.viaQr[c.admNo] = c.scannedAt || nowISO();
+      if (!doc.explicit?.[c.admNo]) doc.marks[c.admNo] = 'P';
+      if (!doc.names[c.admNo]) doc.names[c.admNo] = c.name || c.admNo;
+      added++;
     }
-    for (const c of data.rejected || []) {
-      if (acceptedAdm.has(c.admNo) || doc.qrRefused[c.admNo] === c.reason) continue;
-      doc.qrRefused[c.admNo] = c.reason;
-      delete doc.viaQr[c.admNo];
-      if (!doc.explicit?.[c.admNo] && doc.marks[c.admNo] === 'P') doc.marks[c.admNo] = 'A';
-      touched = true;
-    }
-    if (!touched) continue;
+    if (!added) continue;
     changed++;
-    if (open) { state.dirty = true; state.editSeq++; await saveCurrent(); renderRegister(); }
-    else {
-      doc.updatedAt = nowISO();
-      try { await db.put(doc); } catch (e) { if (e.status !== 409) throw e; }
+    if (open) {
+      newOnOpen += added;
+      state.dirty = true; state.editSeq++;
+      await saveCurrent();
+      renderRegister();
+    } else {
+      try {
+        const r = await db.put(doc);
+        // The Sheet already has these check-ins, so a register that was in sync stays in sync.
+        if (wasSynced) await updateLocal('sheetsSync', (d) => { d.map = d.map || {}; d.map[doc._id] = r.rev; }, { map: {} });
+      } catch (e) { if (e.status !== 409) throw e; }
     }
   }
+  if (res.serverTime) {
+    // Ask again from 2 minutes earlier next time, so nothing written at the same moment is missed.
+    await updateLocal('syncLog', (d) => { d.checkinsSince = new Date(new Date(res.serverTime).getTime() - 120000).toISOString(); });
+  }
+  if (newOnOpen) toast(`${newOnOpen} student(s) checked in by QR`, 'ok');
   return changed;
 }
 
@@ -1103,7 +1032,6 @@ function wire() {
   $('#lessonQrBtn').addEventListener('click', openLessonQR);
   $('#closeLessonQr').addEventListener('click', closeLessonQR);
   $('#lessonQrDialog').addEventListener('close', closeLessonQR);
-  $('#collectReceipts').addEventListener('click', () => { closeLessonQR(); startScan(); });
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);
 
@@ -1175,8 +1103,12 @@ function wire() {
   $('#syncBtn').addEventListener('click', () => syncSheets());
   window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
-  setInterval(() => { if (navigator.onLine) syncSheets({ silent: true }); }, 5 * 60 * 1000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && state.dirty) saveCurrent(); });
+  // Automatic sync: every LIVE_POLL_MS while online and the app is open, and whenever it comes back into view.
+  setInterval(() => { if (navigator.onLine && document.visibilityState === 'visible') syncSheets({ silent: true }); }, LIVE_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && state.dirty) saveCurrent();
+    if (document.visibilityState === 'visible' && navigator.onLine) syncSheets({ silent: true });
+  });
   window.addEventListener('pagehide', () => { if (state.dirty) saveCurrent(); });
 
   db.changes({ since: 'now', live: true }).on('change', (c) => {

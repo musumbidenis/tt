@@ -13,7 +13,7 @@
  *   Trainees    AdmNo | Name | ClassCode | Active             (you maintain)
  *   Sessions    one row per lesson register                   (written by the app)
  *   Attendance  one row per trainee per lesson                (written by the app)
- *   CheckIns    every QR check-in — from the student's phone, the trainer's receipt scan, or both
+ *   CheckIns    every QR check-in a student phone sent, with its result
  *   Devices     which phone belongs to which student — set when the student first logs in
  *               (delete a row to let a student change phone or fix a wrong choice)
  *   SessionData raw register data used to merge trainer marks and QR check-ins (hidden)
@@ -29,7 +29,7 @@ var SHEETS = {
   Attendance: ['RecordID', 'SessionID', 'Date', 'ClassCode', 'UnitCode', 'UnitName', 'Period',
     'AdmNo', 'Name', 'Status', 'TrainerID', 'TrainerName', 'UpdatedAt', 'SyncedAt', 'Source'],
   CheckIns: ['CheckInID', 'SessionID', 'AdmNo', 'Name', 'ClassCode', 'DeviceID', 'Window', 'Code',
-    'ScannedAt', 'ReceivedAt', 'Status', 'Reason', 'StudentSynced', 'TrainerCaptured', 'Verification'],
+    'ScannedAt', 'UpdatedAt', 'Status', 'Reason'],
   Devices: ['DeviceID', 'AdmNo', 'Name', 'ClassCode', 'RegisteredAt', 'LastSeen'],
   SessionData: ['SessionID', 'UpdatedAt', 'Json']
 };
@@ -76,6 +76,9 @@ function sheet_(name) {
     var head = sh.getRange(1, 1, 1, headers.length).getDisplayValues()[0];
     if (head.join('|') !== headers.join('|')) {
       sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    }
+    if (sh.getLastColumn() > headers.length) { // columns left over from an older version
+      sh.getRange(1, headers.length + 1, 1, sh.getLastColumn() - headers.length).clearContent();
     }
   }
   return sh;
@@ -154,7 +157,7 @@ function doPost(e) {
     if (body.action === 'register') return json_(registerDevice_(body));
     checkToken_(body.token);
     if (body.action === 'push') return json_(pushSessions_(body.sessions || []));
-    if (body.action === 'checkins') return json_({ ok: true, checkins: acceptedCheckins_(body.sessionIds || []) });
+    if (body.action === 'checkins') return json_(acceptedCheckins_(body.sessionIds || [], body.since || ''));
     if (body.action === 'ping') return json_({ ok: true });
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
@@ -196,10 +199,7 @@ function readRoster_() {
     units: readTable_('Units').filter(function (r) { return r.ClassCode && r.UnitCode; })
       .map(function (r) { return { classCode: r.ClassCode, code: r.UnitCode, name: r.UnitName || r.UnitCode }; }),
     trainees: readTable_('Trainees').filter(function (r) { return r.AdmNo && r.ClassCode; })
-      .map(function (r) { return { admNo: r.AdmNo, name: r.Name || r.AdmNo, classCode: r.ClassCode, active: !INACTIVE.test(r.Active || '') }; }),
-    // Registered phones, so the trainer's phone can refuse someone else's phone even when offline.
-    devices: readTable_('Devices').filter(function (r) { return r.DeviceID && r.AdmNo; })
-      .map(function (r) { return { deviceId: r.DeviceID, admNo: r.AdmNo }; })
+      .map(function (r) { return { admNo: r.AdmNo, name: r.Name || r.AdmNo, classCode: r.ClassCode, active: !INACTIVE.test(r.Active || '') }; })
   };
 }
 
@@ -316,16 +316,7 @@ function pushSessions_(sessions) {
     });
     writeKeyed_(dataSh, dataT, SHEETS.SessionData);
 
-    // Receipts the trainer scanned from student phones are checked exactly like the students' own check-ins.
     var ctx = loadCtx_();
-    touched.forEach(function (sid) {
-      var s = JSON.parse(dataT.rows[dataT.index[sid]][2]);
-      (s.receipts || []).forEach(function (r) {
-        if (r && r.admNo && r.deviceId) {
-          evaluateClaim_({ sessionId: sid, admNo: r.admNo, deviceId: r.deviceId, w: r.w, token: r.token, scannedAt: r.scannedAt }, 'trainer', ctx, dataT);
-        }
-      });
-    });
     reevaluatePending_(touched, ctx, dataT);   // student check-ins that arrived before this register
     saveCtx_(ctx);
     rebuildSessions_(touched, dataT);
@@ -344,8 +335,7 @@ function finalMarks_(s, accepted) {
   Object.keys(accepted || {}).forEach(function (adm) {
     var cur = out[adm];
     if (cur && cur.source === 'trainer') return;
-    out[adm] = { admNo: adm, name: (cur && cur.name) || accepted[adm].name, status: 'Present',
-      source: 'qr (' + String(accepted[adm].verification || '').toLowerCase() + ')' };
+    out[adm] = { admNo: adm, name: (cur && cur.name) || accepted[adm].name, status: 'Present', source: 'qr' };
   });
   return Object.keys(out).map(function (k) { return out[k]; });
 }
@@ -381,10 +371,10 @@ function rebuildSessions_(ids, dataT) {
   writeKeyed_(attSh, aTable, SHEETS.Attendance);
 }
 
-/* ---------- QR check-ins: student phone + trainer receipt ---------- */
+/* ---------- QR check-ins from student phones ---------- */
 
 var CI = { ID: 0, SESSION: 1, ADM: 2, NAME: 3, CLASS: 4, DEVICE: 5, WINDOW: 6, CODE: 7, SCANNED: 8,
-  RECEIVED: 9, STATUS: 10, REASON: 11, STUDENT: 12, TRAINER: 13, VERIFY: 14 };
+  UPDATED: 9, STATUS: 10, REASON: 11 };
 
 /** true = code genuine, false = fake or expired, null = cannot tell yet (trainer has not synced that lesson). */
 function verifyCode_(c, dataT) {
@@ -417,27 +407,19 @@ function saveCtx_(ctx) {
   writeKeyed_(ctx.ciSh, ctx.ciT, SHEETS.CheckIns);
 }
 
-function verification_(row) {
-  if (row[CI.STATUS] !== 'accepted') return '';
-  var st = row[CI.STUDENT] === 'Yes', tr = row[CI.TRAINER] === 'Yes';
-  return st && tr ? 'Both' : st ? 'Student only' : 'Trainer only';
-}
-
 /**
- * Checks one check-in. side = 'student' (sent by the student's phone) or 'trainer'
- * (a receipt the trainer scanned from that phone). Both land on the same row
- * (lesson + student + phone), so when both arrive the check-in is confirmed by both.
+ * Checks one check-in sent by a student's phone. One row per lesson + student + phone,
+ * so a refused attempt from another phone never overwrites the student's genuine check-in.
+ * UpdatedAt changes whenever the result changes, so trainers' phones can fetch just what is new.
  */
-function evaluateClaim_(c, side, ctx, dataT) {
+function evaluateClaim_(c, ctx, dataT) {
   var t = ctx.trainees[String(c.admNo).toLowerCase()];
   var adm = t ? t.AdmNo : String(c.admNo);
   var id = c.sessionId + '|' + adm + '|' + c.deviceId;
   var i = ctx.ciT.index[id];
   var row = i !== undefined ? ctx.ciT.rows[i].slice()
-    : [id, c.sessionId, adm, t ? t.Name : '', classFromSession_(c.sessionId), c.deviceId, String(c.w), String(c.token || ''), c.scannedAt || '', '', '', '', '', '', ''];
+    : [id, c.sessionId, adm, t ? t.Name : '', classFromSession_(c.sessionId), c.deviceId, String(c.w), String(c.token || ''), c.scannedAt || '', '', '', ''];
   while (row.length < SHEETS.CheckIns.length) row.push('');
-  row[side === 'student' ? CI.STUDENT : CI.TRAINER] = 'Yes';
-  row[CI.RECEIVED] = ctx.now;
   if (row[CI.STATUS] !== 'accepted') {
     var status, reason = '';
     if (!t || INACTIVE.test(t.Active || '')) { status = 'rejected'; reason = 'unknown-student'; }
@@ -447,7 +429,7 @@ function evaluateClaim_(c, side, ctx, dataT) {
       if (di !== undefined && ctx.devT.rows[di][1].toLowerCase() !== adm.toLowerCase()) { status = 'rejected'; reason = 'device-other-student'; }
       else if (ai !== undefined && ctx.devT.rows[ai][0] !== c.deviceId) { status = 'rejected'; reason = 'student-other-device'; }
       else {
-        // The first submission ties this phone to this student for good.
+        // Normally registered at first login; a first submission from an unregistered phone registers it too.
         var reg = di !== undefined ? ctx.devT.rows[di].slice() : [c.deviceId, adm, t.Name, t.ClassCode, ctx.now, ctx.now];
         reg[5] = ctx.now;
         upsert_(ctx.devT, c.deviceId, reg);
@@ -457,13 +439,14 @@ function evaluateClaim_(c, side, ctx, dataT) {
         if (v === false) reason = 'invalid-code';
       }
     }
-    row[CI.STATUS] = status;
-    row[CI.REASON] = reason;
+    if (i === undefined || row[CI.STATUS] !== status || row[CI.REASON] !== reason) {
+      row[CI.STATUS] = status;
+      row[CI.REASON] = reason;
+      row[CI.UPDATED] = ctx.now;
+      upsert_(ctx.ciT, id, row);
+    }
   }
-  row[CI.VERIFY] = verification_(row);
-  upsert_(ctx.ciT, id, row);
-  return { id: id, status: row[CI.STATUS], reason: row[CI.REASON], verification: row[CI.VERIFY],
-    name: t ? t.Name : '', classCode: t ? t.ClassCode : '' };
+  return { id: id, status: row[CI.STATUS], reason: row[CI.REASON], name: t ? t.Name : '', classCode: t ? t.ClassCode : '' };
 }
 
 function receiveCheckins_(list) {
@@ -475,7 +458,7 @@ function receiveCheckins_(list) {
     var results = [], touched = {};
     list.slice(0, 200).forEach(function (c) {
       if (!c || !c.sessionId || !c.admNo || !c.deviceId) return;
-      var r = evaluateClaim_(c, 'student', ctx, dataT);
+      var r = evaluateClaim_(c, ctx, dataT);
       if (r.status === 'accepted') touched[c.sessionId] = 1;
       results.push(r);
     });
@@ -498,7 +481,7 @@ function reevaluatePending_(ids, ctx, dataT) {
     while (row.length < SHEETS.CheckIns.length) row.push('');
     row[CI.STATUS] = v ? 'accepted' : 'rejected';
     row[CI.REASON] = v ? '' : 'invalid-code';
-    row[CI.VERIFY] = verification_(row);
+    row[CI.UPDATED] = ctx.now;
     upsert_(ctx.ciT, r[CI.ID], row);
   });
 }
@@ -508,20 +491,21 @@ function acceptedMap_(ids) {
   var map = {};
   readTable_('CheckIns').forEach(function (r) {
     if (r.Status !== 'accepted' || !want[r.SessionID]) return;
-    (map[r.SessionID] = map[r.SessionID] || {})[r.AdmNo] = { name: r.Name, scannedAt: r.ScannedAt, deviceId: r.DeviceID, verification: r.Verification };
+    (map[r.SessionID] = map[r.SessionID] || {})[r.AdmNo] = { name: r.Name, scannedAt: r.ScannedAt };
   });
   return map;
 }
 
-/** For the trainer's phone: accepted check-ins, and receipts it scanned that the Sheet refused. */
-function acceptedCheckins_(ids) {
+/** For the trainer's phone: check-ins accepted since its last check (all of them when since is empty). */
+function acceptedCheckins_(ids, since) {
+  var serverTime = nowIso_();
   var want = {}; ids.forEach(function (id) { want[id] = 1; });
-  var out = {};
+  var out = {}, count = 0;
   readTable_('CheckIns').forEach(function (r) {
-    if (!want[r.SessionID]) return;
-    var o = out[r.SessionID] = out[r.SessionID] || { accepted: [], rejected: [] };
-    if (r.Status === 'accepted') o.accepted.push({ admNo: r.AdmNo, name: r.Name, scannedAt: r.ScannedAt, deviceId: r.DeviceID, verification: r.Verification });
-    else if (r.Status === 'rejected' && r.TrainerCaptured === 'Yes') o.rejected.push({ admNo: r.AdmNo, deviceId: r.DeviceID, reason: r.Reason });
+    if (r.Status !== 'accepted' || !want[r.SessionID]) return;
+    if (since && !(String(r.UpdatedAt) > String(since))) return;
+    (out[r.SessionID] = out[r.SessionID] || []).push({ admNo: r.AdmNo, name: r.Name, scannedAt: r.ScannedAt });
+    count++;
   });
-  return out;
+  return { ok: true, serverTime: serverTime, count: count, checkins: out };
 }
