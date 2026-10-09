@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -111,7 +111,10 @@ function normaliseRoster(input) {
   const classes = new Map();
   for (const c of input.classes || []) {
     const code = pick(c, ['code', 'classcode', 'ClassCode']);
-    if (code) classes.set(code, { _id: 'class:' + code, type: 'class', code, name: pick(c, ['name', 'classname', 'ClassName']) || code });
+    if (code) {
+      const joinKey = pick(c, ['joinKey']);
+      classes.set(code, { _id: 'class:' + code, type: 'class', code, name: pick(c, ['name', 'classname', 'ClassName']) || code, ...(joinKey ? { joinKey } : {}) });
+    }
   }
   const trainees = [];
   for (const t of input.trainees || []) {
@@ -255,7 +258,7 @@ async function openFromForm(e) {
       _id: id, type: 'session', date, classCode, className: cls?.name || classCode,
       unitCode, unitName: unit?.name || unitCode, period, periodLabel: periodLabel(period),
       trainerId: state.settings.trainerId, trainerName: trainerLabel(), deviceId: state.deviceId,
-      marks, names, notes: '', createdAt: nowISO(), updatedAt: nowISO(), editLog: [],
+      marks, names, explicit: {}, notes: '', createdAt: nowISO(), updatedAt: nowISO(), editLog: [],
     };
   }
   setCurrent(doc, !doc._rev);
@@ -298,7 +301,7 @@ function renderRegister() {
   $('#traineeList').innerHTML = rows.length ? rows.map((t) => {
     const st = s.marks?.[t.admNo] || '';
     return `<li class="trow${t.unlisted ? ' unlisted' : ''}" data-adm="${esc(t.admNo)}">
-      <div class="tinfo"><span class="tname">${esc(t.name)}</span><span class="tadm">${esc(t.admNo)}</span></div>
+      <div class="tinfo"><span class="tname">${esc(t.name)}${s.viaQr?.[t.admNo] ? ' <span class="qrtag" title="Checked in by scanning the lesson QR">QR</span>' : ''}</span><span class="tadm">${esc(t.admNo)}</span></div>
       <div class="seg" role="group" aria-label="Status for ${esc(t.name)}">
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
       </div></li>`;
@@ -339,6 +342,7 @@ async function setMark(adm, status, { rerender = true } = {}) {
   const s = state.current; if (!s) return false;
   if (!(await ensureEditable())) return false;
   s.marks[adm] = status;
+  s.explicit = { ...(s.explicit || {}), [adm]: true };
   if (!s.names[adm]) s.names[adm] = state.trainees.find((t) => t.admNo === adm)?.name || adm;
   const row = $(`.trow[data-adm="${CSS.escape(adm)}"]`);
   if (row) $$('.seg button', row).forEach((b) => { const on = b.dataset.s === status; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
@@ -351,6 +355,7 @@ async function setAll(status) {
   if (!state.current) return;
   if (!(await ensureEditable())) return;
   for (const t of rosterForCurrent()) { state.current.marks[t.admNo] = status; state.current.names[t.admNo] = t.name; }
+  state.current.explicit = {}; // "All present/absent" sets the default; QR check-ins can still change it
   renderRegister();
   markDirty();
 }
@@ -654,7 +659,8 @@ function toSheetSession(s) {
     notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
     edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E },
     marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
-      .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st] })),
+      .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo] })),
+    ...(s.qr ? { qr: { secret: s.qr.secret, intervals: s.qr.intervals } } : {}),
   };
 }
 
@@ -666,18 +672,26 @@ async function syncSheets({ silent = false } = {}) {
   state.syncing = true;
   $('#syncBtn').classList.add('syncing');
   let sent = 0;
-  try {
-    const pending = await pendingSessions();
-    if (!pending.length) { if (!silent) toast('Everything is already in Google Sheets', 'ok'); return; }
-    for (const batch of chunk(pending, 20)) {
+  const pushPending = async () => {
+    for (const batch of chunk(await pendingSessions(), 20)) {
       const res = await callSheets('POST', { action: 'push', token: state.settings.sheetsToken, deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
       if (!res.ok) throw new Error(res.error || 'Google Sheets rejected the upload');
       await updateLocal('sheetsSync', (d) => { d.map = d.map || {}; for (const s of batch) d.map[s._id] = s._rev; }, { map: {} });
       sent += batch.length;
     }
+  };
+  try {
+    await pushPending();
+    const qrUpdated = await pullCheckins();
+    if (qrUpdated) await pushPending();
     await updateLocal('syncLog', (d) => { d.lastSheets = nowISO(); });
     renderSheetsStatus();
-    if (!silent) toast(`Sent ${sent} register(s) to Google Sheets`, 'ok');
+    if (!silent) {
+      const parts = [];
+      if (sent) parts.push(`Sent ${sent} register(s) to Google Sheets`);
+      if (qrUpdated) parts.push(`QR check-ins added to ${qrUpdated} register(s)`);
+      toast(parts.join(' · ') || 'Everything is already in Google Sheets', 'ok');
+    }
   } catch (e) {
     $('#sheetsStatus').textContent = `Sync stopped${sent ? ` after ${sent} register(s)` : ''}: ${e.message}`;
     if (!silent) toast('Sync failed: ' + e.message, 'err');
@@ -784,6 +798,120 @@ const onDbChange = debounce(async () => {
   if (state.activeTab === 'reports') renderReport();
 }, 400);
 
+/* ---------------- QR check-in: students scan a code the trainer shows ----------------
+ * The lesson QR changes every QR_WINDOW seconds. Each code is an HMAC of the lesson and the
+ * time window, made with a secret that only this phone (and later the Sheet) knows, so
+ * students cannot make their own codes. The Sheet checks every check-in against it. */
+const QR_WINDOW = 20; // seconds — must match WINDOW_SECONDS in Code.gs
+const qrWindow = (t = Date.now()) => Math.floor(t / 1000 / QR_WINDOW);
+const b64url = (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const randomHex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, '0')).join('');
+const studentPageUrl = () => new URL('student.html', location.href.split('#')[0]).toString();
+
+async function qrToken(secret, sessionId, w) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${sessionId}|${w}`));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 10);
+}
+function qrSvg(text, cell = 6) {
+  const qr = qrcode(0, 'M'); qr.addData(text); qr.make();
+  return qr.createSvgTag({ cellSize: cell, margin: 2, scalable: true });
+}
+
+let lessonQrTimer = null;
+async function openLessonQR() {
+  const s = state.current;
+  if (!s) return;
+  if (isLocked(s)) { toast('This lesson is locked — open the current lesson to show a QR code', 'err'); return; }
+  if (!s.qr) {
+    s.qr = { secret: randomHex(16), intervals: [] };
+    // In a QR lesson, trainees who do not scan count as absent unless the trainer marks them.
+    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; }
+    renderRegister();
+    toast('Trainees who don\'t scan are marked absent unless you mark them yourself');
+  }
+  const w0 = qrWindow();
+  s.qr.intervals.push([w0, w0]);
+  markDirty();
+  $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${periodLabel(s.period)}`;
+  $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
+  $('#lessonQrDialog').showModal();
+  let shown = null;
+  const tick = async () => {
+    if (state.current !== s) { closeLessonQR(); return; }
+    const w = qrWindow();
+    if (w !== shown) {
+      shown = w;
+      const iv = s.qr.intervals[s.qr.intervals.length - 1];
+      if (iv[1] !== w) { iv[1] = w; markDirty(); }
+      const t = await qrToken(s.qr.secret, s._id, w);
+      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, w, t });
+      const box = $('#lessonQrCode');
+      box.innerHTML = qrSvg(url, 6);
+      box.dataset.url = url;
+    }
+    const left = QR_WINDOW - ((Date.now() / 1000) % QR_WINDOW);
+    $('#lessonQrBar').style.width = `${(left / QR_WINDOW) * 100}%`;
+  };
+  await tick();
+  lessonQrTimer = setInterval(tick, 250);
+}
+function closeLessonQR() {
+  clearInterval(lessonQrTimer);
+  lessonQrTimer = null;
+  if ($('#lessonQrDialog').open) $('#lessonQrDialog').close();
+  if (state.dirty) saveCurrent();
+}
+
+function showJoinQR(classCode) {
+  const cls = state.classes.find((c) => c.code === classCode);
+  if (!cls) { toast('Choose a class first', 'err'); return; }
+  if (!cls.joinKey || !state.settings.sheetsUrl) {
+    toast('Paste the latest Code.gs into your Sheet, deploy a new version, then tap Setup → Download class lists', 'err');
+    return;
+  }
+  const url = studentPageUrl() + '#j=' + b64url({ v: 1, u: state.settings.sheetsUrl, c: cls.code, cn: cls.name, k: cls.joinKey });
+  $('#joinQrTitle').textContent = `${cls.code} — ${cls.name}`;
+  $('#joinQrCode').innerHTML = qrSvg(url, 5);
+  $('#joinQrCode').dataset.url = url;
+  $('#joinQrLink').value = url;
+  $('#joinQrDialog').showModal();
+}
+
+/* After sending registers, fetch the QR check-ins the Sheet accepted and show them in the registers. */
+async function pullCheckins() {
+  const since = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
+  const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
+  if (!sessions.length) return 0;
+  const res = await callSheets('POST', { action: 'checkins', token: state.settings.sheetsToken, sessionIds: sessions.map((s) => s._id) });
+  if (!res.ok) throw new Error(res.error || 'Could not read QR check-ins');
+  let changed = 0;
+  for (const stored of sessions) {
+    const list = res.checkins?.[stored._id] || [];
+    if (!list.length) continue;
+    const open = state.current && state.current._id === stored._id;
+    const doc = open ? state.current : stored;
+    doc.viaQr = doc.viaQr || {};
+    let touched = false;
+    for (const c of list) {
+      if (doc.viaQr[c.admNo]) continue;
+      doc.viaQr[c.admNo] = c.scannedAt || nowISO();
+      if (!doc.explicit?.[c.admNo]) doc.marks[c.admNo] = 'P';
+      if (!doc.names[c.admNo]) doc.names[c.admNo] = c.name || c.admNo;
+      touched = true;
+    }
+    if (!touched) continue;
+    changed++;
+    if (open) { state.dirty = true; state.editSeq++; await saveCurrent(); renderRegister(); }
+    else {
+      doc.updatedAt = nowISO();
+      try { await db.put(doc); } catch (e) { if (e.status !== 409) throw e; }
+    }
+  }
+  return changed;
+}
+
 /* ---------------- backup ---------------- */
 async function exportBackup() {
   const all = await db.allDocs();
@@ -871,6 +999,15 @@ function wire() {
   $('#saveReg').addEventListener('click', async () => { state.dirty = true; await saveCurrent(); toast('Register saved on this device', 'ok'); });
   $('#closeReg').addEventListener('click', closeRegister);
   $('#scanBtn').addEventListener('click', startScan);
+  $('#lessonQrBtn').addEventListener('click', openLessonQR);
+  $('#closeLessonQr').addEventListener('click', closeLessonQR);
+  $('#lessonQrDialog').addEventListener('close', closeLessonQR);
+  $('#joinQrBtn').addEventListener('click', () => showJoinQR($('#rClass').value));
+  $('#closeJoinQr').addEventListener('click', () => $('#joinQrDialog').close());
+  $('#copyJoinLink').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('#joinQrLink').value); toast('Link copied — paste it in the class WhatsApp group', 'ok'); }
+    catch { $('#joinQrLink').select(); toast('Select and copy the link'); }
+  });
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);
 

@@ -243,3 +243,40 @@ tr.below .bar i { background: var(--a); }
   .qr-card b { display: block; margin-top: 2mm; }
   .qr-card small { display: block; color: #333; }
 }
+
+/* QR check-in */
+.qrtag { display: inline-block; font-size: .65rem; font-weight: 700; letter-spacing: .04em; padding: .05rem .35rem; border-radius: 5px; background: var(--primary-soft); color: var(--primary); vertical-align: middle; }
+.qr-dialog { border: 0; border-radius: 16px; padding: 1rem; width: min(560px, 96vw); background: var(--card); color: var(--ink); }
+.qr-dialog::backdrop { background: rgba(10, 20, 16, .75); }
+.qr-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; margin-bottom: .5rem; }
+.qr-head strong { display: block; font-size: 1.05rem; }
+.qr-box { background: #fff; border-radius: 12px; padding: .5rem; display: flex; justify-content: center; }
+.qr-box svg { width: min(86vw, 480px); height: auto; display: block; }
+.qr-timer { height: 6px; border-radius: 3px; background: var(--line); margin: .75rem 0 .5rem; overflow: hidden; }
+.qr-timer i { display: block; height: 100%; background: var(--primary); transition: width .25s linear; }
+.qr-note { text-align: center; color: var(--muted); font-size: .9rem; margin: .25rem 0 .5rem; }
+.join-link { display: flex; gap: .5rem; }
+.join-link input { margin: 0; font-size: .8rem; }
+
+/* Student check-in page */
+.center { text-align: center; }
+.btn.big { width: 100%; padding: 1rem; font-size: 1.1rem; margin: .75rem 0 .5rem; }
+.profile { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.profile strong { display: block; font-size: 1.15rem; }
+.profile span { display: block; }
+.result { text-align: center; border-width: 2px; }
+.result.ok { border-color: var(--p); }
+.result.err { border-color: var(--a); }
+.result-icon { width: 64px; height: 64px; margin: .25rem auto .5rem; border-radius: 50%; display: grid; place-items: center; font-size: 2rem; font-weight: 700; color: #fff; background: var(--muted); }
+.result.ok .result-icon { background: var(--p); }
+.result.err .result-icon { background: var(--a); }
+.result h2 { font-size: 1.25rem; margin-bottom: .25rem; }
+.pick-list { list-style: none; margin: .5rem 0 0; padding: 0; max-height: 50vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.pick-list button { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: .5rem; padding: .75rem .25rem; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink); font: inherit; cursor: pointer; }
+.pick-list button span { color: var(--muted); font-size: .85rem; }
+.history { list-style: none; margin: 0; padding: 0; }
+.history li { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+.history li b { display: block; }
+.history li span.muted { display: block; }
+.pill.rejected { background: var(--a-soft); color: var(--a); white-space: normal; text-align: right; }
+body.student .topbar .btn.syncing { opacity: .7; }

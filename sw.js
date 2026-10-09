@@ -1,12 +1,15 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v3.0.0';
+const CACHE = 'rvnp-attendance-v3.1.0';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.webmanifest',
+  './student.html',
+  './student.js',
+  './manifest-student.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -44,7 +47,10 @@ self.addEventListener('fetch', (event) => {
     if (cached) { event.waitUntil(network); return cached; }
     const res = await network;
     if (res) return res;
-    if (req.mode === 'navigate') return (await cache.match('./index.html')) || Response.error();
+    if (req.mode === 'navigate') {
+      const page = url.pathname.endsWith('student.html') ? './student.html' : './index.html';
+      return (await cache.match(page)) || Response.error();
+    }
     return Response.error();
   })());
 });

@@ -59,8 +59,41 @@ From then on, the phone works with or without network.
 - **Locking:** registers lock after 48 hours. Changing one after that asks for a reason, which is recorded and sent to the Sheet.
 - **No network for weeks:** use **Setup → Export backup** and import the file on another device. It merges safely and never duplicates.
 
+## QR check-in (students mark themselves)
+
+Students record their own attendance by scanning a QR code on the trainer's phone. **Both phones can be offline**; everything is checked when they sync.
+
+**Once per class (needs internet):**
+1. In **Reports**, choose the class and tap **Student join QR**. Students scan it with their normal camera, or you tap **Copy link** and post it in the class WhatsApp group.
+2. Each student picks their own name. That phone is now tied to that student and that class.
+3. The tie becomes permanent on their **first check-in**, and the Sheet records it in the `Devices` tab.
+
+**Every lesson:**
+1. Open the register and tap **QR for students**, then show the code to the class.
+   - The code changes every 20 seconds, so a photo forwarded to someone outside the room soon stops working.
+   - Trainees who don't scan count as **absent** unless you mark them yourself.
+2. Students scan with their phone camera. The check-in page opens even without internet and saves the check-in on the phone. It's sent to the Sheet when they next have internet.
+3. When your phone syncs, the Sheet checks every check-in. Then the check-ins appear in your register with a **QR** tag.
+
+**What the Sheet enforces:**
+
+| Rule | What happens |
+|---|---|
+| One phone per student | A check-in for a student from a different phone is refused. |
+| One student per phone | A phone registered to one student can't check in anyone else. |
+| Own class only | Scanning another class's lesson code is refused straight away on the phone. |
+| Real, current code only | The code must be one your phone actually showed, at the time it was showing. Fake or old codes are refused. |
+| Your mark wins | If you tap a status for a trainee yourself, it beats their scan. A scan beats the default "absent". |
+
+Every attempt, accepted or refused (and why), is listed in the `CheckIns` tab. The `Attendance` tab's `Source` column shows whether each mark came from you (`trainer`), a scan (`qr`) or the default.
+
+**A student changes or loses their phone:** delete their row in the `Devices` tab. Their next check-in from the new phone registers it.
+
+**Students should** add the check-in page to their home screen and use the same browser every time, because check-ins are stored in that browser.
+
 ## Good to know
 
-- The access token is shared with trainers. Anyone who has it can send registers to the Sheet. If it leaks, use **Attendance → Generate a new access token** in the Sheet and update the phones.
+- **After updating `Code.gs`**, use **Deploy → Manage deployments → Edit → Version: New version → Deploy**. That keeps the same URL, and phones pick up the change. New tabs (`CheckIns`, `Devices`) are created automatically.
+- The access token is shared with trainers. Anyone who has it can send registers to the Sheet. If it leaks, use **Attendance → Generate a new access token** in the Sheet and update the phones. A new token also changes every class join code, so share new join QRs. Students who are already registered aren't affected.
 - A Google Sheet holds up to 10 million cells. At 14 columns per trainee record, that's several hundred thousand attendance rows. When a year's Sheet gets large, start a new Sheet for the next year and deploy the script there.
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v3.0.1`) so phones fetch the new version.

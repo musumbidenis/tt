@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Attendance check-in</title>
+<meta name="description" content="Scan your trainer's lesson QR to record attendance — works offline">
+<meta name="theme-color" content="#0f5c4d">
+<link rel="manifest" href="manifest-student.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="student">
+<div class="chrome">
+<header class="topbar">
+  <div class="brand">
+    <img src="icons/icon.svg" alt="" width="34" height="34">
+    <div>
+      <strong>Check-in</strong>
+      <span id="who">Not registered</span>
+    </div>
+  </div>
+  <div class="status">
+    <span id="netBadge" class="badge">Offline</span>
+    <button id="syncBtn" class="btn small" title="Send saved check-ins">Send <span id="pendingCount" class="count zero">0</span></button>
+  </div>
+</header>
+</div>
+
+<main>
+  <section id="result" class="card result" hidden aria-live="polite">
+    <div id="resultIcon" class="result-icon" aria-hidden="true"></div>
+    <h2 id="resultTitle"></h2>
+    <p id="resultText"></p>
+    <p id="resultSub" class="muted small"></p>
+  </section>
+
+  <section id="noProfile" class="card notice" hidden>
+    <h2>Register this phone first</h2>
+    <p>Ask your trainer for your class <b>join QR</b> (or the join link in your class WhatsApp group) and open it <b>while you have internet</b>. You only do this once.</p>
+  </section>
+
+  <section id="joinCard" class="card" hidden>
+    <h2>Join <span id="joinClass"></span></h2>
+    <p class="muted">Pick your name. This phone will be registered to you: it can't be used to check in anyone else, and you can't check in from another phone.</p>
+    <div id="joinPick">
+      <input type="search" id="joinSearch" placeholder="Search your name or admission number" aria-label="Search your name">
+      <ul id="joinList" class="pick-list"></ul>
+    </div>
+    <div id="joinManual" hidden>
+      <p class="small err-text" id="joinManualWhy"></p>
+      <label>Admission number<input id="joinAdm" placeholder="e.g. RVNP/ICT/0101" autocomplete="off"></label>
+      <label>Your name<input id="joinName" autocomplete="name"></label>
+      <button type="button" class="btn primary" id="joinManualBtn">This is me</button>
+    </div>
+  </section>
+
+  <section id="profileCard" class="card" hidden>
+    <div class="profile">
+      <div>
+        <strong id="pName"></strong>
+        <span id="pMeta" class="muted small"></span>
+      </div>
+      <span id="pLock" class="pill"></span>
+    </div>
+    <button type="button" class="btn primary big" id="scanBtn">Scan lesson QR</button>
+    <p class="muted small">You can also scan your trainer's QR with your normal camera app. No internet is needed — check-ins are sent later.</p>
+    <button type="button" class="btn ghost small" id="changeMe" hidden>Not you? Choose again</button>
+  </section>
+
+  <section id="historyCard" class="card" hidden>
+    <h2>My check-ins</h2>
+    <ul id="history" class="history"></ul>
+  </section>
+
+  <p id="deviceInfo" class="muted small center"></p>
+</main>
+
+<dialog id="scanDialog" class="scan-dialog">
+  <div class="scan-head">
+    <strong>Scan the lesson QR</strong>
+    <button type="button" class="btn small ghost" id="stopScan">Cancel</button>
+  </div>
+  <div class="video-wrap"><video id="scanVideo" playsinline muted></video><div class="frame"></div></div>
+  <p class="scan-result">Point the camera at the code on your trainer's screen</p>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="vendor/pouchdb.min.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="student.js"></script>
+</body>
+</html>

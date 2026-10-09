@@ -1,17 +1,21 @@
 /**
  * Attendance Register — Google Sheets backend.
  *
- * Paste this into Extensions > Apps Script of the Google Sheet that will hold
- * the attendance data, run setup() once, then Deploy > New deployment > Web app
+ * Paste this into Extensions > Apps Script of the Google Sheet that holds the
+ * attendance data, run setup() once, then Deploy > New deployment > Web app
  * (Execute as: Me, Who has access: Anyone). Give trainers the /exec URL and the
- * access token shown by setup().
+ * access token shown by setup(). After pasting a newer version of this file,
+ * use Deploy > Manage deployments > Edit > New version so the URL stays the same.
  *
- * Sheets used:
+ * Tabs:
  *   Classes     ClassCode | ClassName                         (you maintain)
  *   Units       ClassCode | UnitCode | UnitName               (you maintain)
  *   Trainees    AdmNo | Name | ClassCode | Active             (you maintain)
  *   Sessions    one row per lesson register                   (written by the app)
  *   Attendance  one row per trainee per lesson                (written by the app)
+ *   CheckIns    every QR check-in a student phone sent, with its result
+ *   Devices     which phone belongs to which student (delete a row to let a student change phone)
+ *   SessionData raw register data used to merge trainer marks and QR check-ins (hidden)
  */
 
 var SHEETS = {
@@ -22,9 +26,17 @@ var SHEETS = {
     'TrainerID', 'TrainerName', 'Present', 'Absent', 'Late', 'Excused', 'Total', 'AttendancePct',
     'Notes', 'Edits', 'DeviceID', 'CreatedAt', 'UpdatedAt', 'SyncedAt'],
   Attendance: ['RecordID', 'SessionID', 'Date', 'ClassCode', 'UnitCode', 'UnitName', 'Period',
-    'AdmNo', 'Name', 'Status', 'TrainerID', 'TrainerName', 'UpdatedAt', 'SyncedAt']
+    'AdmNo', 'Name', 'Status', 'TrainerID', 'TrainerName', 'UpdatedAt', 'SyncedAt', 'Source'],
+  CheckIns: ['CheckInID', 'SessionID', 'AdmNo', 'Name', 'ClassCode', 'DeviceID', 'Window', 'Code',
+    'ScannedAt', 'ReceivedAt', 'Status', 'Reason'],
+  Devices: ['DeviceID', 'AdmNo', 'Name', 'ClassCode', 'RegisteredAt', 'LastSeen'],
+  SessionData: ['SessionID', 'UpdatedAt', 'Json']
 };
 var NUMERIC = { Present: 1, Absent: 1, Late: 1, Excused: 1, Total: 1, AttendancePct: 1, Edits: 1 };
+var WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
+var CODE_LENGTH = 10;
+var STATUS_CODE = { Present: 'P', Absent: 'A', Late: 'L', Excused: 'E' };
+var INACTIVE = /^(no|n|false|0|inactive|left|discontinued)$/i;
 
 /* ---------- menu & setup ---------- */
 
@@ -38,22 +50,34 @@ function onOpen() {
 
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  Object.keys(SHEETS).forEach(function (name) {
-    var headers = SHEETS[name];
-    var sh = ss.getSheetByName(name) || ss.insertSheet(name);
-    if (sh.getLastRow() === 0) {
-      sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
-      sh.setFrozenRows(1);
-    }
-    // Keep codes, dates and timestamps as text so Sheets does not reformat them.
-    headers.forEach(function (h, i) {
-      sh.getRange(1, i + 1, sh.getMaxRows(), 1).setNumberFormat(NUMERIC[h] ? '0.##' : '@');
-    });
-  });
+  Object.keys(SHEETS).forEach(function (name) { sheet_(name); });
   addSampleRows_(ss);
   var props = PropertiesService.getScriptProperties();
   if (!props.getProperty('API_TOKEN')) props.setProperty('API_TOKEN', newToken_());
   showToken();
+}
+
+/** Returns the tab, creating it (or adding missing header columns) when needed. */
+function sheet_(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var headers = SHEETS[name];
+  var sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    // Keep codes, dates and timestamps as text so Sheets does not reformat them.
+    headers.forEach(function (h, i) {
+      sh.getRange(1, i + 1, sh.getMaxRows(), 1).setNumberFormat(NUMERIC[h] ? '0.##' : '@');
+    });
+    if (name === 'SessionData') sh.hideSheet();
+  } else {
+    var head = sh.getRange(1, 1, 1, headers.length).getDisplayValues()[0];
+    if (head.join('|') !== headers.join('|')) {
+      sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    }
+  }
+  return sh;
 }
 
 function addSampleRows_(ss) {
@@ -78,11 +102,12 @@ function addSampleRows_(ss) {
 }
 
 function newToken_() { return Utilities.getUuid().replace(/-/g, '').slice(0, 24); }
+function apiToken_() { return PropertiesService.getScriptProperties().getProperty('API_TOKEN'); }
 
 function showToken() {
-  var token = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
-  var msg = 'Access token for the attendance app:\n\n' + token +
-    '\n\nPaste it in the app under Setup > Google Sheets. Keep it private.';
+  var msg = 'Access token for the attendance app:\n\n' + apiToken_() +
+    '\n\nPaste it in the app under Setup > Google Sheets. Keep it private.' +
+    '\n(Generating a new token also changes every class join code.)';
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* run from the editor: see the log */ }
 }
@@ -92,14 +117,26 @@ function resetToken() {
   showToken();
 }
 
+/* ---------- helpers ---------- */
+
+function hex_(bytes) {
+  return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+}
+function hmacHex_(message, secret) { return hex_(Utilities.computeHmacSha256Signature(message, secret)); }
+/** The code students need to see their class list when joining (changes if the token is reset). */
+function joinKey_(classCode) { return hmacHex_('join|' + classCode, apiToken_()).slice(0, 12); }
+function classFromSession_(sessionId) { return String(sessionId).split(':')[2] || ''; }
+function nowIso_() { return new Date().toISOString(); }
+
 /* ---------- web app ---------- */
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
   try {
+    if (p.action === 'classlist') return json_(classList_(p['class'], p.key)); // students: needs the class join code
     checkToken_(p.token);
     if (p.action === 'ping') {
-      return json_({ ok: true, spreadsheet: SpreadsheetApp.getActiveSpreadsheet().getName(), time: new Date().toISOString() });
+      return json_({ ok: true, spreadsheet: SpreadsheetApp.getActiveSpreadsheet().getName(), time: nowIso_() });
     }
     if (p.action === 'roster') return json_(readRoster_());
     return json_({ ok: false, error: 'Unknown action' });
@@ -111,8 +148,12 @@ function doGet(e) {
 function doPost(e) {
   try {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    // Students send check-ins without the trainer token; each one is verified against the
+    // lesson code the trainer's phone showed, so a check-in cannot be faked.
+    if (body.action === 'checkin') return json_(receiveCheckins_(body.checkins || []));
     checkToken_(body.token);
     if (body.action === 'push') return json_(pushSessions_(body.sessions || []));
+    if (body.action === 'checkins') return json_({ ok: true, checkins: acceptedCheckins_(body.sessionIds || []) });
     if (body.action === 'ping') return json_({ ok: true });
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
@@ -125,7 +166,7 @@ function json_(obj) {
 }
 
 function checkToken_(token) {
-  var expected = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
+  var expected = apiToken_();
   if (!expected) throw new Error('The sheet is not set up yet. Run setup() in Apps Script.');
   if (!token || token !== expected) throw new Error('Invalid access token');
 }
@@ -147,66 +188,31 @@ function readTable_(name) {
 }
 
 function readRoster_() {
-  var inactive = /^(no|n|false|0|inactive|left|discontinued)$/i;
   return {
     ok: true,
     classes: readTable_('Classes').filter(function (r) { return r.ClassCode; })
-      .map(function (r) { return { code: r.ClassCode, name: r.ClassName || r.ClassCode }; }),
+      .map(function (r) { return { code: r.ClassCode, name: r.ClassName || r.ClassCode, joinKey: joinKey_(r.ClassCode) }; }),
     units: readTable_('Units').filter(function (r) { return r.ClassCode && r.UnitCode; })
       .map(function (r) { return { classCode: r.ClassCode, code: r.UnitCode, name: r.UnitName || r.UnitCode }; }),
     trainees: readTable_('Trainees').filter(function (r) { return r.AdmNo && r.ClassCode; })
-      .map(function (r) { return { admNo: r.AdmNo, name: r.Name || r.AdmNo, classCode: r.ClassCode, active: !inactive.test(r.Active || '') }; })
+      .map(function (r) { return { admNo: r.AdmNo, name: r.Name || r.AdmNo, classCode: r.ClassCode, active: !INACTIVE.test(r.Active || '') }; })
   };
 }
 
-/* ---------- push (upsert) ---------- */
-
-function pushSessions_(sessions) {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sessSh = ss.getSheetByName('Sessions');
-    var attSh = ss.getSheetByName('Attendance');
-    if (!sessSh || !attSh) throw new Error('Run setup() first — Sessions/Attendance sheets are missing');
-    var sTable = loadKeyed_(sessSh, SHEETS.Sessions.length);
-    var aTable = loadKeyed_(attSh, SHEETS.Attendance.length);
-    var updCol = SHEETS.Sessions.indexOf('UpdatedAt');
-    var now = new Date().toISOString();
-    var results = [];
-
-    sessions.forEach(function (s) {
-      if (!s || !s.sessionId) return;
-      var existing = sTable.index[s.sessionId];
-      // Never let an older copy (e.g. from a phone that was offline longer) overwrite a newer one.
-      if (existing !== undefined && String(sTable.rows[existing][updCol]) > String(s.updatedAt || '')) {
-        results.push({ sessionId: s.sessionId, status: 'stale' });
-        return;
-      }
-      var c = s.counts || {};
-      var P = Number(c.P) || 0, A = Number(c.A) || 0, L = Number(c.L) || 0, E = Number(c.E) || 0;
-      var counted = P + L + A;
-      upsert_(sTable, s.sessionId, [
-        s.sessionId, s.date, s.classCode, s.className, s.unitCode, s.unitName, s.period,
-        s.trainerId, s.trainerName, P, A, L, E, P + A + L + E,
-        counted ? Math.round((P + L) / counted * 1000) / 10 : '',
-        s.notes, Number(s.edits) || 0, s.deviceId, s.createdAt, s.updatedAt, now
-      ]);
-      (s.marks || []).forEach(function (m) {
-        var rid = s.sessionId + '|' + m.admNo;
-        upsert_(aTable, rid, [rid, s.sessionId, s.date, s.classCode, s.unitCode, s.unitName, s.period,
-          m.admNo, m.name, m.status, s.trainerId, s.trainerName, s.updatedAt, now]);
-      });
-      results.push({ sessionId: s.sessionId, status: existing === undefined ? 'added' : 'updated' });
-    });
-
-    writeKeyed_(sessSh, sTable, SHEETS.Sessions);
-    writeKeyed_(attSh, aTable, SHEETS.Attendance);
-    return { ok: true, results: results };
-  } finally {
-    lock.releaseLock();
-  }
+function classList_(classCode, key) {
+  if (!classCode || !key || key !== joinKey_(classCode)) throw new Error('This class join code is not valid any more — ask your trainer for a new one');
+  var cls = readTable_('Classes').filter(function (r) { return r.ClassCode === classCode; })[0];
+  return {
+    ok: true,
+    classCode: classCode,
+    className: cls ? (cls.ClassName || classCode) : classCode,
+    trainees: readTable_('Trainees')
+      .filter(function (r) { return r.ClassCode === classCode && r.AdmNo && !INACTIVE.test(r.Active || ''); })
+      .map(function (r) { return { admNo: r.AdmNo, name: r.Name || r.AdmNo }; })
+  };
 }
+
+/* ---------- table helpers (read once, change in memory, write once) ---------- */
 
 function loadKeyed_(sh, width) {
   var last = sh.getLastRow();
@@ -239,4 +245,189 @@ function writeKeyed_(sh, table, headers) {
     sh.getRange(start + 2, c + 1, out.length, 1).setNumberFormat(NUMERIC[h] ? '0.##' : '@');
   });
   sh.getRange(start + 2, 1, out.length, headers.length).setValues(out);
+  table.firstDirty = Infinity;
+}
+
+/* ---------- trainer registers ---------- */
+
+function pushSessions_(sessions) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var dataSh = sheet_('SessionData');
+    var dataT = loadKeyed_(dataSh, SHEETS.SessionData.length);
+    var results = [], touched = [];
+    sessions.forEach(function (s) {
+      if (!s || !s.sessionId) return;
+      var i = dataT.index[s.sessionId];
+      // Never let an older copy (e.g. from a phone that was offline longer) overwrite a newer one.
+      if (i !== undefined && String(dataT.rows[i][1]) > String(s.updatedAt || '')) {
+        results.push({ sessionId: s.sessionId, status: 'stale' });
+        return;
+      }
+      upsert_(dataT, s.sessionId, [s.sessionId, s.updatedAt || '', JSON.stringify(s)]);
+      touched.push(s.sessionId);
+      results.push({ sessionId: s.sessionId, status: i === undefined ? 'added' : 'updated' });
+    });
+    writeKeyed_(dataSh, dataT, SHEETS.SessionData);
+    reevaluateCheckins_(touched, dataT);   // check-ins that arrived before this register can now be checked
+    rebuildSessions_(touched, dataT);
+    return { ok: true, results: results };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Final mark per trainee: a mark the trainer tapped > an accepted QR check-in > the default. */
+function finalMarks_(s, accepted) {
+  var out = {};
+  (s.marks || []).forEach(function (m) {
+    out[m.admNo] = { admNo: m.admNo, name: m.name, status: m.status, source: m.explicit ? 'trainer' : 'default' };
+  });
+  Object.keys(accepted || {}).forEach(function (adm) {
+    var cur = out[adm];
+    if (cur && cur.source === 'trainer') return;
+    out[adm] = { admNo: adm, name: (cur && cur.name) || accepted[adm].name, status: 'Present', source: 'qr' };
+  });
+  return Object.keys(out).map(function (k) { return out[k]; });
+}
+
+function rebuildSessions_(ids, dataT) {
+  if (!ids.length) return;
+  var sessSh = sheet_('Sessions'), attSh = sheet_('Attendance');
+  var sTable = loadKeyed_(sessSh, SHEETS.Sessions.length);
+  var aTable = loadKeyed_(attSh, SHEETS.Attendance.length);
+  var accepted = acceptedMap_(ids);
+  var now = nowIso_();
+  ids.forEach(function (id) {
+    var i = dataT.index[id];
+    if (i === undefined) return;
+    var s = JSON.parse(dataT.rows[i][2]);
+    var marks = finalMarks_(s, accepted[id]);
+    var c = { P: 0, A: 0, L: 0, E: 0 };
+    marks.forEach(function (m) { var k = STATUS_CODE[m.status]; if (k) c[k]++; });
+    var counted = c.P + c.L + c.A;
+    upsert_(sTable, id, [
+      id, s.date, s.classCode, s.className, s.unitCode, s.unitName, s.period,
+      s.trainerId, s.trainerName, c.P, c.A, c.L, c.E, c.P + c.A + c.L + c.E,
+      counted ? Math.round((c.P + c.L) / counted * 1000) / 10 : '',
+      s.notes, Number(s.edits) || 0, s.deviceId, s.createdAt, s.updatedAt, now
+    ]);
+    marks.forEach(function (m) {
+      var rid = id + '|' + m.admNo;
+      upsert_(aTable, rid, [rid, id, s.date, s.classCode, s.unitCode, s.unitName, s.period,
+        m.admNo, m.name, m.status, s.trainerId, s.trainerName, s.updatedAt, now, m.source]);
+    });
+  });
+  writeKeyed_(sessSh, sTable, SHEETS.Sessions);
+  writeKeyed_(attSh, aTable, SHEETS.Attendance);
+}
+
+/* ---------- QR check-ins from student phones ---------- */
+
+/** true = code genuine, false = fake or expired, null = cannot tell yet (trainer has not synced that lesson). */
+function verifyCode_(c, dataT) {
+  var i = dataT.index[c.sessionId];
+  if (i === undefined) return null;
+  var s = JSON.parse(dataT.rows[i][2]);
+  if (!s.qr || !s.qr.secret) return null;
+  var w = Number(c.w);
+  if (!isFinite(w)) return false;
+  var intervals = s.qr.intervals || [];
+  var inRange = intervals.some(function (iv) { return w >= iv[0] - 1 && w <= iv[1] + 1; });
+  if (!inRange) {
+    var lastEnd = intervals.reduce(function (m, iv) { return Math.max(m, iv[1]); }, -Infinity);
+    return w > lastEnd + 1 ? null : false; // later than the newest data we have: wait for the trainer's next sync
+  }
+  var expected = hmacHex_(c.sessionId + '|' + w, s.qr.secret).slice(0, CODE_LENGTH);
+  return expected === String(c.token || '').toLowerCase();
+}
+
+function receiveCheckins_(list) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var trainees = {};
+    readTable_('Trainees').forEach(function (r) { if (r.AdmNo) trainees[r.AdmNo.toLowerCase()] = r; });
+    var devSh = sheet_('Devices'), devT = loadKeyed_(devSh, SHEETS.Devices.length);
+    var byAdm = {};
+    devT.rows.forEach(function (r, i) { if (r[1]) byAdm[r[1].toLowerCase()] = i; });
+    var ciSh = sheet_('CheckIns'), ciT = loadKeyed_(ciSh, SHEETS.CheckIns.length);
+    var dataT = loadKeyed_(sheet_('SessionData'), SHEETS.SessionData.length);
+    var now = nowIso_(), results = [], touched = {};
+
+    list.slice(0, 200).forEach(function (c) {
+      if (!c || !c.sessionId || !c.admNo || !c.deviceId) return;
+      var t = trainees[String(c.admNo).toLowerCase()];
+      var adm = t ? t.AdmNo : String(c.admNo);
+      // One row per lesson + student + phone, so a refused attempt from another phone
+      // can never overwrite the student's genuine check-in.
+      var id = c.sessionId + '|' + adm + '|' + c.deviceId;
+      var prev = ciT.index[id];
+      if (prev !== undefined && ciT.rows[prev][10] === 'accepted') { results.push({ id: id, status: 'accepted', reason: '' }); return; }
+
+      var status, reason = '';
+      if (!t || INACTIVE.test(t.Active || '')) { status = 'rejected'; reason = 'unknown-student'; }
+      else if (t.ClassCode !== c.classCode || classFromSession_(c.sessionId) !== t.ClassCode) { status = 'rejected'; reason = 'wrong-class'; }
+      else {
+        var di = devT.index[c.deviceId], ai = byAdm[adm.toLowerCase()];
+        if (di !== undefined && devT.rows[di][1].toLowerCase() !== adm.toLowerCase()) { status = 'rejected'; reason = 'device-other-student'; }
+        else if (ai !== undefined && devT.rows[ai][0] !== c.deviceId) { status = 'rejected'; reason = 'student-other-device'; }
+        else {
+          // First accepted submission ties this phone to this student for good.
+          var reg = di !== undefined ? devT.rows[di] : [c.deviceId, adm, t.Name, t.ClassCode, now, now];
+          reg = reg.slice(); reg[5] = now;
+          upsert_(devT, c.deviceId, reg);
+          byAdm[adm.toLowerCase()] = devT.index[c.deviceId];
+          var v = verifyCode_(c, dataT);
+          status = v === null ? 'pending' : (v ? 'accepted' : 'rejected');
+          if (v === false) reason = 'invalid-code';
+        }
+      }
+      upsert_(ciT, id, [id, c.sessionId, adm, t ? t.Name : '', c.classCode || '', c.deviceId, String(c.w),
+        String(c.token || ''), c.scannedAt || '', now, status, reason]);
+      if (status === 'accepted') touched[c.sessionId] = 1;
+      results.push({ id: id, status: status, reason: reason });
+    });
+    writeKeyed_(devSh, devT, SHEETS.Devices);
+    writeKeyed_(ciSh, ciT, SHEETS.CheckIns);
+    rebuildSessions_(Object.keys(touched), dataT);
+    return { ok: true, results: results };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function reevaluateCheckins_(ids, dataT) {
+  if (!ids.length) return;
+  var want = {}; ids.forEach(function (id) { want[id] = 1; });
+  var ciSh = sheet_('CheckIns'), ciT = loadKeyed_(ciSh, SHEETS.CheckIns.length);
+  ciT.rows.forEach(function (r) {
+    if (r[10] !== 'pending' || !want[r[1]]) return;
+    var v = verifyCode_({ sessionId: r[1], w: r[6], token: r[7] }, dataT);
+    if (v === null) return;
+    var row = r.slice();
+    row[10] = v ? 'accepted' : 'rejected';
+    row[11] = v ? '' : 'invalid-code';
+    upsert_(ciT, r[0], row);
+  });
+  writeKeyed_(ciSh, ciT, SHEETS.CheckIns);
+}
+
+function acceptedMap_(ids) {
+  var want = {}; ids.forEach(function (id) { want[id] = 1; });
+  var map = {};
+  readTable_('CheckIns').forEach(function (r) {
+    if (r.Status !== 'accepted' || !want[r.SessionID]) return;
+    (map[r.SessionID] = map[r.SessionID] || {})[r.AdmNo] = { name: r.Name, scannedAt: r.ScannedAt };
+  });
+  return map;
+}
+
+function acceptedCheckins_(ids) {
+  var map = acceptedMap_(ids), out = {};
+  Object.keys(map).forEach(function (sid) {
+    out[sid] = Object.keys(map[sid]).map(function (adm) { return { admNo: adm, name: map[sid][adm].name, scannedAt: map[sid][adm].scannedAt }; });
+  });
+  return out;
 }

@@ -68,7 +68,8 @@
         <input type="search" id="regSearch" placeholder="Search name or admission no." aria-label="Search trainees">
         <button type="button" class="btn ghost" id="allPresent">All present</button>
         <button type="button" class="btn ghost" id="allAbsent">All absent</button>
-        <button type="button" class="btn" id="scanBtn">Scan QR</button>
+        <button type="button" class="btn" id="scanBtn">Scan ID cards</button>
+        <button type="button" class="btn primary" id="lessonQrBtn">QR for students</button>
       </div>
 
       <ul id="traineeList" class="trainee-list"></ul>
@@ -114,7 +115,8 @@
     <div class="row-actions">
       <button class="btn" id="exportReport">Export report CSV</button>
       <button class="btn ghost" id="exportRaw">Export all records CSV</button>
-      <button class="btn ghost" id="printQR">Print QR cards for class</button>
+      <button class="btn ghost" id="printQR">Print QR ID cards</button>
+      <button class="btn" id="joinQrBtn">Student join QR</button>
     </div>
   </section>
 
@@ -184,6 +186,26 @@
     <select id="scanAs"><option value="P">Present</option><option value="L">Late</option></select>
   </label>
   <p id="scanResult" class="scan-result">Point the camera at a card</p>
+</dialog>
+
+<dialog id="lessonQrDialog" class="qr-dialog">
+  <div class="qr-head">
+    <div><strong id="lessonQrTitle"></strong><span id="lessonQrSub" class="muted small"></span></div>
+    <button type="button" class="btn small" id="closeLessonQr">Close</button>
+  </div>
+  <div id="lessonQrCode" class="qr-box"></div>
+  <div class="qr-timer"><i id="lessonQrBar"></i></div>
+  <p class="qr-note">Students: scan with your phone camera. Works without internet. The code changes every 20 seconds.</p>
+</dialog>
+
+<dialog id="joinQrDialog" class="qr-dialog">
+  <div class="qr-head">
+    <div><strong>Join class</strong><span id="joinQrTitle" class="muted small"></span></div>
+    <button type="button" class="btn small" id="closeJoinQr">Close</button>
+  </div>
+  <div id="joinQrCode" class="qr-box"></div>
+  <p class="qr-note">Each student scans this once <b>while online</b> and picks their name. Their phone is then registered to them for this class.</p>
+  <div class="join-link"><input id="joinQrLink" readonly aria-label="Join link"><button type="button" class="btn small" id="copyJoinLink">Copy link</button></div>
 </dialog>
 
 <div id="printArea" class="print-area" aria-hidden="true"></div>
