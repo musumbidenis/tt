@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>RVNP Attendance Register</title>
-<meta name="description" content="Offline-first attendance register that syncs to Google Sheets">
+<meta name="description" content="Offline-first attendance register for RVNP ICT Department, synced to Google Sheets">
 <meta name="theme-color" content="#0b5d33">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -17,18 +17,51 @@
   <symbol id="i-mark" viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 3h6v3H9z"/><path d="M9 13.5l2 2 4-4.5"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M6 20v-6M12 20V5M18 20v-9M3 20h18"/></symbol>
-  <symbol id="i-setup" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.5"/><circle cx="10" cy="17" r="2.5"/></symbol>
+  <symbol id="i-manage" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.5-3.2 8.1-7.5 9.5-4.3-1.4-7.5-5-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-me" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.4 3.6-5.5 7-5.5s6.2 2.1 7 5.5"/></symbol>
   <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.4L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.7 4.4L20 16"/><path d="M20 20.5V16h-4.5"/></symbol>
   <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM19 14h1M14 19h1M18 18h2v2h-2z"/></symbol>
   <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
+  <symbol id="i-add" viewBox="0 0 24 24"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c.7-3.3 3.3-5.5 6.5-5.5 1.3 0 2.5.3 3.5.9M18 14v6M15 17h6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14"/></symbol>
+  <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 9V4h10v5M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><rect x="7" y="14" width="10" height="6"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/></symbol>
+  <symbol id="i-rows" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 20h14"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></symbol>
 </svg>
+
+<!-- Sign in (once, online) -->
+<section id="signin" class="signin" hidden>
+  <div class="signin-card">
+    <img src="icons/rvnp-logo.png" alt="RVNP crest" width="88" height="88">
+    <h1>Attendance register</h1>
+    <p class="muted">ICT Department · Rift Valley National Polytechnic</p>
+    <form id="signinForm" autocomplete="on">
+      <label>Staff code<input id="siCode" autocomplete="username" autocapitalize="characters" placeholder="ICT020" required></label>
+      <label>PIN<input id="siPin" type="password" inputmode="numeric" autocomplete="current-password" required></label>
+      <p id="siMsg" class="err-text small" role="alert"></p>
+      <button class="btn primary big" id="siBtn">Sign in</button>
+    </form>
+    <form id="pinForm" hidden>
+      <h2>Choose your own PIN</h2>
+      <p class="muted">4 to 8 digits. You'll use it to sign in on any phone.</p>
+      <label>New PIN<input id="newPin" type="password" inputmode="numeric" autocomplete="new-password" required></label>
+      <label>Type it again<input id="newPin2" type="password" inputmode="numeric" autocomplete="new-password" required></label>
+      <p id="pinMsg" class="err-text small" role="alert"></p>
+      <button class="btn primary big">Save PIN</button>
+    </form>
+    <p class="muted small">Signing in needs internet once. After that the register works with no network.</p>
+  </div>
+</section>
+
 <div class="chrome">
 <header class="topbar">
   <div class="brand">
     <span class="crest"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="40" height="40"></span>
     <div>
       <strong>Attendance</strong>
-      <span id="trainerLabel">Not set up yet</span>
+      <span id="trainerLabel">Not signed in</span>
     </div>
   </div>
   <div class="status">
@@ -43,7 +76,8 @@
   <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark</button>
   <button data-tab="sessions" role="tab"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg>Registers</button>
   <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Reports</button>
-  <button data-tab="settings" role="tab"><svg class="i" aria-hidden="true"><use href="#i-setup"/></svg>Setup</button>
+  <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
+  <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Me</button>
 </nav>
 </div>
 
@@ -53,12 +87,12 @@
   <section id="tab-mark" class="tab active">
     <div id="emptyRoster" class="card notice" hidden>
       <img class="crest-big" src="icons/rvnp-logo.png" alt="" width="72" height="72">
-      <h2>No class lists on this phone yet</h2>
-      <p>Go to <a href="#" data-goto="settings">Setup</a> and connect to your Google Sheet once — the class lists download automatically. Or import the trainee and unit CSV files. After that, marking works fully offline.</p>
+      <h2>No classes for you yet</h2>
+      <p>Your classes come from the trainer loading the MIS Officer uploads. Connect to the internet and tap <a href="#" data-goto="me">Me → Download class lists</a>. After that, marking works fully offline.</p>
     </div>
 
     <form id="sessionForm" class="card session-form">
-      <label>Date<input type="date" id="fDate" required></label>
+      <label>Date<input type="date" id="fDate" required><span id="weekHint" class="hint"></span></label>
       <label>Class<select id="fClass" required></select></label>
       <label>Unit<select id="fUnit" required></select></label>
       <label>Lesson<select id="fPeriod" required></select></label>
@@ -81,6 +115,7 @@
         <span class="quick">
           <button type="button" class="btn ghost" id="allPresent">All present</button>
           <button type="button" class="btn ghost" id="allAbsent">All absent</button>
+          <button type="button" class="btn ghost" id="addStudentBtn"><svg class="i" aria-hidden="true"><use href="#i-add"/></svg>Add student</button>
         </span>
         <span class="qr-actions">
           <button type="button" class="btn" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan ID cards</button>
@@ -102,7 +137,7 @@
     </div>
   </section>
 
-  <!-- SESSIONS -->
+  <!-- REGISTERS -->
   <section id="tab-sessions" class="tab">
     <div class="card filters">
       <select id="sClass" aria-label="Filter by class"><option value="">All classes</option></select>
@@ -120,28 +155,55 @@
     <div class="card filters report-filters">
       <label>Class<select id="rClass"></select></label>
       <label>Unit<select id="rUnit"></select></label>
-      <label>From<input type="date" id="rFrom"></label>
-      <label>To<input type="date" id="rTo"></label>
       <label>Minimum %<input type="number" id="rThreshold" min="0" max="100" step="1"></label>
     </div>
+    <p id="reportSource" class="muted small report-source"></p>
     <div id="reportSummary" class="report-summary"></div>
-    <div class="card table-wrap">
-      <table id="reportTable" class="report-table"></table>
+    <div id="reportControls" class="report-controls" hidden>
+      <div class="chips" role="group" aria-label="Show">
+        <button type="button" class="chipbtn on" data-filter="all">All</button>
+        <button type="button" class="chipbtn" data-filter="below" id="chipBelow">Below 75%</button>
+        <button type="button" class="chipbtn" data-filter="pending" id="chipPending">Pending</button>
+      </div>
+      <div class="chips">
+        <select id="rSort" aria-label="Sort"><option value="name">Sort by name</option><option value="pct">Lowest % first</option><option value="list">Admission number</option></select>
+        <button type="button" class="btn small" id="viewToggle"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Sheet view</span></button>
+      </div>
     </div>
-    <div class="row-actions">
-      <button class="btn" id="exportReport">Export report CSV</button>
+    <div id="reportBody"></div>
+    <p id="reportLegend" class="legend" hidden><span><i class="P"></i>Present</span><span><i class="L"></i>Late</span><span><i class="A"></i>Absent</span><span><i class="E"></i>Excused</span><span><i class="n"></i>Not held yet</span><span id="legendHours"></span></p>
+
+    <div id="signoffCard" class="card signoff" hidden></div>
+
+    <div class="row-actions report-actions">
+      <button class="btn primary" id="exportXlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel register</button>
+      <button class="btn" id="printReg"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg>Print or save PDF</button>
       <button class="btn ghost" id="exportRaw">Export all records CSV</button>
       <button class="btn ghost" id="printQR">Print QR ID cards</button>
     </div>
   </section>
 
-  <!-- SETTINGS -->
-  <section id="tab-settings" class="tab">
+  <!-- MANAGE (HOD and MIS Officer) -->
+  <section id="tab-manage" class="tab"><div id="manage"></div></section>
+
+  <!-- ME -->
+  <section id="tab-me" class="tab">
+    <div class="card profile-card">
+      <div>
+        <h2 id="meName"></h2>
+        <p id="meMeta" class="muted"></p>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn" id="changePin">Change PIN</button>
+        <button type="button" class="btn danger" id="signOut">Sign out</button>
+      </div>
+    </div>
+
     <form id="trainerForm" class="card">
-      <h2>Trainer</h2>
+      <h2>How attendance is counted</h2>
       <div class="grid2">
-        <label>Full name<input id="setName" autocomplete="name" required></label>
-        <label>Staff number<input id="setStaff"></label>
+        <label>A late arrival counts as<span class="input-suffix"><input type="number" id="setLate" min="0" max="100" step="5"><span>% of the lesson</span></span></label>
+        <label>An excused absence counts as<span class="input-suffix"><input type="number" id="setExcused" min="0" max="100" step="5"><span>% of the lesson</span></span></label>
       </div>
       <div class="grid2">
         <label>Registers lock after (hours)<input type="number" id="setLock" min="1" step="1"></label>
@@ -152,31 +214,18 @@
           </select>
         </label>
       </div>
-      <button class="btn primary">Save trainer details</button>
+      <p class="muted small">The Late and Excused shares apply to your units' reports and Excel registers, including the copies the HOD sees.</p>
+      <button class="btn primary">Save</button>
     </form>
 
-    <form id="sheetsForm" class="card">
-      <h2>Google Sheets</h2>
-      <p class="muted">Paste the web app URL and access token from your Google Sheet's Apps Script. Registers are sent to the Sheet whenever this phone is online; with no network, everything keeps working here.</p>
-      <label>Web app URL<input id="setSheetsUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec"></label>
-      <label>Access token<input id="setSheetsToken" type="password" autocomplete="off"></label>
+    <div class="card">
+      <h2>Class lists</h2>
+      <p id="rosterInfo" class="muted"></p>
       <div class="row-actions">
-        <button class="btn primary">Save and connect</button>
-        <button type="button" class="btn" id="testSheets">Test connection</button>
         <button type="button" class="btn" id="pullRoster">Download class lists</button>
         <button type="button" class="btn" id="studentLinkBtn">Student app link</button>
       </div>
       <p id="sheetsStatus" class="muted small"></p>
-    </form>
-
-    <div class="card">
-      <h2>Import roster from CSV</h2>
-      <p class="muted">For trying the app without a Sheet. When a Sheet is connected, its class lists replace these. Trainees file columns: <code>AdmNo, Name, ClassCode, ClassName, Active</code>. Units file columns: <code>ClassCode, UnitCode, UnitName</code>.</p>
-      <div class="grid2">
-        <label class="file">Trainees CSV<input type="file" id="importTrainees" accept=".csv,text/csv"></label>
-        <label class="file">Units CSV<input type="file" id="importUnits" accept=".csv,text/csv"></label>
-      </div>
-      <p id="rosterInfo" class="muted small"></p>
     </div>
 
     <div class="card">
@@ -189,6 +238,14 @@
       </div>
       <p id="dbInfo" class="muted small"></p>
     </div>
+
+    <details class="card advanced">
+      <summary>Advanced</summary>
+      <form id="serverForm">
+        <label>Server address (Apps Script web app URL)<input id="setServer" type="url" placeholder="Leave empty to use the department's server"></label>
+        <button class="btn">Save server address</button>
+      </form>
+    </details>
   </section>
 </main>
 
@@ -224,12 +281,33 @@
   <div class="join-link"><input id="studentLink" readonly aria-label="Student app link"><button type="button" class="btn small" id="copyStudentLink">Copy link</button></div>
 </dialog>
 
+<dialog id="addStudentDialog" class="sheet-dialog">
+  <form id="addStudentForm" method="dialog">
+    <div class="scan-head"><strong>Add a student to this class</strong><button type="button" class="btn small ghost" id="cancelAddStudent">Cancel</button></div>
+    <p class="muted small">For a student who is attending but not on the class list yet. You can mark them straight away; they show as <b>Pending</b> until the MIS Officer approves them.</p>
+    <label>Admission number<input id="asAdm" autocapitalize="characters" placeholder="L6CS/25S/305999" required></label>
+    <label>Full name<input id="asName" autocapitalize="words" required></label>
+    <label>Reason<select id="asReason"><option>Late admission</option><option>Transferred from another class</option><option>Missing from the class list</option><option>Other</option></select></label>
+    <label>Mark them as<select id="asMark"><option value="P">Present</option><option value="L">Late</option></select></label>
+    <p id="asMsg" class="err-text small" role="alert"></p>
+    <button class="btn primary big" id="asSave">Add and mark</button>
+  </form>
+</dialog>
+
+<dialog id="adminDialog" class="sheet-dialog wide"><div id="adminDialogBody"></div></dialog>
+
 <div id="printArea" class="print-area" aria-hidden="true"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
+<script src="config.js"></script>
 <script src="vendor/pouchdb.min.js"></script>
 <script src="vendor/jsQR.js"></script>
 <script src="vendor/qrcode.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="xlsx.js"></script>
+<script src="imports.js"></script>
+<script src="report.js"></script>
 <script src="app.js"></script>
+<script src="admin.js"></script>
 </body>
 </html>

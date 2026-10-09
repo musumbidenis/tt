@@ -1,0 +1,408 @@
+/* Manage tab — sections shown by role.
+ *   HOD:  registers waiting for approval, department overview, students waiting for the MIS Officer
+ *   MIS:  term, trainer loading, class lists, student requests, staff
+ * Everything here talks to the Sheet, so it needs internet (marking does not). */
+'use strict';
+
+const Admin = (() => {
+  const box = () => $('#manage');
+  const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
+  let cache = { signoffs: [], requests: [], overview: null, staff: [] };
+  let loadingPreview = null;
+  const classImports = [];
+
+  const section = (id, title, inner, extra = '') => `<section class="card msec" id="${id}">
+    <div class="msec-head"><h2>${title}</h2>${extra}</div>${inner}</section>`;
+  const busy = (btn, on, label) => { if (!btn) return; btn.disabled = on; if (label) btn.dataset.label = btn.dataset.label || btn.textContent; btn.textContent = on ? label : (btn.dataset.label || btn.textContent); };
+  const need = (res) => { if (!res.ok) throw new Error(res.error || 'The Sheet refused that'); return res; };
+  const dialog = (html) => { $('#adminDialogBody').innerHTML = html; $('#adminDialog').showModal(); };
+  const closeDialog = () => $('#adminDialog').close();
+
+  async function render() {
+    if (!(hasRole('HOD') || hasRole('MIS'))) { box().innerHTML = ''; return; }
+    if (!navigator.onLine) {
+      box().innerHTML = '<div class="card notice"><h2>Manage needs internet</h2><p>Approvals, uploads and staff changes go straight to the Sheet. Marking registers still works offline.</p></div>';
+      return;
+    }
+    const parts = [];
+    if (hasRole('HOD')) parts.push(section('m-signoffs', 'Registers to approve', '<p class="muted">Loading…</p>'), section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
+    if (hasRole('MIS')) {
+      parts.push(section('m-requests', 'Students added by trainers', '<p class="muted">Loading…</p>'));
+      parts.push(section('m-term', 'Term', termHtml()));
+      parts.push(section('m-loading', 'Trainer loading', loadingHtml()));
+      parts.push(section('m-classes', 'Class lists', classesHtml()));
+      parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
+    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'));
+    box().innerHTML = parts.join('');
+    const jobs = [];
+    if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
+    jobs.push(loadRequests());
+    if (hasRole('MIS')) jobs.push(loadStaff());
+    await Promise.allSettled(jobs);
+    refreshBadge();
+  }
+
+  function fill(id, html) { const el = $('#' + id); if (el) replaceBody(el, html); }
+  function replaceBody(el, html) {
+    [...el.children].slice(1).forEach((c) => c.remove());
+    el.insertAdjacentHTML('beforeend', html);
+  }
+
+  /* ---------- HOD: registers to approve ---------- */
+  async function loadSignoffs() {
+    try {
+      cache.signoffs = need(await api('signoffs')).signoffs;
+      const waiting = cache.signoffs.filter((s) => s.status === 'submitted');
+      const done = cache.signoffs.filter((s) => s.status !== 'submitted');
+      const item = (s) => `<li><button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
+        <span><b>${esc(s.classCode)} · ${esc(s.unitCode)}</b><small>${esc(s.unitName)} · ${esc(s.trainerName)}</small></span>
+        <span class="pill ${s.status === 'approved' ? 'synced' : s.status === 'returned' ? 'rejected' : 'pending'}">${s.status === 'submitted' ? 'Submitted ' + fmtShort(s.submittedAt) : s.status === 'approved' ? 'Approved' : 'Returned'}</span></button></li>`;
+      fill('m-signoffs', (waiting.length ? `<ul class="mlist">${waiting.map(item).join('')}</ul>` : '<p class="muted">Nothing is waiting. Trainers submit their term registers from Reports.</p>')
+        + (done.length ? `<details class="mdone"><summary>Approved or returned (${done.length})</summary><ul class="mlist">${done.map(item).join('')}</ul></details>` : ''));
+    } catch (e) { fill('m-signoffs', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+
+  async function loadOverview() {
+    try {
+      const o = cache.overview = need(await api('overview'));
+      if (!o.term) { fill('m-overview', '<p class="muted">The MIS Officer has not set up the term yet.</p>'); return; }
+      const rows = o.rows.sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
+      const behind = rows.filter((r) => r.lessons < r.due - 1).length;
+      fill('m-overview', `<p class="muted">${esc(o.term.name)} · week ${o.week} of 10 · ${rows.length} class units${behind ? ` · <b class="warn-text">${behind} behind on registers</b>` : ''}</p>
+        <div class="table-wrap"><table class="report-table overview-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Marked</th><th class="num">Due</th><th>Last</th><th class="num">Att.</th><th>HOD</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
+          <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
+          <td>${r.last ? fmtShort(r.last) : '–'}</td><td class="num">${r.pct === null ? '–' : r.pct + '%'}</td><td>${r.signoff ? esc(r.signoff) : ''}</td></tr>`).join('')}</tbody></table></div>`);
+    } catch (e) { fill('m-overview', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+
+  function openReport(key) {
+    const [cls, unit] = key.split('|');
+    window.openReport(cls, unit);
+  }
+
+  /* ---------- requests (MIS decides, HOD sees) ---------- */
+  async function loadRequests() {
+    try {
+      cache.requests = need(await api('requests')).requests;
+      const pending = cache.requests.filter((r) => r.status === 'pending');
+      const decided = cache.requests.filter((r) => r.status !== 'pending').slice(0, 30);
+      const can = hasRole('MIS');
+      const item = (r) => `<li class="req" data-id="${esc(r.id)}">
+        <div><b>${esc(r.name)}</b> <span class="tadm">${esc(r.admNo)}</span>
+          <small>${esc(r.classCode)} · added by ${esc(r.requestedBy)} ${r.requestedAt ? fmtShort(r.requestedAt) : ''}${r.reason ? ' · ' + esc(r.reason) : ''}</small>
+          ${r.existing ? `<small class="warn-text">Already on the list of ${esc(r.existing.classCode)} as ${esc(r.existing.name)}${r.existing.active ? '' : ' (withdrawn)'}</small>` : ''}
+          ${r.status !== 'pending' ? `<small>${esc(r.status)}${r.mergedInto ? ' into ' + esc(r.mergedInto) : ''}${r.note ? ' · ' + esc(r.note) : ''}</small>` : ''}</div>
+        ${can && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small primary" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
+          <button type="button" class="btn small" data-decide="merge">Same as…</button><button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
+      fill('m-requests', (pending.length ? `<ul class="mlist reqs">${pending.map(item).join('')}</ul>` : '<p class="muted">No students are waiting. When a trainer adds a student while marking, they appear here.</p>')
+        + (decided.length ? `<details class="mdone"><summary>Decided recently (${decided.length})</summary><ul class="mlist reqs">${decided.map(item).join('')}</ul></details>` : ''));
+    } catch (e) { fill('m-requests', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+
+  async function decide(id, decision) {
+    const r = cache.requests.find((x) => x.id === id); if (!r) return;
+    if (decision === 'merge') {
+      const others = state.trainees.filter((t) => t.classCode === r.classCode && t.active !== false);
+      dialog(`<div class="scan-head"><strong>Same student as…</strong><button type="button" class="btn small ghost" data-close>Cancel</button></div>
+        <p class="muted small">Use this when ${esc(r.name)} (${esc(r.admNo)}) was a typo or duplicate. Their marks move to the student you choose.</p>
+        <label>Student on the ${esc(r.classCode)} list<select id="mergeInto">${others.map((t) => `<option value="${esc(t.admNo)}">${esc(t.name)} — ${esc(t.admNo)}</option>`).join('')}</select></label>
+        <button type="button" class="btn primary big" id="mergeGo" data-id="${esc(id)}">Merge</button>`);
+      return;
+    }
+    if (decision === 'reject' && !confirm(`Reject ${r.name}? They will be left out of ${r.classCode}'s registers and reports.`)) return;
+    try {
+      need(await api('decideRequest', { id, decision }));
+      toast(decision === 'approve' ? `${r.name} added to ${r.classCode}` : `${r.name} rejected`, 'ok');
+      await loadRequests();
+      pullRoster({ silent: true });
+      refreshBadge();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  /* ---------- MIS: term ---------- */
+  function termHtml() {
+    const t = state.meta.term;
+    const weeks = state.meta.weeks || [];
+    return `${t ? `<p><b>${esc(t.name)}</b> <span class="muted">· ${esc(t.duration || '')} · code ${esc(t.id)}</span></p>
+      <ol class="weeks">${weeks.map((w, i) => `<li><b>Week ${i + 1}</b> ${fmtShort(w)}</li>`).join('')}</ol>` : '<p class="muted">No term is set up. Trainers can mark, but registers are not tied to weeks until you set the term.</p>'}
+      <details ${t ? '' : 'open'}><summary>${t ? 'Change the term or start a new one' : 'Set up the term'}</summary>
+      <form id="termForm" class="termform">
+        <div class="grid2">
+          <label>Term name<input id="tName" required placeholder="Term 3 2026" value="${esc(t?.name || '')}"></label>
+          <label>Code<input id="tId" placeholder="2026-T3" value="${esc(t?.id || '')}"></label>
+        </div>
+        <div class="grid2">
+          <label>Duration (as printed on registers)<input id="tDur" placeholder="Sep - Dec 2026" value="${esc(t?.duration || '')}"></label>
+          <label>First teaching day<input id="tStart" type="date" required value="${esc(t?.startDate || '')}"></label>
+        </div>
+        <label>Break weeks (no teaching), any day in each week<span id="tBreaks" class="breaks">${(t?.breaks || []).map((b) => `<input type="date" value="${esc(b)}">`).join('')}<input type="date"></span></label>
+        <p class="muted small">Every term has 10 teaching weeks; break weeks are skipped. Saving a new code starts a new term and closes the old one.</p>
+        <button class="btn primary">Save term</button>
+      </form></details>`;
+  }
+  async function saveTerm(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button.primary');
+    busy(btn, true, 'Saving…');
+    try {
+      const breaks = $$('#tBreaks input').map((i) => i.value).filter(Boolean);
+      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks }));
+      toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week 10 starts ${fmtShort(res.weeks[9])}`, 'ok');
+      await pullRoster({ silent: true });
+      $('#m-term') && replaceBody($('#m-term'), termHtml());
+    } catch (err) { toast(err.message, 'err'); }
+    finally { busy(btn, false); }
+  }
+
+  /* ---------- MIS: loading ---------- */
+  function loadingHtml() {
+    const units = state.units.filter((u) => u.trainerCode);
+    return `<p class="muted">${units.length ? `${units.length} class units loaded for ${esc(state.meta.term?.name || 'this term')}.` : 'No loading uploaded for this term yet.'}
+      Upload the department loading workbook; the app reads its <b>Subject Loading</b>, <b>List of Trainers</b> and <b>List of Subject</b> tabs only.</p>
+      <label class="btn file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Choose loading workbook<input type="file" id="loadingFile" accept=".xlsx,.xlsm"></label>
+      <div id="loadingPreview"></div>`;
+  }
+  async function readLoading(file) {
+    const out = $('#loadingPreview');
+    out.innerHTML = '<p class="muted">Reading the workbook…</p>';
+    try {
+      const L = loadingPreview = await Imports.loading(file);
+      const classes = new Set(L.rows.map((r) => r.classCode)), trainers = new Set(L.rows.map((r) => r.trainerCode));
+      const t = state.meta.term;
+      const termNote = L.meta.term && t && !new RegExp(`\\b${L.meta.term}\\b`).test(t.name) ? `<p class="warn-text">This workbook says Term ${esc(L.meta.term)} ${esc(L.meta.year)}, but the active term is ${esc(t.name)}.</p>` : '';
+      out.innerHTML = `<div class="preview">
+        <p><b>${esc(L.fileName)}</b>${L.meta.department ? ` · ${esc(L.meta.department)} department` : ''}${L.meta.term ? ` · Term ${esc(L.meta.term)} ${esc(L.meta.year)}` : ''}</p>
+        ${termNote}
+        <p>${L.rows.length} class units · ${classes.size} classes · ${trainers.size} trainers teaching · ${L.trainers.length} on the trainers list · ${L.rows.reduce((a, r) => a + r.hoursPerWeek, 0)} hours a week</p>
+        <div class="table-wrap"><table class="report-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Lessons/wk</th><th class="num">Hrs/wk</th></tr></thead>
+        <tbody>${L.rows.slice(0, 6).map((r) => `<tr><td>${esc(r.classCode)}</td><td>${esc(r.unitCode)} — ${esc(r.unitName)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessonsPerWeek}</td><td class="num">${r.hoursPerWeek}</td></tr>`).join('')}
+        ${L.rows.length > 6 ? `<tr><td colspan="5" class="muted">…and ${L.rows.length - 6} more</td></tr>` : ''}</tbody></table></div>
+        <button type="button" class="btn primary" id="uploadLoading" ${t ? '' : 'disabled'}>${t ? `Upload loading for ${esc(t.name)}` : 'Set up the term first'}</button></div>`;
+    } catch (e) { out.innerHTML = `<p class="err-text">${esc(e.message)}</p>`; }
+  }
+  async function uploadLoading(btn) {
+    if (!loadingPreview) return;
+    busy(btn, true, 'Uploading…');
+    try {
+      const res = need(await api('uploadLoading', { rows: loadingPreview.rows, trainers: loadingPreview.trainers }));
+      toast(`Loading saved: ${res.rows} class units, ${res.trainers} trainers${res.newStaff ? ` (${res.newStaff} new — issue their PINs under Staff)` : ''}`, 'ok');
+      loadingPreview = null;
+      await pullRoster({ silent: true });
+      replaceBody($('#m-loading'), loadingHtml());
+      replaceBody($('#m-classes'), classesHtml());
+      loadStaff();
+    } catch (e) { toast(e.message, 'err'); busy(btn, false); }
+  }
+
+  /* ---------- MIS: class lists ---------- */
+  function classGroups() {
+    const groups = new Map();
+    for (const c of state.classes) {
+      const g = c.misClass || '';
+      if (!g) continue;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(c.code);
+    }
+    return groups;
+  }
+  function classesHtml() {
+    const groups = classGroups();
+    const count = (code) => state.trainees.filter((t) => t.classCode === code && t.active !== false).length;
+    const unlinked = state.classes.filter((c) => !c.misClass && state.units.some((u) => u.classCode === c.code)).length;
+    return `<p class="muted">Upload the class registers from the MIS system (PDF, or the same register saved as Excel). New students are added; nobody is removed without your say.</p>
+      <label class="btn file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Choose class register files<input type="file" id="classFiles" accept=".pdf,.xlsx,.xlsm,.csv" multiple></label>
+      <div id="classImports">${classImports.map(importCard).join('')}</div>
+      ${groups.size ? `<ul class="mlist">${[...groups.entries()].sort().map(([g, codes]) => `<li><button type="button" class="mrow" data-group="${esc(g)}">
+        <span><b>${esc(g)}</b><small>${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</small></span>
+        <span class="pill synced">${codes.reduce((a, c) => a + count(c), 0)} students</span></button></li>`).join('')}</ul>` : ''}
+      ${unlinked ? `<p class="muted small">${unlinked} loaded classes have no class list yet.</p>` : ''}`;
+  }
+
+  function importCard(imp, i) {
+    const loaded = state.classes.filter((c) => state.units.some((u) => u.classCode === c.code) || c.misClass).map((c) => c.code).sort();
+    const d = imp.diff;
+    const box = (list) => list.map((c) => `<label class="check"><input type="checkbox" value="${esc(c)}" ${imp.streams.includes(c) ? 'checked' : ''}>${esc(c)}</label>`).join('');
+    const streamsBox = `<fieldset class="streams"><legend>Streams in the loading (students are split between the ticked ones)</legend>
+      ${loaded.length ? box(loaded.filter((c) => imp.streams.includes(c)))
+        + `<details class="more"><summary>${imp.streams.length ? 'Other classes' : 'Choose the classes'} (${loaded.length - imp.streams.length})</summary>${box(loaded.filter((c) => !imp.streams.includes(c)))}</details>`
+        : '<p class="muted small">Upload the loading first so the class can be linked to its streams.</p>'}</fieldset>`;
+    let diff = '';
+    if (d) {
+      const split = Object.entries(d.byStream).map(([s, n]) => `${esc(s.split(' ').pop())}: ${n}`).join(' · ');
+      diff = `<div class="diff">
+        <p class="d-add"><b>${d.added.length}</b> new student(s)${d.added.length ? ' → ' + Object.entries(d.added.reduce((m, a) => { m[a.classCode] = (m[a.classCode] || 0) + 1; return m; }, {})).map(([s, n]) => `${esc(s.split(' ').pop())} ${n}`).join(', ') : ''}</p>
+        <p><b>${d.unchanged}</b> already on the list</p>
+        ${d.confirmed.length ? `<p class="d-add"><b>${d.confirmed.length}</b> student(s) added by trainers are confirmed by this list</p>` : ''}
+        ${d.moved.length ? `<p class="warn-text"><b>${d.moved.length}</b> moving from another class: ${d.moved.slice(0, 3).map((m) => `${esc(m.name)} (${esc(m.from)})`).join(', ')}${d.moved.length > 3 ? '…' : ''}</p>` : ''}
+        ${d.renamed.length ? `<label class="check"><input type="checkbox" class="useNew" ${imp.useNewNames ? 'checked' : ''}>Use this list's spelling for ${d.renamed.length} name(s): ${d.renamed.slice(0, 2).map((r) => `${esc(r.old)} → ${esc(r.name)}`).join('; ')}${d.renamed.length > 2 ? '…' : ''}</label>` : ''}
+        ${d.missing.length ? `<fieldset class="missing"><legend>${d.missing.length} on the app's list but not in this file. Tick anyone who has left:</legend>
+          ${d.missing.map((m) => `<label class="check"><input type="checkbox" class="wd" value="${esc(m.admNo)}" ${imp.withdraw.includes(m.admNo) ? 'checked' : ''}>${esc(m.name)} <span class="tadm">${esc(m.admNo)} · ${esc(m.classCode)}</span></label>`).join('')}</fieldset>` : ''}
+        <p class="muted small">After saving: ${split}</p></div>`;
+    }
+    return `<div class="card import" data-i="${i}">
+      <div class="import-head"><b>${esc(imp.fileName)}</b><button type="button" class="btn small ghost" data-remove>Remove</button></div>
+      <div class="grid2"><label>Class code (MIS)<input class="misCode" value="${esc(imp.misClass)}"></label><label>Duration<input value="${esc(imp.duration)}" disabled></label></div>
+      <p class="muted small">${imp.students.length} students read · first: ${esc(imp.students[0].name)} (${esc(imp.students[0].admNo)})</p>
+      ${streamsBox}${diff}
+      <div class="row-actions">${d ? `<button type="button" class="btn primary" data-apply>Save class list</button>` : ''}<button type="button" class="btn${d ? '' : ' primary'}" data-preview>${d ? 'Check again' : 'Check changes'}</button></div>
+    </div>`;
+  }
+  function readImportCard(card) {
+    const imp = classImports[Number(card.dataset.i)];
+    imp.misClass = card.querySelector('.misCode').value.trim();
+    imp.streams = [...card.querySelectorAll('.streams input:checked')].map((x) => x.value);
+    imp.withdraw = [...card.querySelectorAll('.wd:checked')].map((x) => x.value);
+    imp.useNewNames = !!card.querySelector('.useNew')?.checked;
+    return imp;
+  }
+  async function addClassFiles(files) {
+    for (const f of files) {
+      try {
+        const r = await Imports.classList(f);
+        const codes = state.classes.map((c) => c.code);
+        const linked = state.classes.filter((c) => c.misClass && c.misClass === r.misClass).map((c) => c.code);
+        classImports.push({ ...r, streams: linked.length ? linked : Imports.suggestStreams(r.misClass, codes), withdraw: [], useNewNames: false, diff: null });
+      } catch (e) { toast(`${f.name}: ${e.message}`, 'err'); }
+    }
+    $('#classImports').innerHTML = classImports.map(importCard).join('');
+  }
+  async function runImport(card, apply) {
+    const imp = readImportCard(card);
+    if (!imp.misClass) { toast('Enter the class code', 'err'); return; }
+    if (!imp.streams.length && !confirm(`No streams ticked. Add all ${imp.students.length} students to a class called ${imp.misClass}?`)) return;
+    const btn = card.querySelector(apply ? '[data-apply]' : '[data-preview]');
+    busy(btn, true, apply ? 'Saving…' : 'Checking…');
+    try {
+      const res = need(await api('importClassList', { misClass: imp.misClass, streams: imp.streams, students: imp.students, dryRun: !apply, withdraw: imp.withdraw, useNewNames: imp.useNewNames }));
+      if (apply) {
+        toast(`${imp.misClass}: ${res.added.length} added${res.moved.length ? `, ${res.moved.length} moved` : ''}${imp.withdraw.length ? `, ${imp.withdraw.length} withdrawn` : ''}`, 'ok');
+        classImports.splice(Number(card.dataset.i), 1);
+        await pullRoster({ silent: true });
+        replaceBody($('#m-classes'), classesHtml());
+        loadRequests();
+      } else {
+        imp.diff = res;
+        card.outerHTML = importCard(imp, Number(card.dataset.i));
+      }
+    } catch (e) { toast(e.message, 'err'); busy(btn, false); }
+  }
+
+  async function showGroup(group) {
+    dialog(`<div class="scan-head"><strong>${esc(group)}</strong><button type="button" class="btn small ghost" data-close>Close</button></div><p class="muted">Loading…</p>`);
+    try {
+      const res = need(await api('students', { misClass: group }));
+      const streams = classGroups().get(group) || [];
+      const list = res.students.sort((a, b) => a.name.localeCompare(b.name));
+      $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} · ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
+        <input type="search" id="grpSearch" placeholder="Search name or admission no." aria-label="Search students">
+        <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" class="${s.status !== 'active' ? 'gone' : ''}">
+          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' · ' + esc(s.status) : ''}</small></span>
+          <span class="st-actions"><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button></span></li>`).join('')}</ul>`;
+    } catch (e) { $('#adminDialogBody').insertAdjacentHTML('beforeend', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  async function updateStudent(li, patch) {
+    try {
+      need(await api('updateStudent', { admNo: li.dataset.adm, ...patch }));
+      toast(patch.classCode ? `Moved to ${patch.classCode}` : patch.status === 'withdrawn' ? 'Withdrawn from the class' : 'Back on the class list', 'ok');
+      if (patch.status) { li.classList.toggle('gone', patch.status !== 'active'); const b = li.querySelector('[data-status]'); b.dataset.status = patch.status === 'active' ? 'withdrawn' : 'active'; b.textContent = patch.status === 'active' ? 'Withdraw' : 'Restore'; b.classList.toggle('danger', patch.status === 'active'); }
+      pullRoster({ silent: true });
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  /* ---------- MIS: staff ---------- */
+  async function loadStaff() {
+    if (!hasRole('MIS')) return;
+    try {
+      cache.staff = need(await api('staff')).staff.sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+      const noPin = cache.staff.filter((s) => s.active && !s.hasPin).length;
+      fill('m-staff', `${noPin ? `<p class="warn-text">${noPin} staff member(s) can't sign in yet. Tap Issue PIN and give them the PIN privately.</p>` : ''}
+        <input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
+        <ul class="mlist staff">${cache.staff.map((s) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
+          <span><b>${esc(s.name)}</b><small>${esc(s.code)}${s.responsibility ? ' · ' + esc(s.responsibility) : ''} · ${s.hasPin ? (s.mustChange ? 'PIN issued, not used yet' : 'signed in before') : 'no PIN yet'}</small></span>
+          <span class="roles">${['TRAINER', 'HOD', 'MIS'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}</span>
+          <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : 'Issue PIN'}</button>
+          <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>
+        <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
+          <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
+          <button class="btn primary">Add and issue PIN</button></form></details>`);
+    } catch (e) { fill('m-staff', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  function showPin(name, code, pin) {
+    dialog(`<div class="scan-head"><strong>PIN for ${esc(name)}</strong><button type="button" class="btn small ghost" data-close>Done</button></div>
+      <p class="pin-big">${esc(pin)}</p><p>Staff code <b>${esc(code)}</b>. Give this PIN to them privately; they choose their own PIN the first time they sign in. It is shown only once.</p>`);
+  }
+  async function staffAction(li, body, okMsg) {
+    try {
+      const res = need(await api('updateStaff', { code: li ? li.dataset.code : body.code, ...body }));
+      if (res.pin) showPin(res.staff.name, res.staff.code, res.pin);
+      else if (okMsg) toast(okMsg, 'ok');
+      loadStaff();
+    } catch (e) { toast(e.message, 'err'); loadStaff(); }
+  }
+
+  /* ---------- badge on the Manage tab ---------- */
+  function refreshBadge() {
+    const dot = $('#manageCount'); if (!dot) return;
+    let n = 0;
+    if (hasRole('MIS')) n += (state.meta.pending || []).length;
+    if (hasRole('HOD')) n += cache.signoffs.filter((s) => s.status === 'submitted').length;
+    dot.hidden = !n;
+    dot.textContent = n > 9 ? '9+' : String(n);
+  }
+
+  /* ---------- events (delegated, the sections are re-rendered often) ---------- */
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
+    if (!t.closest('#manage, #adminDialog')) return;
+    const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
+    const dec = t.closest('[data-decide]'); if (dec) { decide(dec.closest('.req').dataset.id, dec.dataset.decide); return; }
+    if (t.closest('#mergeGo')) {
+      const id = t.closest('#mergeGo').dataset.id;
+      api('decideRequest', { id, decision: 'merge', mergeInto: $('#mergeInto').value }).then(need)
+        .then(() => { closeDialog(); toast('Merged — their marks now count for that student', 'ok'); loadRequests(); pullRoster({ silent: true }); })
+        .catch((err) => toast(err.message, 'err'));
+      return;
+    }
+    if (t.closest('#uploadLoading')) { uploadLoading(t.closest('#uploadLoading')); return; }
+    const card = t.closest('.import');
+    if (card && t.closest('[data-preview]')) { runImport(card, false); return; }
+    if (card && t.closest('[data-apply]')) { runImport(card, true); return; }
+    if (card && t.closest('[data-remove]')) { classImports.splice(Number(card.dataset.i), 1); $('#classImports').innerHTML = classImports.map(importCard).join(''); return; }
+    const grp = t.closest('[data-group]'); if (grp) { showGroup(grp.dataset.group); return; }
+    const st = t.closest('.students [data-status]'); if (st) { updateStudent(st.closest('li'), { status: st.dataset.status }); return; }
+    const pin = t.closest('.staff [data-pin]');
+    if (pin) { const li = pin.closest('li'); if (confirm(`Issue a new PIN for ${li.querySelector('b').textContent}? Their old PIN stops working.`)) staffAction(li, { resetPin: true }); return; }
+    const act = t.closest('.staff [data-active]');
+    if (act) { const li = act.closest('li'); staffAction(li, { active: act.dataset.active === '1' }, act.dataset.active === '1' ? 'Switched on' : 'Switched off — they are signed out everywhere'); return; }
+  });
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
+    if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
+    if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');
+    if (t.matches('.import .streams input, .import .misCode')) { const card = t.closest('.import'); const imp = readImportCard(card); imp.diff = null; card.outerHTML = importCard(imp, Number(card.dataset.i)); }
+    if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
+    if (t.matches('.staff .rolechip input')) { const li = t.closest('li'); staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved'); }
+  });
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.id === 'grpSearch' || t.id === 'staffSearch') {
+      const q = t.value.trim().toLowerCase();
+      const list = t.id === 'grpSearch' ? $$('#adminDialog .students li') : $$('#m-staff .staff li');
+      list.forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
+    }
+  });
+  document.addEventListener('submit', (e) => {
+    if (e.target.id === 'termForm') saveTerm(e);
+    if (e.target.id === 'addStaff') {
+      e.preventDefault();
+      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: ['TRAINER'], resetPin: true });
+    }
+  });
+
+  return { render, refreshBadge };
+})();
+window.Admin = Admin;

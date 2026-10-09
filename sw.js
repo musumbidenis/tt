@@ -1,11 +1,17 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v3.6.0';
+const CACHE = 'rvnp-attendance-v4.0.0';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './admin.js',
+  './report.js',
+  './xlsx.js',
+  './imports.js',
+  './templates/class-register.xlsx',
+  './vendor/jszip.min.js',
   './manifest.webmanifest',
   './student.html',
   './student.js',
@@ -35,7 +41,8 @@ self.addEventListener('activate', (event) => {
 });
 
 // Cache first for the app's own files (fast and offline), refreshed in the background.
-// Requests to Google Apps Script or CouchDB are never cached — they go straight to the network.
+// Requests to Google Apps Script are never cached — they go straight to the network.
+// The PDF reader (vendor/pdfjs, MIS Officer only) is cached the first time it is used.
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;

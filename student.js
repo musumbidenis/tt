@@ -17,6 +17,7 @@ const st = { deviceId: '', sheetsUrl: '', profile: null, pendingLesson: null, sy
 
 /* ---------- helpers ---------- */
 const $ = (s, el = document) => el.querySelector(s);
+const lowerEq = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const nowISO = () => new Date().toISOString();
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -236,6 +237,10 @@ async function sync({ manual = false } = {}) {
         if (!r) continue;
         Object.assign(d, { status: r.status, reason: r.reason || '', checkedAt: nowISO() });
         await sdb.put(d);
+        // The MIS Officer may have moved this student to another stream: follow the official list.
+        if (r.classCode && st.profile && lowerEq(r.admNo || d.admNo, st.profile.admNo) && r.classCode !== st.profile.classCode) {
+          await saveProfile({ ...st.profile, classCode: r.classCode, className: r.classCode });
+        }
       }
     }
     await updateLocal('settings', (d) => { d.lastSync = nowISO(); });

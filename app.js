@@ -1,11 +1,13 @@
-/* RVNP Attendance Register — offline-first.
+/* RVNP Attendance Register — offline-first, for the ICT Department.
  * Storage: PouchDB (IndexedDB) on the device.
- * Sync:    straight to Google Sheets through an Apps Script web app: registers are
- *          pushed whenever the phone is online, class lists are pulled from the Sheet.
+ * Sync:    straight to Google Sheets through an Apps Script web app. Staff sign in once with
+ *          their staff code and PIN; registers are pushed whenever the phone is online, and
+ *          class lists and loading come back from the Sheet.
+ * Roles:   TRAINER marks; HOD approves term registers; MIS sets up terms, loading and class lists.
  */
 'use strict';
 
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '4.0.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -13,27 +15,29 @@ const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
 // otherwise it checks once a minute while open. Both only run while online and on screen.
 const LIVE_FAST_MS = window.__liveFastMs || 4000;
 const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
+const MAX_LESSONS_PER_WEEK = 3; // the register has 3 lesson cells per week
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
   { code: 'L3', label: 'Lesson 3' }, { code: 'L4', label: 'Lesson 4' },
   { code: 'L5', label: 'Lesson 5' }, { code: 'L6', label: 'Lesson 6' },
   { code: 'EV', label: 'Evening' },
 ];
-const DEFAULT_SETTINGS = {
-  trainerName: '', trainerId: '', lockHours: 48, defaultStatus: 'P', threshold: 75,
-  sheetsUrl: '', sheetsToken: '',
-};
+const DEFAULT_SETTINGS = { lockHours: 48, defaultStatus: 'P', threshold: 75, latePct: 50, excusedPct: 100, serverUrl: '', reportView: '' };
 
 const state = {
   settings: { ...DEFAULT_SETTINGS },
+  auth: null,             // { token, staff: { code, name, roles }, mustChange }
   deviceId: '',
-  classes: [], units: [], trainees: [],
+  classes: [], units: [], trainees: [], addreqs: [],
+  meta: { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {} },
   current: null,          // session document open in the Mark tab
   dirty: false,           // unsaved changes in the open register
   editSeq: 0,             // bumps on every edit, so a save never swallows a newer edit
   editReasonGiven: false, // reason already captured for a locked register
   syncing: false,
   activeTab: 'mark',
+  report: null,           // last report shown, for export
+  reportFilter: 'all',
 };
 
 /* ---------------- small helpers ---------------- */
@@ -46,11 +50,16 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
   : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
 const periodLabel = (code) => (PERIODS.find((p) => p.code === code) || { label: code }).label;
 const fmtDate = (iso) => { if (!iso) return ''; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
+const fmtShort = (iso) => { if (!iso) return ''; const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso); return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
-const trainerLabel = () => state.settings.trainerName || 'Unknown trainer';
 const clone = (o) => JSON.parse(JSON.stringify(o));
+const lower = (s) => String(s ?? '').trim().toLowerCase();
+const me = () => state.auth?.staff || null;
+const hasRole = (r) => !!me()?.roles?.includes(r);
+const trainerLabel = () => me()?.name || 'Unknown trainer';
+const serverUrl = () => state.settings.serverUrl || window.ATTENDANCE_CONFIG?.sheetsUrl || '';
 
 let toastTimer;
 function toast(msg, kind = '') {
@@ -58,7 +67,7 @@ function toast(msg, kind = '') {
   t.textContent = msg;
   t.className = 'show ' + kind;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+  toastTimer = setTimeout(() => { t.className = ''; }, 3500);
 }
 
 /* ---------------- local (non-replicating) docs ---------------- */
@@ -77,14 +86,21 @@ async function updateLocal(id, fn, fallback = {}) {
 }
 
 async function loadSettings() {
-  const d = await getLocal('settings');
-  const { _id, _rev, ...rest } = d;
+  const { _id, _rev, ...rest } = await getLocal('settings');
   state.settings = { ...DEFAULT_SETTINGS, ...rest };
 }
 async function saveSettings(patch) {
   Object.assign(state.settings, patch);
   await updateLocal('settings', (d) => Object.assign(d, state.settings));
-  renderTrainerLabel();
+}
+async function loadAuth() {
+  const d = await getLocal('auth');
+  state.auth = d.token ? { token: d.token, staff: d.staff, mustChange: !!d.mustChange } : null;
+}
+async function saveAuth(a) {
+  state.auth = a;
+  await updateLocal('auth', (d) => { d.token = a?.token || ''; d.staff = a?.staff || null; d.mustChange = !!a?.mustChange; });
+  renderIdentity();
 }
 async function loadDevice() {
   // Kept in the database and in a second place, so the phone ID survives if one is lost.
@@ -94,7 +110,6 @@ async function loadDevice() {
   state.deviceId = d.deviceId;
   try { localStorage.setItem('rvnp_trainer_device', d.deviceId); } catch { /* blocked */ }
 }
-
 async function protectStorage() {
   state.storage = 'unknown';
   if (!navigator.storage?.persist) return;
@@ -115,57 +130,54 @@ async function loadRoster() {
   state.classes = (await byPrefix('class:')).sort((a, b) => a.code.localeCompare(b.code));
   state.units = (await byPrefix('unit:')).sort((a, b) => a.code.localeCompare(b.code));
   state.trainees = (await byPrefix('trainee:')).sort((a, b) => a.name.localeCompare(b.name));
+  state.addreqs = await byPrefix('addreq:');
+  const { _id, _rev, ...meta } = await getLocal('meta', { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {} });
+  state.meta = { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {}, ...meta };
   renderClassSelects();
-  $('#emptyRoster').hidden = state.classes.length > 0;
+  $('#emptyRoster').hidden = markableUnits().length > 0;
   $('#rosterInfo').textContent = state.classes.length
-    ? `On this device: ${state.classes.length} classes, ${state.units.length} units, ${state.trainees.filter((t) => t.active !== false).length} active trainees.`
-    : 'No roster on this device yet.';
+    ? `On this phone: ${markClasses().length} of your classes, ${markableUnits().length} units${state.meta.term ? ` · ${state.meta.term.name}` : ''}.`
+    : 'No class lists on this phone yet.';
+  renderWeekHint();
 }
 
-const isInactive = (v) => /^(no|n|false|0|inactive|left|discontinued)$/i.test(String(v ?? '').trim());
-const pick = (obj, keys) => { for (const k of keys) if (obj[k] != null && String(obj[k]).trim() !== '') return String(obj[k]).trim(); return ''; };
+/** Units this person marks: their own loading, or every unit when no loading has been uploaded. */
+function markableUnits() {
+  if (!(hasRole('TRAINER') || hasRole('HOD'))) return [];
+  const loaded = state.units.some((u) => u.trainerCode);
+  return loaded ? state.units.filter((u) => lower(u.trainerCode) === lower(me()?.code)) : state.units;
+}
+const markClasses = () => { const set = new Set(markableUnits().map((u) => u.classCode)); return state.classes.filter((c) => set.has(c.code)); };
+/** Units whose reports this person may open: their own, or all for the HOD and MIS Officer. */
+function reportUnits() { return hasRole('HOD') || hasRole('MIS') ? state.units : markableUnits(); }
+const isMyUnit = (u) => !!u && (!u.trainerCode || lower(u.trainerCode) === lower(me()?.code));
 
 function normaliseRoster(input) {
-  const classes = new Map();
-  for (const c of input.classes || []) {
-    const code = pick(c, ['code', 'classcode', 'ClassCode']);
-    if (code) classes.set(code, { _id: 'class:' + code, type: 'class', code, name: pick(c, ['name', 'classname', 'ClassName']) || code });
+  const classes = (input.classes || []).filter((c) => c.code).map((c) => ({
+    _id: 'class:' + c.code, type: 'class', code: c.code, name: c.name || c.code, level: c.level || '', misClass: c.misClass || '' }));
+  const known = new Set(classes.map((c) => c.code));
+  const trainees = (input.trainees || []).filter((t) => t.admNo && t.classCode).map((t) => ({
+    _id: 'trainee:' + t.admNo, type: 'trainee', admNo: t.admNo, name: t.name || t.admNo, classCode: t.classCode, active: t.active !== false }));
+  const units = (input.units || []).filter((u) => u.classCode && u.code).map((u) => ({
+    _id: `unit:${u.classCode}:${u.code}`, type: 'unit', classCode: u.classCode, code: u.code, name: u.name || u.code,
+    trainerCode: u.trainerCode || '', trainerName: u.trainerName || '', lessonsPerWeek: Number(u.lessonsPerWeek) || 2, hoursPerWeek: Number(u.hoursPerWeek) || 3 }));
+  for (const x of [...trainees, ...units]) {
+    if (!known.has(x.classCode)) { known.add(x.classCode); classes.push({ _id: 'class:' + x.classCode, type: 'class', code: x.classCode, name: x.classCode, level: '', misClass: '' }); }
   }
-  const trainees = [];
-  for (const t of input.trainees || []) {
-    const admNo = pick(t, ['admNo', 'admno', 'AdmNo', 'admissionno', 'admissionnumber', 'regno', 'registrationno']);
-    const classCode = pick(t, ['classCode', 'classcode', 'ClassCode', 'class']);
-    if (!admNo || !classCode) continue;
-    if (!classes.has(classCode)) {
-      classes.set(classCode, { _id: 'class:' + classCode, type: 'class', code: classCode, name: pick(t, ['className', 'classname', 'ClassName']) || classCode });
-    }
-    trainees.push({
-      _id: 'trainee:' + admNo, type: 'trainee', admNo,
-      name: pick(t, ['name', 'Name', 'fullname', 'traineename']) || admNo,
-      classCode,
-      active: !(t.active === false || isInactive(t.active ?? t.Active)),
-    });
-  }
-  const units = [];
-  for (const u of input.units || []) {
-    const classCode = pick(u, ['classCode', 'classcode', 'ClassCode']);
-    const code = pick(u, ['code', 'unitcode', 'UnitCode']);
-    if (!classCode || !code) continue;
-    units.push({ _id: `unit:${classCode}:${code}`, type: 'unit', classCode, code, name: pick(u, ['name', 'unitname', 'UnitName']) || code });
-  }
-  return { classes: [...classes.values()], units, trainees };
+  return { classes, units, trainees };
 }
 
-/* Replace the given kinds of roster docs on this device with `incoming`. */
-async function replaceRoster(incoming, kinds) {
+/* Replace the roster docs on this device with the Sheet's. */
+async function replaceRoster(incoming) {
   const norm = normaliseRoster(incoming);
   const lists = { class: norm.classes, unit: norm.units, trainee: norm.trainees };
   const docs = [];
-  for (const kind of kinds) {
+  for (const kind of Object.keys(lists)) {
     const existing = await byPrefix(kind + ':');
     const byId = new Map(existing.map((d) => [d._id, d]));
     const seen = new Set();
     for (const doc of lists[kind]) {
+      if (seen.has(doc._id)) continue;
       seen.add(doc._id);
       const old = byId.get(doc._id);
       if (old) {
@@ -177,62 +189,52 @@ async function replaceRoster(incoming, kinds) {
     }
     for (const old of existing) if (!seen.has(old._id)) docs.push({ _id: old._id, _rev: old._rev, _deleted: true });
   }
-  // Classes referenced by units/trainees must exist even when only units are imported.
-  if (!kinds.includes('class')) {
-    const have = new Set((await byPrefix('class:')).map((c) => c.code));
-    for (const c of norm.classes) if (!have.has(c.code)) docs.push(c);
-    for (const u of norm.units) if (!have.has(u.classCode) && !norm.classes.find((c) => c.code === u.classCode)) {
-      have.add(u.classCode);
-      docs.push({ _id: 'class:' + u.classCode, type: 'class', code: u.classCode, name: u.classCode });
-    }
-  }
   if (docs.length) {
     const res = await db.bulkDocs(docs);
     const failed = res.filter((r) => r.error);
     if (failed.length) throw new Error(`${failed.length} roster records could not be saved`);
   }
-  await loadRoster();
-  return { classes: norm.classes.length, units: norm.units.length, trainees: norm.trainees.length, changed: docs.length };
+  return { classes: norm.classes.length, units: norm.units.length, trainees: norm.trainees.length };
 }
 
 /* ---------------- CSV ---------------- */
-function parseCSV(text) {
-  text = text.replace(/^﻿/, '');
-  const rows = []; let row = []; let field = ''; let q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
-      else field += c;
-    } else if (c === '"') q = true;
-    else if (c === ',') { row.push(field); field = ''; }
-    else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(field); rows.push(row); row = []; field = '';
-    } else field += c;
-  }
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  const clean = rows.filter((r) => r.some((v) => v.trim() !== ''));
-  if (!clean.length) return [];
-  const head = clean[0].map((h) => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
-  return clean.slice(1).map((r) => Object.fromEntries(head.map((h, i) => [h, (r[i] ?? '').trim()])));
-}
 function toCSV(rows) {
   const cell = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   return rows.map((r) => r.map(cell).join(',')).join('\r\n');
 }
 function download(filename, content, type = 'text/csv') {
-  const blob = new Blob([type === 'text/csv' ? '﻿' + content : content], { type });
+  const blob = content instanceof Blob ? content : new Blob([type === 'text/csv' ? '﻿' + content : content], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+const fileSafe = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+/* ---------------- term weeks ---------------- */
+function weekInfo(date) {
+  const weeks = state.meta.weeks || [];
+  if (!state.meta.term || !weeks.length || !date) return { week: null, term: null };
+  const i = weeks.indexOf(TermReport.mondayOf(date));
+  return { week: i === -1 ? null : i + 1, term: state.meta.term };
+}
+function termRange() {
+  const w = state.meta.weeks || [];
+  if (!w.length) return null;
+  const end = new Date(w[w.length - 1] + 'T00:00:00Z'); end.setUTCDate(end.getUTCDate() + 6);
+  return { from: w[0], to: end.toISOString().slice(0, 10) };
+}
+function renderWeekHint() {
+  const el = $('#weekHint'); if (!el) return;
+  const { week, term } = weekInfo($('#fDate').value);
+  el.className = 'hint' + (term && !week ? ' bad' : '');
+  el.textContent = !term ? '' : week ? `Week ${week} of 10 · ${term.name}` : `Not a teaching week of ${term.name}`;
 }
 
 /* ---------------- Mark tab ---------------- */
 const sessionId = (date, classCode, unitCode, period) => `session:${date}:${classCode}:${unitCode}:${period}`;
-const unitsFor = (classCode) => state.units.filter((u) => u.classCode === classCode);
+const unitsFor = (classCode, list = markableUnits()) => list.filter((u) => u.classCode === classCode);
 const activeTraineesFor = (classCode) => state.trainees.filter((t) => t.classCode === classCode && t.active !== false);
 
 function fillSelect(sel, options, value, placeholder) {
@@ -241,14 +243,36 @@ function fillSelect(sel, options, value, placeholder) {
     + options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
   if (options.some((o) => o.value === prev)) sel.value = prev;
 }
+const classLabel = (c) => c.misClass && c.misClass !== c.code ? `${c.code} (${c.misClass})` : (c.name && c.name !== c.code ? `${c.code} — ${c.name}` : c.code);
 
 function renderClassSelects() {
-  const classOpts = state.classes.map((c) => ({ value: c.code, label: c.code + ' — ' + c.name }));
-  fillSelect($('#fClass'), classOpts, undefined, classOpts.length ? null : 'No classes');
-  fillSelect($('#sClass'), classOpts, undefined, 'All classes');
-  fillSelect($('#rClass'), classOpts, undefined, classOpts.length ? null : 'No classes');
+  const mark = markClasses().map((c) => ({ value: c.code, label: classLabel(c) }));
+  fillSelect($('#fClass'), mark, undefined, mark.length ? null : 'No classes');
+  fillSelect($('#sClass'), mark, undefined, 'All classes');
+  const rset = new Set(reportUnits().map((u) => u.classCode));
+  const rep = state.classes.filter((c) => rset.has(c.code)).map((c) => ({ value: c.code, label: classLabel(c) }));
+  fillSelect($('#rClass'), rep, undefined, rep.length ? null : 'No classes');
   renderUnitSelect();
   renderReportUnitSelect();
+  applyWantedReport();
+}
+/* A report asked for (e.g. from the HOD's approval list) before the class lists finished downloading
+ * is opened as soon as its class and unit are available. */
+function applyWantedReport() {
+  const w = state.wantReport;
+  if (!w || ![...$('#rClass').options].some((o) => o.value === w.classCode)) return false;
+  $('#rClass').value = w.classCode;
+  renderReportUnitSelect();
+  if (![...$('#rUnit').options].some((o) => o.value === w.unitCode)) return false;
+  $('#rUnit').value = w.unitCode;
+  state.wantReport = null;
+  if (state.activeTab === 'reports') renderReport();
+  return true;
+}
+function openReport(classCode, unitCode) {
+  state.wantReport = { classCode, unitCode };
+  switchTab('reports');
+  if (!applyWantedReport()) $('#reportSummary').innerHTML = '<p class="empty">Loading the class lists…</p>';
 }
 function renderUnitSelect() {
   const opts = unitsFor($('#fClass').value).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
@@ -265,14 +289,23 @@ async function openFromForm(e) {
   try { doc = await db.get(id); }
   catch (err) {
     if (err.status !== 404) throw err;
+    const { week, term } = weekInfo(date);
+    if (term && !week) { toast(`${fmtDate(date)} is not in a teaching week of ${term.name}`, 'err'); return; }
+    const sameWeek = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
+      && TermReport.mondayOf(s.date) === TermReport.mondayOf(date));
+    if (sameWeek.length >= MAX_LESSONS_PER_WEEK) {
+      toast(`${unitCode} already has ${MAX_LESSONS_PER_WEEK} lessons in ${week ? 'week ' + week : 'this week'}. The register has room for ${MAX_LESSONS_PER_WEEK} a week; open one of those instead.`, 'err');
+      return;
+    }
     const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
     const cls = state.classes.find((c) => c.code === classCode);
     const marks = {}, names = {};
-    for (const t of activeTraineesFor(classCode)) { marks[t.admNo] = state.settings.defaultStatus || 'P'; names[t.admNo] = t.name; }
+    for (const t of rosterFor(classCode)) { marks[t.admNo] = state.settings.defaultStatus || 'P'; names[t.admNo] = t.name; }
     doc = {
       _id: id, type: 'session', date, classCode, className: cls?.name || classCode,
       unitCode, unitName: unit?.name || unitCode, period, periodLabel: periodLabel(period),
-      trainerId: state.settings.trainerId, trainerName: trainerLabel(), deviceId: state.deviceId,
+      termId: term?.id || '', week: week || '',
+      trainerId: me()?.code || '', trainerName: trainerLabel(), deviceId: state.deviceId,
       marks, names, explicit: {}, notes: '', createdAt: nowISO(), updatedAt: nowISO(), editLog: [],
     };
   }
@@ -291,12 +324,27 @@ function setCurrent(doc, isNew = false) {
   goLive();
 }
 
+/** Class list for marking: official list + students waiting for approval (yours and other trainers'), minus rejected. */
+function rosterFor(classCode) {
+  const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === classCode).map((r) => lower(r.admNo)));
+  const out = new Map();
+  for (const t of activeTraineesFor(classCode)) out.set(lower(t.admNo), { admNo: t.admNo, name: t.name, pending: false });
+  const pend = [...state.meta.pending.filter((p) => p.classCode === classCode),
+    ...state.addreqs.filter((a) => a.classCode === classCode && !a.done)];
+  for (const p of pend) {
+    const k = lower(p.admNo);
+    if (!out.has(k) && !rejected.has(k)) out.set(k, { admNo: p.admNo, name: p.name, pending: true });
+  }
+  return [...out.values()];
+}
+
 function rosterForCurrent() {
   const s = state.current;
-  const list = activeTraineesFor(s.classCode).map((t) => ({ admNo: t.admNo, name: t.name, unlisted: false }));
+  const list = rosterFor(s.classCode).map((t) => ({ ...t, unlisted: false }));
   const listed = new Set(list.map((t) => t.admNo));
+  const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === s.classCode).map((r) => r.admNo));
   for (const adm of Object.keys(s.marks || {})) {
-    if (!listed.has(adm)) list.push({ admNo: adm, name: s.names?.[adm] || adm, unlisted: true });
+    if (!listed.has(adm) && !rejected.has(adm)) list.push({ admNo: adm, name: s.names?.[adm] || adm, unlisted: true });
   }
   return list.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -311,13 +359,14 @@ function renderRegister() {
   if (!s) { $('#register').hidden = true; return; }
   $('#register').hidden = false;
   $('#regTitle').textContent = `${s.classCode} · ${s.unitCode}`;
-  $('#regSub').textContent = `${s.unitName} — ${fmtDate(s.date)}, ${periodLabel(s.period)}${isLocked(s) ? ' · locked' : ''}`;
+  const wk = s.week ? `Week ${s.week}, ` : '';
+  $('#regSub').textContent = `${s.unitName} — ${wk}${fmtDate(s.date)}, ${periodLabel(s.period)}${isLocked(s) ? ' · locked' : ''}`;
   const q = $('#regSearch').value.trim().toLowerCase();
   const rows = rosterForCurrent().filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
   $('#traineeList').innerHTML = rows.length ? rows.map((t) => {
     const st = s.marks?.[t.admNo] || '';
     return `<li class="trow${t.unlisted ? ' unlisted' : ''}" data-adm="${esc(t.admNo)}">
-      <div class="tinfo"><span class="tname">${esc(t.name)}${qrTag(s, t.admNo)}</span><span class="tadm">${esc(t.admNo)}</span></div>
+      <div class="tinfo"><span class="tname">${esc(t.name)}${qrTag(s, t.admNo)}${t.pending ? ' <span class="ptag" title="Waiting for the MIS Officer to approve">Pending</span>' : ''}</span><span class="tadm">${esc(t.admNo)}</span></div>
       <div class="seg" role="group" aria-label="Status for ${esc(t.name)}">
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
       </div></li>`;
@@ -363,7 +412,7 @@ async function setMark(adm, status, { rerender = true } = {}) {
   if (!(await ensureEditable())) return false;
   s.marks[adm] = status;
   s.explicit = { ...(s.explicit || {}), [adm]: true };
-  if (!s.names[adm]) s.names[adm] = state.trainees.find((t) => t.admNo === adm)?.name || adm;
+  if (!s.names[adm]) s.names[adm] = rosterForCurrent().find((t) => t.admNo === adm)?.name || adm;
   const row = $(`.trow[data-adm="${CSS.escape(adm)}"]`);
   if (row) $$('.seg button', row).forEach((b) => { const on = b.dataset.s === status; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
   if (rerender) renderCounts();
@@ -404,7 +453,7 @@ async function doSave() {
   s.updatedAt = nowISO();
   s.updatedBy = trainerLabel();
   s.deviceId = state.deviceId;
-  if (!s.trainerName || s.trainerName === 'Unknown trainer') { s.trainerName = trainerLabel(); s.trainerId = state.settings.trainerId; }
+  if (!s.trainerId) { s.trainerName = trainerLabel(); s.trainerId = me()?.code || ''; }
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const r = await db.put(clone(s));
@@ -416,11 +465,7 @@ async function doSave() {
       scheduleAutoSync();
       return;
     } catch (e) {
-      if (e.status === 409) { // changed by replication meanwhile: this device's edit wins, keep its marks
-        const latest = await db.get(s._id);
-        s._rev = latest._rev;
-        continue;
-      }
+      if (e.status === 409) { const latest = await db.get(s._id); s._rev = latest._rev; continue; }
       setSaveState('Not saved: ' + e.message, 'err');
       toast('Could not save: ' + e.message, 'err');
       return;
@@ -434,7 +479,41 @@ async function closeRegister() {
   renderRegister();
 }
 
-/* ---------------- QR scanning ---------------- */
+/* ---------------- adding a student while marking (pending until the MIS Officer approves) ---------------- */
+function openAddStudent() {
+  if (!state.current) { toast('Open a register first', 'err'); return; }
+  $('#addStudentForm').reset();
+  $('#asMsg').textContent = '';
+  $('#addStudentDialog').showModal();
+  setTimeout(() => $('#asAdm').focus(), 50);
+}
+async function saveAddStudent(e) {
+  e.preventDefault();
+  const s = state.current; if (!s) return;
+  const adm = $('#asAdm').value.trim().toUpperCase().replace(/\s+/g, ''), name = $('#asName').value.replace(/\s+/g, ' ').trim();
+  const msg = $('#asMsg');
+  if (!Imports.isAdm(adm)) { msg.textContent = 'Use the admission number as written on the class list, for example L6CS/25S/305999.'; return; }
+  if (name.length < 3) { msg.textContent = 'Enter the student\'s full name.'; return; }
+  if (rosterForCurrent().some((t) => lower(t.admNo) === lower(adm) && !t.unlisted)) { msg.textContent = `${adm} is already on this class list.`; return; }
+  const elsewhere = state.trainees.find((t) => lower(t.admNo) === lower(adm) && t.classCode !== s.classCode);
+  if (!(await ensureEditable())) return;
+  const id = `addreq:${s.classCode}|${adm}`;
+  let doc;
+  try { doc = await db.get(id); } catch { doc = { _id: id }; }
+  Object.assign(doc, { type: 'addreq', admNo: adm, name, classCode: s.classCode, reason: $('#asReason').value, addedAt: nowISO(),
+    addedBy: me()?.code || '', sentAt: '', done: false, note: elsewhere ? `On the list of ${elsewhere.classCode}` : '' });
+  await db.put(doc);
+  state.addreqs = await byPrefix('addreq:');
+  s.marks[adm] = $('#asMark').value;
+  s.names[adm] = name;
+  s.explicit = { ...(s.explicit || {}), [adm]: true };
+  $('#addStudentDialog').close();
+  renderRegister();
+  markDirty();
+  toast(elsewhere ? `${name} added as pending. They're on ${elsewhere.classCode}'s list; the MIS Officer will decide.` : `${name} added as pending. The MIS Officer will approve them.`, 'ok');
+}
+
+/* ---------------- QR scanning of ID cards ---------------- */
 let scanStream = null, scanning = false;
 async function startScan() {
   if (!state.current) { toast('Open a register first', 'err'); return; }
@@ -449,17 +528,13 @@ async function startScan() {
   scanning = true;
   $('#scanResult').textContent = 'Point the camera at a card';
   $('#scanResult').className = 'scan-result';
-
   let detector = null;
   try {
-    if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats()).includes('qr_code')) {
-      detector = new BarcodeDetector({ formats: ['qr_code'] });
-    }
+    if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats()).includes('qr_code')) detector = new BarcodeDetector({ formats: ['qr_code'] });
   } catch { detector = null; }
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const lastSeen = new Map();
-
   const tick = async () => {
     if (!scanning) return;
     let codes = [];
@@ -492,8 +567,7 @@ async function handleScan(raw) {
   let adm = String(raw).trim();
   try { const j = JSON.parse(adm); if (j && (j.adm || j.admNo)) adm = String(j.adm || j.admNo).trim(); } catch { /* plain text code */ }
   const s = state.current;
-  const roster = rosterForCurrent();
-  const t = roster.find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
+  const t = rosterForCurrent().find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
   const out = $('#scanResult');
   if (!t) {
     const other = state.trainees.find((x) => x.admNo.toLowerCase() === adm.toLowerCase());
@@ -503,8 +577,7 @@ async function handleScan(raw) {
     return;
   }
   const status = $('#scanAs').value;
-  const ok = await setMark(t.admNo, status);
-  if (!ok) return;
+  if (!(await setMark(t.admNo, status))) return;
   out.textContent = `${t.name} — ${STATUSES[status]}`;
   out.className = 'scan-result ok';
   navigator.vibrate?.(80);
@@ -537,7 +610,7 @@ async function renderSessions() {
         <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'In Google Sheets' : 'Waiting to sync'}</span>
         ${isLocked(s) ? '<span class="pill locked">Locked</span>' : ''}
       </span>
-      <span class="s-meta">${esc(fmtDate(s.date))} · P ${c.P} · A ${c.A} · L ${c.L} · E ${c.E} · ${esc(s.trainerName || '')}</span>
+      <span class="s-meta">${s.week ? `Week ${s.week}, ` : ''}${esc(fmtDate(s.date))} · P ${c.P} · A ${c.A} · L ${c.L} · E ${c.E}</span>
     </button>`;
   }).join('') : '<p class="empty">No registers yet. Marked registers appear here.</p>';
 }
@@ -546,75 +619,207 @@ async function openSessionById(id) {
   if (state.dirty) await saveCurrent();
   const doc = await db.get(id);
   switchTab('mark');
-  $('#fDate').value = doc.date;
+  $('#fDate').value = doc.date; renderWeekHint();
   $('#fClass').value = doc.classCode; renderUnitSelect();
   $('#fUnit').value = doc.unitCode; $('#fPeriod').value = doc.period;
   setCurrent(doc);
 }
 
-/* ---------------- Reports ---------------- */
+/* ---------------- Reports: the term register ---------------- */
 function renderReportUnitSelect() {
-  const opts = unitsFor($('#rClass').value).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
-  fillSelect($('#rUnit'), opts, undefined, 'All units');
+  const opts = unitsFor($('#rClass').value, reportUnits()).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
+  fillSelect($('#rUnit'), opts, undefined, opts.length ? null : 'No units');
 }
 
-async function buildReport() {
-  const classCode = $('#rClass').value, unitCode = $('#rUnit').value;
-  const from = $('#rFrom').value, to = $('#rTo').value;
-  const threshold = Number($('#rThreshold').value || state.settings.threshold || 75);
-  const sessions = (await byPrefix('session:')).filter((s) => s.classCode === classCode
-    && (!unitCode || s.unitCode === unitCode) && (!from || s.date >= from) && (!to || s.date <= to));
-  const rows = new Map();
-  for (const t of activeTraineesFor(classCode)) rows.set(t.admNo, { admNo: t.admNo, name: t.name, P: 0, A: 0, L: 0, E: 0 });
-  for (const s of sessions) {
-    for (const [adm, st] of Object.entries(s.marks || {})) {
-      if (!STATUSES[st]) continue;
-      if (!rows.has(adm)) rows.set(adm, { admNo: adm, name: s.names?.[adm] || adm, P: 0, A: 0, L: 0, E: 0 });
-      rows.get(adm)[st]++;
-    }
+/** Lessons for one class and unit this term: this phone's registers, plus the Sheet's copy when online. */
+async function reportSource(classCode, unitCode) {
+  const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
+  const range = termRange();
+  const local = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
+    && (!range || (s.date >= range.from && s.date <= range.to)))
+    .map((s) => ({ id: s._id, date: s.date, period: periodLabel(s.period), marks: s.marks || {}, names: s.names || {}, updatedAt: s.updatedAt, local: true }));
+  const key = `report:${classCode}|${unitCode}`;
+  let server = null;
+  if (navigator.onLine && state.auth) {
+    try {
+      const res = await api('report', { classCode, unitCode });
+      if (res.ok) { server = res; await updateLocal(key, (d) => { d.data = res; d.at = nowISO(); }); }
+    } catch { /* use the cached copy */ }
   }
-  const list = [...rows.values()].map((r) => {
-    const counted = r.P + r.L + r.A; // excused sessions are left out of the percentage
-    const pct = counted ? Math.round(((r.P + r.L) / counted) * 1000) / 10 : null;
-    return { ...r, counted, pct, below: pct !== null && pct < threshold };
-  }).sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101) || a.name.localeCompare(b.name));
-  return { classCode, unitCode, from, to, threshold, sessions, list };
+  if (!server) { const c = await getLocal(key); if (c.data) server = { ...c.data, cached: c.at }; }
+  const byId = new Map(local.map((l) => [l.id, l]));
+  for (const l of server?.lessons || []) {
+    const mine = byId.get(l.id);
+    if (!mine || String(l.updatedAt) > String(mine.updatedAt)) byId.set(l.id, { ...l, local: false });
+  }
+  return { unit, lessons: [...byId.values()], server, localCount: local.length };
 }
 
 async function renderReport() {
-  if (!$('#rClass').value) { $('#reportTable').innerHTML = ''; $('#reportSummary').innerHTML = '<p class="empty">Add a roster to see reports.</p>'; return; }
-  const r = await buildReport();
-  const below = r.list.filter((x) => x.below).length;
-  const withPct = r.list.filter((x) => x.pct !== null);
-  const avg = withPct.length ? Math.round(withPct.reduce((a, x) => a + x.pct, 0) / withPct.length) : 0;
+  const classCode = $('#rClass').value, unitCode = $('#rUnit').value;
+  const body = $('#reportBody');
+  $('#signoffCard').hidden = true;
+  if (!classCode || !unitCode) {
+    state.report = null;
+    $('#reportSummary').innerHTML = '<p class="empty">Choose a class and unit to see its term register.</p>';
+    body.innerHTML = ''; $('#reportControls').hidden = true; $('#reportLegend').hidden = true; $('#reportSource').textContent = '';
+    return;
+  }
+  const token = (renderReport.seq = (renderReport.seq || 0) + 1);
+  const src = await reportSource(classCode, unitCode);
+  if (token !== renderReport.seq) return; // a newer choice was made meanwhile
+  const unit = src.unit || {};
+  const mine = isMyUnit(unit) && (hasRole('TRAINER') || hasRole('HOD'));
+  const trainer = mine ? { latePct: state.settings.latePct, excusedPct: state.settings.excusedPct }
+    : (state.meta.staff?.[unit.trainerCode] || { latePct: 50, excusedPct: 100 });
+  const aliases = {};
+  for (const a of state.meta.aliases || []) if (a.classCode === classCode) aliases[a.from] = a.to;
+  const rejected = new Set((state.meta.rejected || []).filter((r) => r.classCode === classCode).map((r) => r.admNo));
+  const threshold = Number($('#rThreshold').value || state.settings.threshold || 75);
+  const r = TermReport.build({
+    weeks: src.server?.weeks?.length ? src.server.weeks : state.meta.weeks, lessons: src.lessons,
+    roster: rosterFor(classCode), aliases, rejected,
+    lessonHours: (unit.hoursPerWeek || 3) / (unit.lessonsPerWeek || 2), latePct: trainer.latePct, excusedPct: trainer.excusedPct, threshold,
+  });
+  const cls = state.classes.find((c) => c.code === classCode) || { code: classCode };
+  state.report = { r, unit, cls, classCode, unitCode, mine, signoff: src.server?.signoff || null, term: src.server?.term || state.meta.term };
+
+  $('#reportSource').textContent = src.server
+    ? (src.server.cached ? `From Google Sheets as of ${fmtTime(src.server.cached)}` : 'Up to date with Google Sheets')
+      + (src.localCount ? ` · includes this phone's ${src.localCount} register(s)` : '')
+    : src.localCount ? 'From the registers on this phone (connect to include other phones)' : (mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.');
   $('#reportSummary').innerHTML = `
-    <div class="stat"><b>${r.sessions.length}</b><span>Lessons recorded</span></div>
+    <div class="stat"><b>${r.lessonsHeld}</b><span>Lessons recorded</span></div>
     <div class="stat"><b>${r.list.length}</b><span>Trainees</span></div>
-    <div class="stat"><b>${avg}%</b><span>Average attendance</span></div>
-    <div class="stat ${below ? 'warn' : ''}"><b>${below}</b><span>Below ${r.threshold}%</span></div>`;
-  $('#reportTable').innerHTML = `<thead><tr><th>#</th><th>Trainee</th><th class="num">P</th><th class="num">L</th><th class="num">A</th><th class="num">E</th><th class="num">%</th></tr></thead>
-    <tbody>${r.list.map((x, i) => `<tr class="${x.below ? 'below' : ''}">
-      <td>${i + 1}</td><td class="who">${esc(x.name)}<small>${esc(x.admNo)}</small></td>
-      <td class="num">${x.P}</td><td class="num">${x.L}</td><td class="num">${x.A}</td><td class="num">${x.E}</td>
-      <td class="num">${x.pct === null ? '—' : `<span class="bar"><i style="width:${x.pct}%"></i></span>${x.pct}%`}</td></tr>`).join('')
-      || '<tr><td colspan="7" class="empty">No trainees in this class.</td></tr>'}</tbody>`;
+    <div class="stat"><b>${r.avg}%</b><span>Average attendance</span></div>
+    <div class="stat ${r.below ? 'warn' : ''}"><b>${r.below}</b><span>Below ${r.threshold}%</span></div>`;
+  $('#reportControls').hidden = false;
+  $('#chipBelow').textContent = `Below ${r.threshold}% (${r.below})`;
+  const pendingN = r.list.filter((x) => x.pending).length;
+  $('#chipPending').textContent = `Pending (${pendingN})`;
+  $('#chipPending').hidden = !pendingN;
+  $$('.chipbtn').forEach((b) => b.classList.toggle('on', b.dataset.filter === state.reportFilter));
+  $('#legendHours').textContent = `Each lesson ${r.lessonHours} h · Late counts ${r.latePct}% · Excused ${r.excusedPct}%`;
+  $('#reportLegend').hidden = false;
+  drawReportBody();
+  renderSignoff();
 }
 
-async function exportReport() {
-  if (!$('#rClass').value) return;
-  const r = await buildReport();
-  const head = [['RVNP attendance report'], ['Class', r.classCode], ['Unit', r.unitCode || 'All units'],
-    ['Period', `${r.from || 'start'} to ${r.to || 'today'}`], ['Lessons recorded', r.sessions.length], ['Minimum %', r.threshold], []];
-  const table = [['#', 'AdmNo', 'Name', 'Present', 'Late', 'Absent', 'Excused', 'Attendance %', 'Below minimum']]
-    .concat(r.list.map((x, i) => [i + 1, x.admNo, x.name, x.P, x.L, x.A, x.E, x.pct ?? '', x.below ? 'YES' : '']));
-  download(`attendance_${r.classCode}_${r.unitCode || 'all'}_${todayISO()}.csv`, toCSV(head.concat(table)));
+function reportView() {
+  return state.settings.reportView || (matchMedia('(min-width: 900px)').matches ? 'sheet' : 'list');
+}
+function drawReportBody() {
+  const rep = state.report; if (!rep) return;
+  const { r } = rep;
+  let list = r.list;
+  if (state.reportFilter === 'below') list = list.filter((x) => x.below);
+  if (state.reportFilter === 'pending') list = list.filter((x) => x.pending);
+  const sort = $('#rSort').value;
+  list = [...list].sort(sort === 'pct' ? (a, b) => (a.pct ?? 101) - (b.pct ?? 101) || a.name.localeCompare(b.name)
+    : sort === 'list' ? (a, b) => a.admNo.localeCompare(b.admNo, undefined, { numeric: true }) : (a, b) => a.name.localeCompare(b.name));
+  const view = reportView();
+  const tgl = $('#viewToggle');
+  tgl.querySelector('use').setAttribute('href', view === 'sheet' ? '#i-rows' : '#i-grid');
+  tgl.querySelector('span').textContent = view === 'sheet' ? 'List view' : 'Sheet view';
+  const warn = r.overflow.length
+    ? `<p class="card warn-banner">${r.overflow.length} lesson(s) are not on the register: ${r.overflow.slice(0, 3).map((l) => esc(fmtShort(l.date) + ' ' + l.period)).join(', ')}${r.overflow.length > 3 ? '…' : ''}. They fall outside the term's 10 weeks or are a 4th lesson in one week.</p>` : '';
+  if (view === 'sheet') {
+    $('#reportBody').innerHTML = warn + `<div class="card sheet-wrap">${TermReport.sheetTable({ ...r, list }, esc)}</div>`;
+    return;
+  }
+  $('#reportBody').innerHTML = warn + (list.length ? `<ul class="card rlist">${list.map((x) => `
+    <li class="rrow${x.below ? ' below' : ''}">
+      <div class="rinfo"><b>${esc(x.name)}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</b>
+        <span class="tadm">${esc(x.admNo)}</span>${TermReport.strip(x.cells)}</div>
+      <div class="rpct"><b>${x.pct === null ? '–' : x.pct + '%'}</b><span>${x.actual}/${x.possible} h</span></div>
+    </li>`).join('')}</ul>` : '<p class="empty">Nobody matches this filter.</p>');
+}
+
+/* Sign-off: the trainer submits the term register; the HOD approves or returns it. */
+function renderSignoff() {
+  const rep = state.report, card = $('#signoffCard');
+  if (!rep || !state.meta.term) { card.hidden = true; return; }
+  const so = rep.signoff;
+  const isHod = hasRole('HOD');
+  const status = !so ? 'Not submitted to the HOD yet'
+    : so.status === 'submitted' ? `Submitted to the HOD on ${fmtShort(so.submittedAt)}`
+      : so.status === 'approved' ? `Approved by ${so.hodName} on ${fmtShort(so.decidedAt)}`
+        : `Returned by ${so.hodName} on ${fmtShort(so.decidedAt)}`;
+  const kind = !so ? '' : so.status === 'approved' ? 'ok' : so.status === 'returned' ? 'err' : 'wait';
+  let html = `<div class="so-head"><h2>HOD approval</h2><span class="so-status ${kind}">${esc(status)}</span></div>`;
+  if (so?.hodComment) html += `<p class="so-quote"><b>HOD's comment:</b> ${esc(so.hodComment)}</p>`;
+  if (rep.mine) {
+    html += `<label>Lecturer's comment<textarea id="soComment" rows="2" placeholder="Shown on the register under Lecturer's Comment">${esc(so?.lecturerComment || '')}</textarea></label>
+      <button type="button" class="btn primary" id="soSubmit"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg>${so ? 'Submit again' : 'Submit to HOD'}</button>`;
+  } else if (so?.lecturerComment) html += `<p class="so-quote"><b>Lecturer's comment:</b> ${esc(so.lecturerComment)}</p>`;
+  if (isHod && so && so.status !== 'approved') {
+    html += `<label>HOD's comment<textarea id="soHod" rows="2" placeholder="Shown on the register under HOD's Comment">${esc(so.hodComment || '')}</textarea></label>
+      <div class="row-actions"><button type="button" class="btn primary" id="soApprove">Approve register</button><button type="button" class="btn" id="soReturn">Return to trainer</button></div>`;
+  }
+  card.innerHTML = html;
+  card.hidden = false;
+}
+
+async function submitSignoff() {
+  const rep = state.report; if (!rep) return;
+  if (!navigator.onLine) { toast('Submitting needs internet. Your register is safe on this phone.', 'err'); return; }
+  try {
+    await syncSheets({ silent: true, pull: false });
+    const res = await api('submitSignoff', { classCode: rep.classCode, unitCode: rep.unitCode, unitName: rep.unit.name, comment: $('#soComment').value.trim(), resubmit: true });
+    if (!res.ok) throw new Error(res.error);
+    rep.signoff = res.signoff;
+    renderSignoff();
+    toast('Submitted to the HOD', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function decideSignoff(decision) {
+  const rep = state.report; if (!rep?.signoff) return;
+  try {
+    const res = await api('decideSignoff', { id: rep.signoff.id, decision, comment: $('#soHod').value.trim() });
+    if (!res.ok) throw new Error(res.error);
+    rep.signoff = res.signoff;
+    renderSignoff();
+    toast(decision === 'approved' ? 'Register approved' : 'Register returned to the trainer', 'ok');
+    window.Admin?.refreshBadge?.();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function registerExportData() {
+  const rep = state.report;
+  const { r, unit, cls, classCode, unitCode, signoff, term } = rep;
+  const so = signoff;
+  const lect = (rep.mine ? $('#soComment')?.value.trim() : '') || so?.lecturerComment || '';
+  const hod = so?.status === 'approved' ? [so.hodComment, `Approved by ${so.hodName}, ${fmtShort(so.decidedAt)}`].filter(Boolean).join(' — ') : (so?.hodComment || '');
+  return TermReport.exportData(r, {
+    lecturer: unit.trainerName || (rep.mine ? trainerLabel() : ''), duration: term?.duration || '',
+    classLabel: cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
+    subject: `${unitCode} - ${unit.name || unitCode}`, misClass: cls.misClass, classCode,
+    sheetName: `${classCode.split(' ').pop()} ${unitCode}`, lecturerComment: lect, hodComment: hod,
+  });
+}
+async function exportXlsx() {
+  if (!state.report) { toast('Choose a class and unit first', 'err'); return; }
+  try {
+    const t = await (await fetch('templates/class-register.xlsx')).arrayBuffer();
+    const blob = await Xlsx.registerFile(t, registerExportData());
+    download(`Register_${fileSafe(state.report.classCode)}_${fileSafe(state.report.unitCode)}_${todayISO()}.xlsx`, blob);
+    toast('Excel register saved', 'ok');
+  } catch (e) { toast('Could not make the Excel file: ' + e.message, 'err'); }
+}
+function printRegister() {
+  if (!state.report) { toast('Choose a class and unit first', 'err'); return; }
+  $('#printArea').innerHTML = TermReport.printHtml(registerExportData(), esc);
+  document.body.classList.add('printing', 'print-register');
+  const done = () => { document.body.classList.remove('printing', 'print-register'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  setTimeout(() => window.print(), 80);
 }
 
 async function exportRaw() {
   const sessions = (await byPrefix('session:')).sort((a, b) => (a.date + a.period).localeCompare(b.date + b.period));
-  const rows = [['Date', 'Lesson', 'ClassCode', 'UnitCode', 'UnitName', 'AdmNo', 'Name', 'Status', 'Trainer', 'SessionID', 'UpdatedAt']];
+  const rows = [['Date', 'Week', 'Lesson', 'ClassCode', 'UnitCode', 'UnitName', 'AdmNo', 'Name', 'Status', 'Trainer', 'SessionID', 'UpdatedAt']];
   for (const s of sessions) for (const [adm, st] of Object.entries(s.marks || {})) {
-    rows.push([s.date, periodLabel(s.period), s.classCode, s.unitCode, s.unitName, adm, s.names?.[adm] || '', STATUSES[st] || '', s.trainerName, s._id, s.updatedAt]);
+    rows.push([s.date, s.week || '', periodLabel(s.period), s.classCode, s.unitCode, s.unitName, adm, s.names?.[adm] || '', STATUSES[st] || '', s.trainerName, s._id, s.updatedAt]);
   }
   download(`attendance_all_records_${todayISO()}.csv`, toCSV(rows));
 }
@@ -633,15 +838,13 @@ function printQRCards() {
   setTimeout(() => window.print(), 50);
 }
 
-/* ---------------- Google Sheets sync (Apps Script web app) ----------------
- * Registers are pushed straight to the Sheet whenever the phone is online;
- * class lists are pulled from the Sheet's Classes / Units / Trainees tabs. */
+/* ---------------- Google Sheets (Apps Script web app) ---------------- */
 async function callSheets(method, body, params = {}) {
-  if (!state.settings.sheetsUrl) throw new Error('Add the Apps Script web app URL in Setup');
-  const url = new URL(state.settings.sheetsUrl);
+  if (!serverUrl()) throw new Error('No server address set. Ask the MIS Officer for the app link.');
+  const url = new URL(serverUrl());
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000);
+  const timer = setTimeout(() => ctrl.abort(), 60000);
   try {
     const opts = method === 'GET'
       ? { method: 'GET', signal: ctrl.signal, redirect: 'follow' }
@@ -650,12 +853,23 @@ async function callSheets(method, body, params = {}) {
     const res = await fetch(url.toString(), opts);
     const text = await res.text();
     try { return JSON.parse(text); }
-    catch { throw new Error('Unexpected reply from Apps Script — check the deployment is set to "Anyone" and the URL ends in /exec'); }
+    catch { throw new Error('Unexpected reply from the server — check the Apps Script deployment is set to "Anyone" and is the latest version'); }
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('Google Sheets took too long to answer');
     if (e instanceof TypeError) throw new Error('No connection to Google Sheets');
     throw e;
   } finally { clearTimeout(timer); }
+}
+
+/** Signed-in call. If the sign-in has ended, shows the sign-in screen (nothing on the phone is lost). */
+async function api(action, body = {}) {
+  if (!state.auth?.token) { showSignin(); throw new Error('Sign in first'); }
+  const used = state.auth.token;
+  const res = await callSheets('POST', { action, auth: used, ...body });
+  // A reply to a request sent before a PIN change carries the old sign-in: ignore it rather than sign out.
+  if (res && res.authError) { if (state.auth?.token === used) showSignin(res.error); throw new Error(res.error); }
+  if (res && res.mustChange) { showSignin(); showPinForm(); throw new Error(res.error); }
+  return res;
 }
 
 async function sheetsSyncMap() { return (await getLocal('sheetsSync', { map: {} })).map || {}; }
@@ -665,7 +879,8 @@ async function pendingSessions() {
 }
 async function refreshPending() {
   const pending = await pendingSessions();
-  const n = pending.length;
+  const unsentReqs = state.addreqs.filter((a) => !a.sentAt).length;
+  const n = pending.length + unsentReqs;
   const el = $('#pendingCount');
   el.textContent = n;
   el.classList.toggle('zero', n === 0);
@@ -676,7 +891,7 @@ async function refreshPending() {
   const warn = $('#syncWarn');
   if (days >= 2) {
     warn.hidden = false;
-    warn.textContent = `${n} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this phone — connect and tap Sync.`;
+    warn.textContent = `${pending.length} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this phone — connect and tap Sync.`;
   } else if (state.storage === 'not-protected' && n) {
     warn.hidden = false;
     warn.textContent = 'Install this app (browser menu → Add to Home screen) so the phone keeps unsent registers safely.';
@@ -689,6 +904,7 @@ function toSheetSession(s) {
     sessionId: s._id, date: s.date, classCode: s.classCode, className: s.className || '',
     unitCode: s.unitCode, unitName: s.unitName || '', period: periodLabel(s.period),
     trainerId: s.trainerId || '', trainerName: s.trainerName || '', deviceId: s.deviceId || '',
+    termId: s.termId || '', week: s.week || '',
     notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
     edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E },
     marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
@@ -697,8 +913,19 @@ function toSheetSession(s) {
   };
 }
 
+async function pushRequests() {
+  const unsent = state.addreqs.filter((a) => !a.sentAt);
+  if (!unsent.length) return 0;
+  const res = await api('addStudents', { students: unsent.map((a) => ({ admNo: a.admNo, name: a.name, classCode: a.classCode, reason: a.reason, addedAt: a.addedAt })) });
+  if (!res.ok) throw new Error(res.error || 'Could not send the added students');
+  const docs = unsent.map((a) => ({ ...a, sentAt: nowISO(), serverStatus: (res.results || []).find((r) => lower(r.admNo) === lower(a.admNo))?.status || '' }));
+  await db.bulkDocs(docs);
+  state.addreqs = await byPrefix('addreq:');
+  return unsent.length;
+}
+
 async function syncSheets({ silent = false, pull = true } = {}) {
-  if (!state.settings.sheetsUrl) { if (!silent) { toast('Add your Google Sheets web app URL in Setup first'); switchTab('settings'); } return; }
+  if (!state.auth || state.auth.mustChange) { if (!silent) showSignin(); return; }
   if (state.syncing) return;
   if (!navigator.onLine) { if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
   if (state.dirty) await saveCurrent();
@@ -707,7 +934,7 @@ async function syncSheets({ silent = false, pull = true } = {}) {
   let sent = 0;
   const pushPending = async () => {
     for (const batch of chunk(await pendingSessions(), 20)) {
-      const res = await callSheets('POST', { action: 'push', token: state.settings.sheetsToken, deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
+      const res = await api('push', { deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
       if (!res.ok) throw new Error(res.error || 'Google Sheets rejected the upload');
       await updateLocal('sheetsSync', (d) => { d.map = d.map || {}; for (const s of batch) d.map[s._id] = s._rev; }, { map: {} });
       sent += batch.length;
@@ -715,13 +942,15 @@ async function syncSheets({ silent = false, pull = true } = {}) {
   };
   try {
     await pushPending();
+    const reqs = await pushRequests();
     const qrUpdated = pull ? await pullCheckins() : 0; // uploads alone skip fetching; the live pulse handles that
     if (qrUpdated) await pushPending();
     await updateLocal('syncLog', (d) => { d.lastSheets = nowISO(); });
     renderSheetsStatus();
     if (!silent) {
       const parts = [];
-      if (sent) parts.push(`Sent ${sent} register(s) to Google Sheets`);
+      if (sent) parts.push(`Sent ${sent} register(s)`);
+      if (reqs) parts.push(`${reqs} added student(s) sent to the MIS Officer`);
       if (qrUpdated) parts.push(`QR check-ins added to ${qrUpdated} register(s)`);
       toast(parts.join(' · ') || 'Everything is already in Google Sheets', 'ok');
     }
@@ -743,31 +972,36 @@ function scheduleAutoSync() {
 }
 
 async function pullRoster({ silent = false } = {}) {
-  if (!state.settings.sheetsUrl) { if (!silent) toast('Add your Google Sheets web app URL first', 'err'); return; }
+  if (!state.auth || state.auth.mustChange) return;
   const btn = $('#pullRoster'); btn.disabled = true;
   if (!silent) $('#sheetsStatus').textContent = 'Downloading class lists…';
   try {
-    const res = await callSheets('GET', null, { action: 'roster', token: state.settings.sheetsToken });
+    const res = await api('roster');
     if (!res.ok) throw new Error(res.error || 'Could not read the class lists');
     if (!(res.trainees || []).length && state.trainees.length) throw new Error('the Trainees tab is empty — kept the class lists already on this phone');
-    const r = await replaceRoster(res, ['class', 'unit', 'trainee']);
+    const r = await replaceRoster(res);
+    await updateLocal('meta', (d) => {
+      Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {} });
+    });
+    // Students this phone added: done once the MIS Officer has decided (on the list, rejected or merged).
+    const stillPending = new Set((res.pending || []).map((p) => `${p.classCode}|${lower(p.admNo)}`));
+    const done = state.addreqs.filter((a) => a.sentAt && !a.done && !stillPending.has(`${a.classCode}|${lower(a.admNo)}`));
+    if (done.length) await db.bulkDocs(done.map((a) => ({ ...a, done: true })));
+    if (res.me) {
+      await saveAuth({ ...state.auth, staff: { ...state.auth.staff, ...res.me, roles: res.me.roles } });
+      const s = res.me;
+      if (s.latePct !== undefined) await saveSettings({ latePct: s.latePct, excusedPct: s.excusedPct });
+      fillSettingsForms();
+    }
     await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
+    await loadRoster();
+    applyRoles();
     renderSheetsStatus();
-    if (!silent) toast(`Class lists saved: ${r.classes} classes, ${r.trainees} trainees — you can now mark offline`, 'ok');
+    if (!silent) toast(`Class lists saved: ${markClasses().length} of your classes, ${r.trainees} students — you can now mark offline`, 'ok');
   } catch (e) {
     $('#sheetsStatus').textContent = 'Class list download failed: ' + e.message;
     if (!silent) toast(e.message, 'err');
   } finally { btn.disabled = false; }
-}
-
-async function testSheets() {
-  $('#sheetsStatus').textContent = 'Testing…';
-  try {
-    const res = await callSheets('GET', null, { action: 'ping', token: state.settings.sheetsToken });
-    if (!res.ok) throw new Error(res.error);
-    $('#sheetsStatus').textContent = `Connected to "${res.spreadsheet}".`;
-    toast('Google Sheets connection works', 'ok');
-  } catch (e) { $('#sheetsStatus').textContent = 'Connection failed: ' + e.message; }
 }
 
 async function renderSheetsStatus() {
@@ -775,14 +1009,14 @@ async function renderSheetsStatus() {
   const parts = [];
   if (log.lastSheets) parts.push(`Registers last sent ${fmtTime(log.lastSheets)}`);
   if (log.lastRoster) parts.push(`class lists downloaded ${fmtTime(log.lastRoster)}`);
-  $('#sheetsStatus').textContent = parts.length ? parts.join(' · ') + '.' : (state.settings.sheetsUrl ? 'Not synced yet.' : 'Not connected yet.');
+  $('#sheetsStatus').textContent = parts.length ? parts.join(' · ') + '.' : 'Not synced yet.';
 }
 
-/* Refresh class lists automatically when they are more than 12 hours old. */
+/* Refresh class lists automatically when they are more than 6 hours old. */
 async function maybeRefreshRoster() {
-  if (!state.settings.sheetsUrl || !navigator.onLine) return;
+  if (!state.auth || !navigator.onLine) return;
   const log = await getLocal('syncLog');
-  if (!log.lastRoster || Date.now() - new Date(log.lastRoster).getTime() > 12 * 36e5) pullRoster({ silent: true });
+  if (!log.lastRoster || Date.now() - new Date(log.lastRoster).getTime() > 6 * 36e5) pullRoster({ silent: true });
 }
 
 /* When two devices edit the same register, keep the most recent version and
@@ -817,7 +1051,7 @@ const changedIds = new Set();
 const onDbChange = debounce(async () => {
   const ids = new Set(changedIds);
   changedIds.clear();
-  if ([...ids].some((id) => /^(class|unit|trainee):/.test(id))) await loadRoster();
+  if ([...ids].some((id) => /^(class|unit|trainee|addreq):/.test(id))) await loadRoster();
   await resolveConflicts();
   refreshPending();
   const cur = state.current;
@@ -828,7 +1062,6 @@ const onDbChange = debounce(async () => {
     } catch { /* deleted */ }
   }
   if (state.activeTab === 'sessions') renderSessions();
-  if (state.activeTab === 'reports') renderReport();
 }, 400);
 
 /* ---------------- QR check-in: students scan a code the trainer shows ----------------
@@ -841,10 +1074,10 @@ const b64url = (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).
 const randomHex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const studentPageUrl = () => new URL('student.html', location.href.split('#')[0]).toString();
 
-async function qrToken(secret, sessionId, w) {
+async function qrToken(secret, sid, w) {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${sessionId}|${w}`));
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${sid}|${w}`));
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 10);
 }
 function qrSvg(text, cell = 6) {
@@ -883,7 +1116,7 @@ async function openLessonQR() {
       const iv = s.qr.intervals[s.qr.intervals.length - 1];
       if (iv[1] !== w) { iv[1] = w; markDirty(); saveCurrent().then(() => scheduleAutoSync()); }
       const t = await qrToken(s.qr.secret, s._id, w);
-      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, u: state.settings.sheetsUrl, w, t });
+      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, u: serverUrl(), w, t });
       const box = $('#lessonQrCode');
       box.innerHTML = qrSvg(url, 6);
       box.dataset.url = url;
@@ -900,7 +1133,7 @@ function renderQrLive() {
   const el = $('#lessonQrLive');
   if (!s || !el) return;
   const via = Object.entries(s.viaQr || {}).sort((a, b) => String(b[1]).localeCompare(String(a[1])));
-  const total = activeTraineesFor(s.classCode).length;
+  const total = rosterFor(s.classCode).length;
   el.innerHTML = `<b>${via.length}</b> of ${total} checked in`
     + (via.length ? `<span>${via.slice(0, 4).map(([adm]) => esc((s.names?.[adm] || adm).split(' ')[0])).join(', ')}${via.length > 4 ? '…' : ''}</span>` : '<span>Waiting for the first scan…</span>');
 }
@@ -918,9 +1151,9 @@ async function liveTick() {
   liveBusy = true;
   const live = isLiveLesson();
   try {
-    if (navigator.onLine && document.visibilityState === 'visible' && state.settings.sheetsUrl && !state.syncing) {
+    if (navigator.onLine && document.visibilityState === 'visible' && state.auth && !state.auth.mustChange && !state.syncing) {
       if (live) {
-        const res = await callSheets('GET', null, { action: 'pulse', token: state.settings.sheetsToken });
+        const res = await api('pulse');
         // Fetch details only when the Sheet says something changed (or it cannot tell).
         if (!res.ok || res.last !== state.lastPulse) {
           state.lastPulse = res.last || '';
@@ -952,7 +1185,7 @@ async function pullCheckins() {
   const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
   if (!sessions.length) return 0;
   const log = await getLocal('syncLog');
-  const res = await callSheets('POST', { action: 'checkins', token: state.settings.sheetsToken, sessionIds: sessions.map((s) => s._id), since: log.checkinsSince || '' });
+  const res = await api('checkins', { sessionIds: sessions.map((s) => s._id), since: log.checkinsSince || '' });
   if (!res.ok) throw new Error(res.error || 'Could not read QR check-ins');
   const synced = await sheetsSyncMap();
   let changed = 0, newOnOpen = 0;
@@ -994,6 +1227,74 @@ async function pullCheckins() {
   return changed;
 }
 
+/* ---------------- sign-in ---------------- */
+function showSignin(message = '') {
+  $('#signin').hidden = false;
+  document.body.classList.add('locked');
+  $('#signinForm').hidden = false;
+  $('#pinForm').hidden = true;
+  $('#siMsg').textContent = message || (!navigator.onLine ? 'Connect to the internet to sign in.' : '');
+  if (state.auth?.staff?.code && !$('#siCode').value) $('#siCode').value = state.auth.staff.code;
+}
+function showPinForm() {
+  $('#signin').hidden = false;
+  document.body.classList.add('locked');
+  $('#signinForm').hidden = true;
+  $('#pinForm').hidden = false;
+  $('#pinMsg').textContent = '';
+  setTimeout(() => $('#newPin').focus(), 50);
+}
+function hideSignin() { $('#signin').hidden = true; document.body.classList.remove('locked'); }
+
+async function signIn(e) {
+  e.preventDefault();
+  const code = $('#siCode').value.trim(), pin = $('#siPin').value.trim();
+  const btn = $('#siBtn'); btn.disabled = true; $('#siMsg').textContent = 'Signing in…';
+  try {
+    const res = await callSheets('POST', { action: 'login', staff: code, pin });
+    if (!res.ok) throw new Error(res.error);
+    $('#siPin').value = '';
+    await saveAuth({ token: res.token, staff: res.staff, mustChange: res.mustChange });
+    if (res.mustChange) { showPinForm(); return; }
+    await afterSignIn();
+  } catch (err) { $('#siMsg').textContent = err.message; }
+  finally { btn.disabled = false; }
+}
+async function savePin(e) {
+  e.preventDefault();
+  const a = $('#newPin').value.trim(), b = $('#newPin2').value.trim();
+  if (a !== b) { $('#pinMsg').textContent = 'The two PINs are different.'; return; }
+  try {
+    const res = await callSheets('POST', { action: 'setPin', auth: state.auth.token, newPin: a });
+    if (!res.ok) throw new Error(res.error);
+    $('#newPin').value = ''; $('#newPin2').value = '';
+    await saveAuth({ token: res.token, staff: res.staff, mustChange: false });
+    toast('PIN saved', 'ok');
+    await afterSignIn();
+  } catch (err) { $('#pinMsg').textContent = err.message; }
+}
+function homeTab() {
+  if (markableUnits().length) return 'mark';
+  if (hasRole('MIS')) return 'manage';
+  if (hasRole('HOD')) return 'manage';
+  return hasRole('TRAINER') ? 'mark' : 'me';
+}
+async function afterSignIn() {
+  hideSignin();
+  applyRoles();
+  const seq = state.tabSeq || 0;
+  await pullRoster({ silent: true });
+  if ((state.tabSeq || 0) === seq) switchTab(homeTab()); // don't pull people away from a tab they chose meanwhile
+  syncSheets({ silent: true });
+  liveTick();
+}
+async function signOut() {
+  const pending = (await pendingSessions()).length;
+  if (!confirm(pending ? `${pending} register(s) are not sent yet. They stay on this phone and are sent after you sign in again. Sign out?` : 'Sign out of this phone?')) return;
+  await saveAuth(null);
+  showSignin();
+}
+
 /* ---------------- backup ---------------- */
 async function exportBackup() {
   const all = await db.allDocs();
@@ -1033,14 +1334,31 @@ async function renderDbInfo() {
   $('#dbInfo').textContent = `Device ${state.deviceId} · ${info.doc_count} records stored · storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} · app v${APP_VERSION}`;
 }
 
-/* ---------------- tabs, network, wiring ---------------- */
+/* ---------------- tabs, roles, network, wiring ---------------- */
 function switchTab(name) {
+  const btn = $(`.tabs button[data-tab="${name}"]`);
+  if (!btn || btn.hidden) name = 'reports';
   state.activeTab = name;
+  state.tabSeq = (state.tabSeq || 0) + 1;
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
   if (name === 'sessions') renderSessions();
   if (name === 'reports') renderReport();
-  if (name === 'settings') renderDbInfo();
+  if (name === 'manage') window.Admin?.render();
+  if (name === 'me') { renderDbInfo(); renderMe(); }
+}
+
+/** Shows only the sections this person's roles allow. */
+function applyRoles() {
+  const marks = hasRole('TRAINER') || hasRole('HOD');
+  $('.tabs button[data-tab="mark"]').hidden = !marks;
+  $('.tabs button[data-tab="sessions"]').hidden = !marks;
+  $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
+  $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
+  if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : 'reports');
+  renderIdentity();
+  renderClassSelects();
+  window.Admin?.refreshBadge?.();
 }
 
 function updateNet() {
@@ -1050,26 +1368,40 @@ function updateNet() {
   b.className = 'badge ' + (on ? 'online' : 'offline');
 }
 
-function renderTrainerLabel() {
-  const s = state.settings;
-  $('#trainerLabel').textContent = s.trainerName ? `${s.trainerName}${s.trainerId ? ' · ' + s.trainerId : ''}` : 'Not set up yet — open Setup';
+const ROLE_NAMES = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
+function renderIdentity() {
+  const s = me();
+  const roles = s ? s.roles.map((r) => ROLE_NAMES[r]).join(', ') || 'no role yet' : '';
+  $('#trainerLabel').textContent = !s ? 'Not signed in' : s.name === roles ? s.name : `${s.name} · ${roles}`;
+}
+function renderMe() {
+  const s = me();
+  $('#meName').textContent = s?.name || 'Not signed in';
+  $('#meMeta').textContent = s ? `Staff code ${s.code} · ${s.roles.map((r) => ROLE_NAMES[r]).join(', ') || 'No role yet — ask the MIS Officer'}` : '';
 }
 
 function fillSettingsForms() {
   const s = state.settings;
-  $('#setName').value = s.trainerName; $('#setStaff').value = s.trainerId;
   $('#setLock').value = s.lockHours; $('#setDefault').value = s.defaultStatus;
-  $('#setSheetsUrl').value = s.sheetsUrl; $('#setSheetsToken').value = s.sheetsToken;
+  $('#setLate').value = s.latePct; $('#setExcused').value = s.excusedPct;
   $('#rThreshold').value = s.threshold;
+  $('#setServer').value = s.serverUrl || '';
 }
 
 function wire() {
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   document.addEventListener('click', (e) => { const g = e.target.closest('[data-goto]'); if (g) { e.preventDefault(); switchTab(g.dataset.goto); } });
 
+  // Sign-in
+  $('#signinForm').addEventListener('submit', signIn);
+  $('#pinForm').addEventListener('submit', savePin);
+  $('#signOut').addEventListener('click', signOut);
+  $('#changePin').addEventListener('click', () => { if (!navigator.onLine) { toast('Changing your PIN needs internet', 'err'); return; } showPinForm(); });
+
   // Mark
   $('#sessionForm').addEventListener('submit', openFromForm);
   $('#fClass').addEventListener('change', renderUnitSelect);
+  $('#fDate').addEventListener('change', renderWeekHint);
   $('#traineeList').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-s]'); if (!b) return;
     setMark(b.closest('.trow').dataset.adm, b.dataset.s);
@@ -1078,6 +1410,9 @@ function wire() {
   $('#regNotes').addEventListener('input', () => { if (state.current) markDirty(); });
   $('#allPresent').addEventListener('click', () => setAll('P'));
   $('#allAbsent').addEventListener('click', () => setAll('A'));
+  $('#addStudentBtn').addEventListener('click', openAddStudent);
+  $('#addStudentForm').addEventListener('submit', saveAddStudent);
+  $('#cancelAddStudent').addEventListener('click', () => $('#addStudentDialog').close());
   $('#saveReg').addEventListener('click', async () => { state.dirty = true; await saveCurrent(); toast('Register saved on this device', 'ok'); });
   $('#closeReg').addEventListener('click', closeRegister);
   $('#scanBtn').addEventListener('click', startScan);
@@ -1094,32 +1429,34 @@ function wire() {
 
   // Reports
   $('#rClass').addEventListener('change', () => { renderReportUnitSelect(); renderReport(); });
-  ['#rUnit', '#rFrom', '#rTo'].forEach((s) => $(s).addEventListener('change', renderReport));
+  $('#rUnit').addEventListener('change', renderReport);
   $('#rThreshold').addEventListener('change', async () => { await saveSettings({ threshold: Number($('#rThreshold').value) || 75 }); renderReport(); });
-  $('#exportReport').addEventListener('click', exportReport);
+  $('#rSort').addEventListener('change', drawReportBody);
+  $$('.chipbtn').forEach((b) => b.addEventListener('click', () => { state.reportFilter = b.dataset.filter; $$('.chipbtn').forEach((x) => x.classList.toggle('on', x === b)); drawReportBody(); }));
+  $('#viewToggle').addEventListener('click', async () => { await saveSettings({ reportView: reportView() === 'sheet' ? 'list' : 'sheet' }); drawReportBody(); });
+  $('#signoffCard').addEventListener('click', (e) => {
+    if (e.target.closest('#soSubmit')) submitSignoff();
+    if (e.target.closest('#soApprove')) decideSignoff('approved');
+    if (e.target.closest('#soReturn')) decideSignoff('returned');
+  });
+  $('#exportXlsx').addEventListener('click', exportXlsx);
+  $('#printReg').addEventListener('click', printRegister);
   $('#exportRaw').addEventListener('click', exportRaw);
   $('#printQR').addEventListener('click', printQRCards);
 
-  // Setup
+  // Me
   $('#trainerForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    await saveSettings({ trainerName: $('#setName').value.trim(), trainerId: $('#setStaff').value.trim(),
-      lockHours: Number($('#setLock').value) || 48, defaultStatus: $('#setDefault').value });
-    toast('Trainer details saved', 'ok');
+    const latePct = Math.max(0, Math.min(100, Number($('#setLate').value)));
+    const excusedPct = Math.max(0, Math.min(100, Number($('#setExcused').value)));
+    await saveSettings({ lockHours: Number($('#setLock').value) || 48, defaultStatus: $('#setDefault').value, latePct, excusedPct });
+    toast('Saved', 'ok');
+    if (navigator.onLine && state.auth) api('mySettings', { latePct, excusedPct }).catch(() => {});
   });
-  const saveSheets = () => saveSettings({ sheetsUrl: $('#setSheetsUrl').value.trim(), sheetsToken: $('#setSheetsToken').value.trim() });
-  $('#sheetsForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    await saveSheets();
-    toast('Saved — downloading class lists…', 'ok');
-    await pullRoster();
-    syncSheets({ silent: true });
-  });
-  $('#testSheets').addEventListener('click', async () => { await saveSheets(); testSheets(); });
-  $('#studentLinkBtn').addEventListener('click', async () => {
-    await saveSheets();
-    if (!state.settings.sheetsUrl) { toast('Add the web app URL first', 'err'); return; }
-    const url = studentPageUrl() + '#u=' + encodeURIComponent(state.settings.sheetsUrl);
+  $('#serverForm').addEventListener('submit', async (e) => { e.preventDefault(); await saveSettings({ serverUrl: $('#setServer').value.trim() }); toast('Server address saved', 'ok'); });
+  $('#studentLinkBtn').addEventListener('click', () => {
+    if (!serverUrl()) { toast('No server address set', 'err'); return; }
+    const url = studentPageUrl() + '#u=' + encodeURIComponent(serverUrl());
     $('#studentLinkCode').innerHTML = qrSvg(url, 4);
     $('#studentLink').value = url;
     $('#studentLinkDialog').showModal();
@@ -1129,24 +1466,7 @@ function wire() {
     try { await navigator.clipboard.writeText($('#studentLink').value); toast('Link copied — share it in the class WhatsApp group', 'ok'); }
     catch { $('#studentLink').select(); toast('Select and copy the link'); }
   });
-  $('#pullRoster').addEventListener('click', async () => { await saveSheets(); pullRoster(); });
-  $('#importTrainees').addEventListener('change', async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    try {
-      const rows = parseCSV(await f.text());
-      const r = await replaceRoster({ trainees: rows, classes: [] }, ['class', 'trainee']);
-      toast(`Imported ${r.trainees} trainees in ${r.classes} classes`, 'ok');
-    } catch (err) { toast('Import failed: ' + err.message, 'err'); }
-    e.target.value = '';
-  });
-  $('#importUnits').addEventListener('change', async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    try {
-      const r = await replaceRoster({ units: parseCSV(await f.text()) }, ['unit']);
-      toast(`Imported ${r.units} units`, 'ok');
-    } catch (err) { toast('Import failed: ' + err.message, 'err'); }
-    e.target.value = '';
-  });
+  $('#pullRoster').addEventListener('click', () => pullRoster());
   $('#exportBackup').addEventListener('click', exportBackup);
   $('#importBackup').addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await importBackup(f); e.target.value = ''; renderDbInfo(); });
   $('#wipeData').addEventListener('click', wipeData);
@@ -1176,16 +1496,21 @@ async function init() {
   await loadDevice();
   await protectStorage();
   await loadSettings();
+  await loadAuth();
   fillSettingsForms();
-  renderTrainerLabel();
   updateNet();
   wire();
   await loadRoster();
+  applyRoles();
   await resolveConflicts();
   refreshPending();
   renderSheetsStatus();
-  if (!state.settings.trainerName) switchTab('settings');
-  if (navigator.onLine) setTimeout(() => { syncSheets({ silent: true }); maybeRefreshRoster(); }, 2000);
+  if (!state.auth) showSignin();
+  else if (state.auth.mustChange) showPinForm();
+  else {
+    switchTab(homeTab());
+    if (navigator.onLine) setTimeout(() => { syncSheets({ silent: true }); maybeRefreshRoster(); }, 2000);
+  }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker not registered', e));
     // When a new version of the app arrives, switch to it right away (unless something is unsaved or the QR is showing).
@@ -1196,7 +1521,6 @@ async function init() {
       else toast('App updated — it will refresh next time you open it');
     });
   }
-  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 }
 
 init().catch((e) => { console.error(e); toast('Start-up error: ' + e.message, 'err'); });
