@@ -1,7 +1,7 @@
 {
   "name": "RVNP Attendance Register",
   "short_name": "Attendance",
-  "description": "Offline-first attendance register with CouchDB and Google Sheets sync",
+  "description": "Offline-first attendance register that syncs to Google Sheets",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

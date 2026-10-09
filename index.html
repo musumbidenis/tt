@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>RVNP Attendance Register</title>
-<meta name="description" content="Offline-first attendance register: PouchDB on the device, CouchDB on the server, Google Sheets for records">
+<meta name="description" content="Offline-first attendance register that syncs to Google Sheets">
 <meta name="theme-color" content="#0f5c4d">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -23,7 +23,7 @@
   </div>
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
-    <button id="syncBtn" class="btn small" title="Sync waiting registers with the server">
+    <button id="syncBtn" class="btn small" title="Send waiting registers to Google Sheets">
       <span class="sync-icon" aria-hidden="true">⟳</span> Sync <span id="pendingCount" class="count">0</span>
     </button>
   </div>
@@ -42,7 +42,7 @@
   <section id="tab-mark" class="tab active">
     <div id="emptyRoster" class="card notice" hidden>
       <h2>No class lists on this device yet</h2>
-      <p>Go to <a href="#" data-goto="settings">Setup</a> and connect to the server once — class lists from Google Sheets arrive automatically. Or import the trainee and unit CSV files. After that, marking works fully offline.</p>
+      <p>Go to <a href="#" data-goto="settings">Setup</a> and connect to your Google Sheet once — the class lists download automatically. Or import the trainee and unit CSV files. After that, marking works fully offline.</p>
     </div>
 
     <form id="sessionForm" class="card session-form">
@@ -92,7 +92,7 @@
       <select id="sSync" aria-label="Filter by sync status">
         <option value="">All registers</option>
         <option value="pending">Waiting to sync</option>
-        <option value="synced">On server</option>
+        <option value="synced">In Google Sheets</option>
       </select>
     </div>
     <div id="sessionList" class="session-list"></div>
@@ -138,33 +138,22 @@
       <button class="btn primary">Save trainer details</button>
     </form>
 
-    <form id="couchForm" class="card">
-      <h2>Server sync</h2>
-      <p class="muted">Enter the CouchDB address and the trainer login. Registers sync both ways whenever there is a network. With no network, everything keeps working on this device.</p>
-      <label>Server address<input id="setCouchUrl" type="url" placeholder="https://your-pc.your-tailnet.ts.net/rvnp_attendance"></label>
-      <div class="grid2">
-        <label>Username<input id="setCouchUser" autocomplete="username"></label>
-        <label>Password<input id="setCouchPass" type="password" autocomplete="current-password"></label>
-      </div>
+    <form id="sheetsForm" class="card">
+      <h2>Google Sheets</h2>
+      <p class="muted">Paste the web app URL and access token from your Google Sheet's Apps Script. Registers are sent to the Sheet whenever this phone is online; with no network, everything keeps working here.</p>
+      <label>Web app URL<input id="setSheetsUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec"></label>
+      <label>Access token<input id="setSheetsToken" type="password" autocomplete="off"></label>
       <div class="row-actions">
         <button class="btn primary">Save and connect</button>
-        <button type="button" class="btn" id="testCouch">Test connection</button>
+        <button type="button" class="btn" id="testSheets">Test connection</button>
+        <button type="button" class="btn" id="pullRoster">Download class lists</button>
       </div>
-      <p id="couchStatus" class="muted small">Not connected</p>
+      <p id="sheetsStatus" class="muted small"></p>
     </form>
 
     <div class="card">
-      <h2>Google Sheets</h2>
-      <p class="muted">Every 10 minutes, registers on the server are copied into the <code>Sessions</code> and <code>Attendance</code> tabs, and class lists are read from the <code>Classes</code>, <code>Units</code> and <code>Trainees</code> tabs.</p>
-      <div class="row-actions">
-        <button type="button" class="btn" id="refreshRoster">Refresh class lists from Sheets</button>
-      </div>
-      <p id="sheetsStatus" class="muted small"></p>
-    </div>
-
-    <div class="card">
       <h2>Import roster from CSV</h2>
-      <p class="muted">For trying the app without a server. When a server is connected, the class lists in Google Sheets replace these. Trainees file columns: <code>AdmNo, Name, ClassCode, ClassName, Active</code>. Units file columns: <code>ClassCode, UnitCode, UnitName</code>.</p>
+      <p class="muted">For trying the app without a Sheet. When a Sheet is connected, its class lists replace these. Trainees file columns: <code>AdmNo, Name, ClassCode, ClassName, Active</code>. Units file columns: <code>ClassCode, UnitCode, UnitName</code>.</p>
       <div class="grid2">
         <label class="file">Trainees CSV<input type="file" id="importTrainees" accept=".csv,text/csv"></label>
         <label class="file">Units CSV<input type="file" id="importUnits" accept=".csv,text/csv"></label>

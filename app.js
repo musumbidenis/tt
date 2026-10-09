@@ -1,11 +1,11 @@
 /* RVNP Attendance Register — offline-first.
  * Storage: PouchDB (IndexedDB) on the device.
- * Sync:    live two-way replication with CouchDB. A bridge service beside CouchDB
- *          writes registers to Google Sheets and brings class lists back from it.
+ * Sync:    straight to Google Sheets through an Apps Script web app: registers are
+ *          pushed whenever the phone is online, class lists are pulled from the Sheet.
  */
 'use strict';
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '3.0.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -17,7 +17,7 @@ const PERIODS = [
 ];
 const DEFAULT_SETTINGS = {
   trainerName: '', trainerId: '', lockHours: 48, defaultStatus: 'P', threshold: 75,
-  couchUrl: '', couchUser: '', couchPass: '',
+  sheetsUrl: '', sheetsToken: '',
 };
 
 const state = {
@@ -28,8 +28,7 @@ const state = {
   dirty: false,           // unsaved changes in the open register
   editSeq: 0,             // bumps on every edit, so a save never swallows a newer edit
   editReasonGiven: false, // reason already captured for a locked register
-  couch: null,            // CouchDB replication handle
-  remote: null,           // PouchDB handle for the CouchDB server
+  syncing: false,
   activeTab: 'mark',
 };
 
@@ -389,6 +388,7 @@ async function doSave() {
       state.dirty = false;
       setSaveState('Saved on this device', 'ok');
       refreshPending();
+      scheduleAutoSync();
       return;
     } catch (e) {
       if (e.status === 409) { // changed by replication meanwhile: this device's edit wins, keep its marks
@@ -497,7 +497,7 @@ function stopScan() {
 
 /* ---------------- Registers tab ---------------- */
 async function renderSessions() {
-  const [sessions, map] = await Promise.all([byPrefix('session:'), syncedMap()]);
+  const [sessions, map] = await Promise.all([byPrefix('session:'), sheetsSyncMap()]);
   const cls = $('#sClass').value, sync = $('#sSync').value;
   const list = sessions
     .filter((s) => (!cls || s.classCode === cls))
@@ -509,7 +509,7 @@ async function renderSessions() {
     return `<button class="sitem" data-id="${esc(s._id)}">
       <span class="s-title">${esc(s.classCode)} · ${esc(s.unitCode)} — ${esc(periodLabel(s.period))}</span>
       <span class="s-badges">
-        <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'On server' : 'Waiting to sync'}</span>
+        <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'In Google Sheets' : 'Waiting to sync'}</span>
         ${isLocked(s) ? '<span class="pill locked">Locked</span>' : ''}
       </span>
       <span class="s-meta">${esc(fmtDate(s.date))} · P ${c.P} · A ${c.A} · L ${c.L} · E ${c.E} · ${esc(s.trainerName || '')}</span>
@@ -608,21 +608,34 @@ function printQRCards() {
   setTimeout(() => window.print(), 50);
 }
 
-/* ---------------- Server sync (CouchDB) ----------------
- * Phones replicate with CouchDB only. The bridge service that runs beside CouchDB
- * copies registers into Google Sheets and class lists from Sheets into CouchDB,
- * and reports back through the "status:sheets" document. */
-const STATUS_ID = 'status:sheets';
-const ROSTER_CMD_ID = 'cmd:roster-refresh';
-
-async function syncedMap() { return (await getLocal('serverSync', { map: {} })).map || {}; }
-async function markSynced(docs) {
-  const list = (docs || []).filter((d) => d && d._id && d._rev && d._id.startsWith('session:'));
-  if (!list.length) return;
-  await updateLocal('serverSync', (d) => { d.map = d.map || {}; for (const x of list) d.map[x._id] = x._rev; }, { map: {} });
+/* ---------------- Google Sheets sync (Apps Script web app) ----------------
+ * Registers are pushed straight to the Sheet whenever the phone is online;
+ * class lists are pulled from the Sheet's Classes / Units / Trainees tabs. */
+async function callSheets(method, body, params = {}) {
+  if (!state.settings.sheetsUrl) throw new Error('Add the Apps Script web app URL in Setup');
+  const url = new URL(state.settings.sheetsUrl);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 45000);
+  try {
+    const opts = method === 'GET'
+      ? { method: 'GET', signal: ctrl.signal, redirect: 'follow' }
+      // text/plain keeps this a "simple" request, so Apps Script needs no CORS preflight
+      : { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, signal: ctrl.signal, redirect: 'follow' };
+    const res = await fetch(url.toString(), opts);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch { throw new Error('Unexpected reply from Apps Script — check the deployment is set to "Anyone" and the URL ends in /exec'); }
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Google Sheets took too long to answer');
+    if (e instanceof TypeError) throw new Error('No connection to Google Sheets');
+    throw e;
+  } finally { clearTimeout(timer); }
 }
+
+async function sheetsSyncMap() { return (await getLocal('sheetsSync', { map: {} })).map || {}; }
 async function pendingSessions() {
-  const [sessions, map] = await Promise.all([byPrefix('session:'), syncedMap()]);
+  const [sessions, map] = await Promise.all([byPrefix('session:'), sheetsSyncMap()]);
   return sessions.filter((s) => map[s._id] !== s._rev);
 }
 async function refreshPending() {
@@ -632,115 +645,97 @@ async function refreshPending() {
   el.classList.toggle('zero', n === 0);
 }
 
-function setCouchStatus(text, kind = '') { const el = $('#couchStatus'); el.textContent = text; el.className = 'small ' + (kind === 'err' ? 'err-text' : 'muted'); }
-
-function remoteCouch() {
-  const { couchUrl, couchUser, couchPass } = state.settings;
-  return new PouchDB(couchUrl, { skip_setup: true, auth: couchUser ? { username: couchUser, password: couchPass } : undefined });
+function toSheetSession(s) {
+  const c = countMarks(s);
+  return {
+    sessionId: s._id, date: s.date, classCode: s.classCode, className: s.className || '',
+    unitCode: s.unitCode, unitName: s.unitName || '', period: periodLabel(s.period),
+    trainerId: s.trainerId || '', trainerName: s.trainerName || '', deviceId: s.deviceId || '',
+    notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
+    edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E },
+    marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
+      .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st] })),
+  };
 }
-function couchUrlProblem(url) {
-  if (!url) return 'Add the server address first';
-  if (location.protocol === 'https:' && /^http:/i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/)/i.test(url)) {
-    return 'Blocked by the browser: this page is HTTPS, so the server address must also start with https://';
-  }
-  return '';
-}
 
-function startCouch() {
-  stopCouch();
-  const { couchUrl } = state.settings;
-  if (!couchUrl) { setCouchStatus('Not connected — registers stay safely on this device until a server is added'); return; }
-  const problem = couchUrlProblem(couchUrl);
-  if (problem) { setCouchStatus(problem, 'err'); return; }
-  setCouchStatus('Connecting…');
-  state.remote = remoteCouch();
-  state.couch = db.sync(state.remote, {
-    live: true, retry: true,
-    back_off_function: (delay) => (delay === 0 ? 2000 : Math.min(delay * 2, 60000)),
-  })
-    .on('change', (info) => {
-      markSynced(info.change.docs).then(refreshPending);
-      setCouchStatus(`${info.direction === 'pull' ? 'Received' : 'Sent'} ${info.change.docs_written} change(s) · ${fmtTime(nowISO())}`);
-    })
-    .on('paused', (err) => {
-      if (err) { setCouchStatus('Offline — will sync automatically when the network is back'); return; }
-      setCouchStatus(`Connected · up to date ${fmtTime(nowISO())}`);
-      reconcilePending();
-    })
-    .on('active', () => setCouchStatus('Syncing…'))
-    .on('denied', (err) => setCouchStatus('Permission denied: ' + (err?.message || err), 'err'))
-    .on('error', (err) => setCouchStatus('Sync stopped: ' + (err?.message || err), 'err'));
-}
-function stopCouch() { if (state.couch) { state.couch.cancel(); state.couch = null; } state.remote = null; }
-
-/* Confirms with the server which registers it already holds (covers registers that
- * arrived by backup import or were pushed before this device started counting). */
-let reconciling = false;
-async function reconcilePending() {
-  if (!state.remote || reconciling) return;
-  reconciling = true;
+async function syncSheets({ silent = false } = {}) {
+  if (!state.settings.sheetsUrl) { if (!silent) { toast('Add your Google Sheets web app URL in Setup first'); switchTab('settings'); } return; }
+  if (state.syncing) return;
+  if (!navigator.onLine) { if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
+  if (state.dirty) await saveCurrent();
+  state.syncing = true;
+  $('#syncBtn').classList.add('syncing');
+  let sent = 0;
   try {
     const pending = await pendingSessions();
-    for (const part of chunk(pending, 200)) {
-      const missing = await state.remote.revsDiff(Object.fromEntries(part.map((s) => [s._id, [s._rev]])));
-      await markSynced(part.filter((s) => !missing[s._id]));
+    if (!pending.length) { if (!silent) toast('Everything is already in Google Sheets', 'ok'); return; }
+    for (const batch of chunk(pending, 20)) {
+      const res = await callSheets('POST', { action: 'push', token: state.settings.sheetsToken, deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
+      if (!res.ok) throw new Error(res.error || 'Google Sheets rejected the upload');
+      await updateLocal('sheetsSync', (d) => { d.map = d.map || {}; for (const s of batch) d.map[s._id] = s._rev; }, { map: {} });
+      sent += batch.length;
     }
-  } catch { /* offline or server busy: the next idle moment tries again */ }
-  finally {
-    reconciling = false;
+    await updateLocal('syncLog', (d) => { d.lastSheets = nowISO(); });
+    renderSheetsStatus();
+    if (!silent) toast(`Sent ${sent} register(s) to Google Sheets`, 'ok');
+  } catch (e) {
+    $('#sheetsStatus').textContent = `Sync stopped${sent ? ` after ${sent} register(s)` : ''}: ${e.message}`;
+    if (!silent) toast('Sync failed: ' + e.message, 'err');
+  } finally {
+    state.syncing = false;
+    $('#syncBtn').classList.remove('syncing');
     refreshPending();
     if (state.activeTab === 'sessions') renderSessions();
   }
 }
 
-function syncNow() {
-  if (!state.settings.couchUrl) { toast('Add the server address in Setup first'); switchTab('settings'); return; }
-  if (!navigator.onLine) { toast('No network — registers are safe on this device and will sync later'); return; }
-  startCouch(); // restart at once instead of waiting for the retry timer
-  toast('Syncing with the server…');
+let autoTimer;
+function scheduleAutoSync() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true }); }, 15000);
 }
 
-async function testCouch() {
-  const problem = couchUrlProblem(state.settings.couchUrl);
-  if (problem) { setCouchStatus(problem, 'err'); return; }
-  setCouchStatus('Testing…');
+async function pullRoster({ silent = false } = {}) {
+  if (!state.settings.sheetsUrl) { if (!silent) toast('Add your Google Sheets web app URL first', 'err'); return; }
+  const btn = $('#pullRoster'); btn.disabled = true;
+  if (!silent) $('#sheetsStatus').textContent = 'Downloading class lists…';
   try {
-    const info = await remoteCouch().info();
-    setCouchStatus(`Reached "${info.db_name}" — ${info.doc_count} document(s) on the server.`);
-    toast('Server connection works', 'ok');
+    const res = await callSheets('GET', null, { action: 'roster', token: state.settings.sheetsToken });
+    if (!res.ok) throw new Error(res.error || 'Could not read the class lists');
+    if (!(res.trainees || []).length && state.trainees.length) throw new Error('the Trainees tab is empty — kept the class lists already on this phone');
+    const r = await replaceRoster(res, ['class', 'unit', 'trainee']);
+    await updateLocal('syncLog', (d) => { d.lastRoster = nowISO(); });
+    renderSheetsStatus();
+    if (!silent) toast(`Class lists saved: ${r.classes} classes, ${r.trainees} trainees — you can now mark offline`, 'ok');
   } catch (e) {
-    setCouchStatus(`Could not reach the server: ${e.message || e.status || e}. Check the address, login and CORS settings.`, 'err');
-  }
+    $('#sheetsStatus').textContent = 'Class list download failed: ' + e.message;
+    if (!silent) toast(e.message, 'err');
+  } finally { btn.disabled = false; }
 }
 
-async function getOrNull(id) { try { return await db.get(id); } catch { return null; } }
+async function testSheets() {
+  $('#sheetsStatus').textContent = 'Testing…';
+  try {
+    const res = await callSheets('GET', null, { action: 'ping', token: state.settings.sheetsToken });
+    if (!res.ok) throw new Error(res.error);
+    $('#sheetsStatus').textContent = `Connected to "${res.spreadsheet}".`;
+    toast('Google Sheets connection works', 'ok');
+  } catch (e) { $('#sheetsStatus').textContent = 'Connection failed: ' + e.message; }
+}
 
-async function renderServerStatus() {
-  const el = $('#sheetsStatus');
-  const [st, cmd] = await Promise.all([getOrNull(STATUS_ID), getOrNull(ROSTER_CMD_ID)]);
-  if (!st) {
-    el.textContent = state.settings.couchUrl ? 'Waiting for the first report from the server.' : 'Connect to the server to see Google Sheets status.';
-    return;
-  }
+async function renderSheetsStatus() {
+  const log = await getLocal('syncLog');
   const parts = [];
-  parts.push(st.lastSheetsWrite ? `Registers last written to Google Sheets ${fmtTime(st.lastSheetsWrite)}` : 'No registers written to Google Sheets yet');
-  if (st.lastRoster) parts.push(`class lists refreshed ${fmtTime(st.lastRoster)}`);
-  if (st.sheetsError && String(st.lastErrorAt || '') > String(st.lastSheetsWrite || '')) parts.push(`problem: ${st.sheetsError}`);
-  if (st.rosterError) parts.push(`class list problem: ${st.rosterError}`);
-  if (cmd?.requestedAt && String(cmd.requestedAt) > String(st.rosterRequestHandled || '')) parts.push('class list refresh requested, waiting for the server');
-  el.textContent = parts.join(' · ') + '.';
+  if (log.lastSheets) parts.push(`Registers last sent ${fmtTime(log.lastSheets)}`);
+  if (log.lastRoster) parts.push(`class lists downloaded ${fmtTime(log.lastRoster)}`);
+  $('#sheetsStatus').textContent = parts.length ? parts.join(' · ') + '.' : (state.settings.sheetsUrl ? 'Not synced yet.' : 'Not connected yet.');
 }
 
-async function requestRoster() {
-  if (!state.settings.couchUrl) { toast('Connect to the server first', 'err'); return; }
-  const at = nowISO();
-  for (let i = 0; i < 4; i++) {
-    const doc = (await getOrNull(ROSTER_CMD_ID)) || { _id: ROSTER_CMD_ID, type: 'cmd' };
-    Object.assign(doc, { requestedAt: at, by: trainerLabel(), device: state.deviceId });
-    try { await db.put(doc); break; } catch (e) { if (e.status !== 409) throw e; }
-  }
-  toast(navigator.onLine ? 'Requested — fresh class lists arrive within about 10 minutes' : 'Request saved — it goes to the server when you are online', 'ok');
-  renderServerStatus();
+/* Refresh class lists automatically when they are more than 12 hours old. */
+async function maybeRefreshRoster() {
+  if (!state.settings.sheetsUrl || !navigator.onLine) return;
+  const log = await getLocal('syncLog');
+  if (!log.lastRoster || Date.now() - new Date(log.lastRoster).getTime() > 12 * 36e5) pullRoster({ silent: true });
 }
 
 /* When two devices edit the same register, keep the most recent version and
@@ -785,7 +780,6 @@ const onDbChange = debounce(async () => {
       if (fresh._rev !== cur._rev) { state.current = fresh; renderRegister(); toast('This register was updated from another device'); }
     } catch { /* deleted */ }
   }
-  if (ids.has(STATUS_ID) || ids.has(ROSTER_CMD_ID)) renderServerStatus();
   if (state.activeTab === 'sessions') renderSessions();
   if (state.activeTab === 'reports') renderReport();
 }, 400);
@@ -820,7 +814,6 @@ async function wipeData() {
   const warn = pending ? `\n\n${pending} register(s) have NOT been synced and will be lost.` : '';
   if (!confirm('Erase all attendance data and settings from this device?' + warn)) return;
   if (pending && prompt('Type ERASE to confirm') !== 'ERASE') return;
-  stopCouch();
   await db.destroy();
   location.reload();
 }
@@ -856,8 +849,7 @@ function fillSettingsForms() {
   const s = state.settings;
   $('#setName').value = s.trainerName; $('#setStaff').value = s.trainerId;
   $('#setLock').value = s.lockHours; $('#setDefault').value = s.defaultStatus;
-  $('#setCouchUrl').value = s.couchUrl; $('#setCouchUser').value = s.couchUser;
-  $('#setCouchPass').value = s.couchPass;
+  $('#setSheetsUrl').value = s.sheetsUrl; $('#setSheetsToken').value = s.sheetsToken;
   $('#rThreshold').value = s.threshold;
 }
 
@@ -902,18 +894,16 @@ function wire() {
       lockHours: Number($('#setLock').value) || 48, defaultStatus: $('#setDefault').value });
     toast('Trainer details saved', 'ok');
   });
-  $('#couchForm').addEventListener('submit', async (e) => {
+  const saveSheets = () => saveSettings({ sheetsUrl: $('#setSheetsUrl').value.trim(), sheetsToken: $('#setSheetsToken').value.trim() });
+  $('#sheetsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    await saveSettings({ couchUrl: $('#setCouchUrl').value.trim(), couchUser: $('#setCouchUser').value.trim(), couchPass: $('#setCouchPass').value });
-    startCouch();
-    renderServerStatus();
-    toast(state.settings.couchUrl ? 'Server saved — syncing starts automatically' : 'Server removed — working on this device only', 'ok');
+    await saveSheets();
+    toast('Saved — downloading class lists…', 'ok');
+    await pullRoster();
+    syncSheets({ silent: true });
   });
-  $('#refreshRoster').addEventListener('click', requestRoster);
-  $('#testCouch').addEventListener('click', async () => {
-    await saveSettings({ couchUrl: $('#setCouchUrl').value.trim(), couchUser: $('#setCouchUser').value.trim(), couchPass: $('#setCouchPass').value });
-    testCouch();
-  });
+  $('#testSheets').addEventListener('click', async () => { await saveSheets(); testSheets(); });
+  $('#pullRoster').addEventListener('click', async () => { await saveSheets(); pullRoster(); });
   $('#importTrainees').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try {
@@ -936,9 +926,10 @@ function wire() {
   $('#wipeData').addEventListener('click', wipeData);
 
   // Sync + network
-  $('#syncBtn').addEventListener('click', syncNow);
-  window.addEventListener('online', () => { updateNet(); if (state.settings.couchUrl) startCouch(); });
+  $('#syncBtn').addEventListener('click', () => syncSheets());
+  window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
+  setInterval(() => { if (navigator.onLine) syncSheets({ silent: true }); }, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && state.dirty) saveCurrent(); });
   window.addEventListener('pagehide', () => { if (state.dirty) saveCurrent(); });
 
@@ -961,9 +952,9 @@ async function init() {
   await loadRoster();
   await resolveConflicts();
   refreshPending();
-  startCouch();
-  renderServerStatus();
+  renderSheetsStatus();
   if (!state.settings.trainerName) switchTab('settings');
+  if (navigator.onLine) setTimeout(() => { syncSheets({ silent: true }); maybeRefreshRoster(); }, 2000);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker not registered', e));
   }
