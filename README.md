@@ -72,7 +72,7 @@ From then on, the phone works with or without network.
    - a registered phone can't be switched to someone else.
 
 **Every lesson (trainer and students can all be offline):**
-1. Open the register and tap **QR for students**. The code is made on your phone, unique to the lesson, and changes every 20 seconds. Trainees who don't scan count as **absent** unless you mark them.
+1. Open the register and tap **Show lesson QR**. The code is made on your phone, unique to the lesson, and changes every 20 seconds. Trainees who don't scan count as **absent** unless you mark them.
 2. Students scan it with the app or their normal camera. The phone checks the class straight away, so a student from another class is refused, and stores the check-in.
 3. Whenever each phone gets internet, it syncs. The Sheet verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
 

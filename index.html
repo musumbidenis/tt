@@ -5,17 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>RVNP Attendance Register</title>
 <meta name="description" content="Offline-first attendance register that syncs to Google Sheets">
-<meta name="theme-color" content="#0f5c4d">
+<meta name="theme-color" content="#0b5d33">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preload" href="fonts/lexend.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mark" viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 3h6v3H9z"/><path d="M9 13.5l2 2 4-4.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M6 20v-6M12 20V5M18 20v-9M3 20h18"/></symbol>
+  <symbol id="i-setup" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.5"/><circle cx="10" cy="17" r="2.5"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.4L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.7 4.4L20 16"/><path d="M20 20.5V16h-4.5"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM19 14h1M14 19h1M18 18h2v2h-2z"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
+</svg>
 <div class="chrome">
 <header class="topbar">
   <div class="brand">
-    <img src="icons/icon.svg" alt="" width="34" height="34">
+    <span class="crest"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="40" height="40"></span>
     <div>
       <strong>Attendance</strong>
       <span id="trainerLabel">Not set up yet</span>
@@ -24,16 +34,16 @@
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
     <button id="syncBtn" class="btn small" title="Send waiting registers to Google Sheets">
-      <span class="sync-icon" aria-hidden="true">⟳</span> Sync <span id="pendingCount" class="count">0</span>
+      <svg class="i sync-icon" aria-hidden="true"><use href="#i-sync"/></svg> Sync <span id="pendingCount" class="count">0</span>
     </button>
   </div>
 </header>
 
 <nav class="tabs" role="tablist">
-  <button data-tab="mark" class="active" role="tab">Mark</button>
-  <button data-tab="sessions" role="tab">Registers</button>
-  <button data-tab="reports" role="tab">Reports</button>
-  <button data-tab="settings" role="tab">Setup</button>
+  <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark</button>
+  <button data-tab="sessions" role="tab"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg>Registers</button>
+  <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Reports</button>
+  <button data-tab="settings" role="tab"><svg class="i" aria-hidden="true"><use href="#i-setup"/></svg>Setup</button>
 </nav>
 </div>
 
@@ -42,7 +52,8 @@
   <!-- MARK -->
   <section id="tab-mark" class="tab active">
     <div id="emptyRoster" class="card notice" hidden>
-      <h2>No class lists on this device yet</h2>
+      <img class="crest-big" src="icons/rvnp-logo.png" alt="" width="72" height="72">
+      <h2>No class lists on this phone yet</h2>
       <p>Go to <a href="#" data-goto="settings">Setup</a> and connect to your Google Sheet once — the class lists download automatically. Or import the trainee and unit CSV files. After that, marking works fully offline.</p>
     </div>
 
@@ -67,10 +78,14 @@
 
       <div class="reg-tools">
         <input type="search" id="regSearch" placeholder="Search name or admission no." aria-label="Search trainees">
-        <button type="button" class="btn ghost" id="allPresent">All present</button>
-        <button type="button" class="btn ghost" id="allAbsent">All absent</button>
-        <button type="button" class="btn" id="scanBtn">Scan ID cards</button>
-        <button type="button" class="btn primary" id="lessonQrBtn">QR for students</button>
+        <span class="quick">
+          <button type="button" class="btn ghost" id="allPresent">All present</button>
+          <button type="button" class="btn ghost" id="allAbsent">All absent</button>
+        </span>
+        <span class="qr-actions">
+          <button type="button" class="btn" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan ID cards</button>
+          <button type="button" class="btn primary" id="lessonQrBtn"><svg class="i" aria-hidden="true"><use href="#i-qr"/></svg>Show lesson QR</button>
+        </span>
       </div>
 
       <ul id="traineeList" class="trainee-list"></ul>
@@ -197,7 +212,7 @@
   <div id="lessonQrCode" class="qr-box"></div>
   <div class="qr-timer"><i id="lessonQrBar"></i></div>
   <p id="lessonQrLive" class="qr-live" aria-live="polite"></p>
-  <p class="qr-note">Students: scan with your phone camera — no internet needed. The code changes every 20 seconds. Check-ins appear here automatically once phones are online.</p>
+  <p class="qr-note">Scan with the check-in app or your phone camera. No internet needed. The code changes every 20 seconds, and check-ins appear here as soon as phones are online.</p>
 </dialog>
 
 <dialog id="studentLinkDialog" class="qr-dialog">

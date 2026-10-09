@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v3.5.0';
+const CACHE = 'rvnp-attendance-v3.6.0';
 const ASSETS = [
   './',
   './index.html',
@@ -12,6 +12,9 @@ const ASSETS = [
   './config.js',
   './manifest-student.webmanifest',
   './icons/icon.svg',
+  './icons/rvnp-logo.png',
+  './fonts/lexend.woff2',
+  './fonts/source-sans-3.woff2',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './vendor/pouchdb.min.js',

@@ -5,17 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Attendance check-in</title>
 <meta name="description" content="Scan your trainer's lesson QR to record attendance — works offline">
-<meta name="theme-color" content="#0f5c4d">
+<meta name="theme-color" content="#0b5d33">
 <link rel="manifest" href="manifest-student.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preload" href="fonts/lexend.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body class="student">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.4L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.7 4.4L20 16"/><path d="M20 20.5V16h-4.5"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-no" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+</svg>
 <div class="chrome">
 <header class="topbar">
   <div class="brand">
-    <img src="icons/icon.svg" alt="" width="34" height="34">
+    <span class="crest"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="40" height="40"></span>
     <div>
       <strong>Check-in</strong>
       <span id="who">Not set up</span>
@@ -23,7 +30,7 @@
   </div>
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
-    <button id="syncBtn" class="btn small" title="Check-ins are sent automatically; tap to send now">Send <span id="pendingCount" class="count zero">0</span></button>
+    <button id="syncBtn" class="btn small" title="Check-ins are sent automatically; tap to send now"><svg class="i sync-icon" aria-hidden="true"><use href="#i-sync"/></svg>Send <span id="pendingCount" class="count zero">0</span></button>
   </div>
 </header>
 </div>
@@ -32,8 +39,13 @@
   <div id="warning" class="card warn-banner" hidden></div>
 
   <section id="setupCard" class="card" hidden>
-    <h2>Set up this phone</h2>
-    <p class="muted">Choose your class and your name. This phone will be <b>registered to you</b>: it can only check in you, and you can only check in from this phone.</p>
+    <div class="setup-intro">
+      <img src="icons/rvnp-logo.png" alt="" width="64" height="64">
+      <div>
+        <h2>Set up this phone</h2>
+        <p class="muted">Choose your class and your name. This phone is then <b>registered to you</b>: it checks in only you, and you check in only from this phone.</p>
+      </div>
+    </div>
     <p id="setupMsg" class="small err-text"></p>
     <div id="setupForm">
       <label>Class<select id="setupClass"><option value="">Loading…</option></select></label>
@@ -59,15 +71,15 @@
     </div>
   </section>
 
-  <button type="button" class="btn primary big" id="scanBtn">Scan lesson QR</button>
-  <p class="muted small center">Or point your normal camera at your trainer's QR. No internet needed.</p>
+  <button type="button" class="btn primary big" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan lesson QR</button>
+  <p class="scan-hint">Or point your normal camera at your trainer's QR. No internet needed.</p>
 
   <section id="historyCard" class="card" hidden>
     <h2>My check-ins</h2>
     <ul id="history" class="history"></ul>
   </section>
 
-  <p id="deviceInfo" class="muted small center"></p>
+  <p id="deviceInfo" class="device-foot"></p>
   <p class="center"><button type="button" class="linkish" id="resetSetup" hidden>Wrong name? Set up again</button></p>
 </main>
 

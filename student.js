@@ -102,7 +102,7 @@ function showResult(kind, title, text, sub = '') {
   const box = $('#result');
   box.hidden = false;
   box.className = 'card result ' + kind;
-  $('#resultIcon').textContent = kind === 'ok' ? '✓' : '✕';
+  $('#resultIcon').innerHTML = `<svg aria-hidden="true"><use href="#i-${kind === 'ok' ? 'ok' : 'no'}"/></svg>`;
   $('#resultTitle').textContent = title;
   $('#resultText').textContent = text;
   $('#resultSub').textContent = sub;
@@ -203,6 +203,7 @@ async function handleLesson(l) {
   };
   await sdb.put(doc);
   st.retries = 0;
+  st.lastScan = id;
   await mirrorUnsent();
   showResult('ok', 'Attendance recorded', `${doc.unitName} · ${doc.period}${doc.trainer ? ' · ' + doc.trainer : ''}`,
     navigator.onLine ? 'Sending…' : 'Saved safely on this phone — it is sent automatically when you next have internet.');
@@ -316,6 +317,14 @@ async function render() {
 </div>
       <span class="pill ${label[0]}">${esc(label[1])}</span></li>`;
   }).join('');
+  // Keep the "Attendance recorded" card in step with what happened to that scan.
+  const last = st.lastScan && !$('#result').hidden && list.find((d) => d._id === st.lastScan);
+  if (last) {
+    $('#resultSub').textContent = last.status === 'accepted' ? 'Confirmed in your trainer\'s register.'
+      : last.status === 'pending' ? 'Sent. It is confirmed once your trainer\'s phone syncs.'
+      : last.status === 'rejected' ? (REASONS[last.reason] || 'Not accepted')
+      : navigator.onLine ? 'Sending…' : 'Saved safely on this phone. It is sent automatically when you next have internet.';
+  }
   const unsent = list.filter((d) => d.status === 'saved');
   const el = $('#pendingCount'); el.textContent = unsent.length; el.classList.toggle('zero', unsent.length === 0);
 

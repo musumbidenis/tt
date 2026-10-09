@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -288,6 +288,7 @@ function setCurrent(doc, isNew = false) {
   setSaveState(isNew ? 'Not saved yet' : 'Saved on this device', isNew ? '' : 'ok');
   renderRegister();
   $('#register').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  goLive();
 }
 
 function rosterForCurrent() {
@@ -872,6 +873,7 @@ async function openLessonQR() {
   $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${periodLabel(s.period)}`;
   $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
   $('#lessonQrDialog').showModal();
+  goLive();
   let shown = null;
   const tick = async () => {
     if (state.current !== s) { closeLessonQR(); return; }
@@ -909,9 +911,11 @@ function isLiveLesson() {
 }
 
 /* One loop decides how often to check: every few seconds during a live lesson, else every minute. */
-let liveTimer = null;
+let liveTimer = null, liveBusy = false;
 async function liveTick() {
   clearTimeout(liveTimer);
+  if (liveBusy) return; // a check is already running; it schedules the next one when done
+  liveBusy = true;
   const live = isLiveLesson();
   try {
     if (navigator.onLine && document.visibilityState === 'visible' && state.settings.sheetsUrl && !state.syncing) {
@@ -925,7 +929,13 @@ async function liveTick() {
       } else await syncSheets({ silent: true });
     }
   } catch { /* offline or slow network: try again next round */ }
-  liveTimer = setTimeout(liveTick, live ? LIVE_FAST_MS : LIVE_SLOW_MS);
+  liveBusy = false;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(liveTick, isLiveLesson() ? LIVE_FAST_MS : LIVE_SLOW_MS);
+}
+/* Switch to fast checking straight away when a live lesson starts, instead of waiting out a slow round. */
+function goLive() {
+  if (isLiveLesson()) { clearTimeout(liveTimer); liveTimer = setTimeout(liveTick, 1000); }
 }
 
 function closeLessonQR() {
