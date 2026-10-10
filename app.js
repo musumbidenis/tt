@@ -258,8 +258,6 @@ function renderWeekHint() {
   const el = $('#weekHint'); if (!el) return;
   const { week, term } = weekInfo($('#fDate').value || $('#fWeek').value);
   el.className = 'hint' + (term && !week ? ' bad' : '');
-  const cats = term?.catWeeks || [];
-  el.textContent = !term ? '' : week ? `Week ${week} of ${(state.meta.weeks || []).length || 12} · ${term.name}${cats.includes(week) ? ' · CAT week' : ''}` : `Not a teaching week of ${term.name}`;
 }
 
 /* ---------------- Mark tab ---------------- */
