@@ -80,7 +80,9 @@ const POE = (() => {
     const rows = [];
     for (const d of local.filter((x) => x.status !== 'sent').sort((a, b) => String(b.createdAt).localeCompare(a.createdAt))) {
       rows.push(`<li data-local="${esc(d._id)}"><div><b>${esc(d.unitName)} — ${esc(d.item)}</b><span class="muted small">${d.pageCount || ''} page(s) · saved ${esc(fmtTime(d.createdAt))}${d.error ? ' · ' + esc(d.error) : ''}</span></div>
-        <span class="poe-acts"><span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on phone — sends when online'}</span><button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
+        <span class="poe-acts">${d.status === 'error' && navigator.onLine
+          ? `<span class="pill rejected">Not sent yet</span><span class="poe-why small">${esc(d.error || 'Try again later')}</span><button type="button" class="linkish" data-retry>Try again</button>`
+          : `<span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on phone — sends when online'}</span>`}<button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
     }
     for (const e of [...ps.server].sort((a, b) => String(b.submittedAt).localeCompare(a.submittedAt))) {
       const [cls, label] = STATUS[e.status] || ['pending', e.status];
@@ -225,7 +227,10 @@ const POE = (() => {
           delete d.upload;
           await saveDraft(d);
         } catch (e) {
-          d.status = 'error'; d.error = navigator.onLine ? e.message : 'waiting for internet';
+          d.status = 'error';
+          d.error = !navigator.onLine ? 'Waiting for internet'
+            : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this phone.'
+            : 'Could not reach the Drive: ' + e.message;
           await saveDraft(d);
         }
       }
@@ -287,6 +292,7 @@ const POE = (() => {
     $('#cropKeep').addEventListener('click', keepPage);
     $('#poeSave').addEventListener('click', saveAll);
     $('#poeList').addEventListener('click', (e) => {
+      if (e.target.closest('[data-retry]')) { sync(); return; }
       const c = e.target.closest('[data-copy]');
       if (c) { saveCopy(c.dataset.id || c.closest('[data-local]').dataset.local); return; }
       const r = e.target.closest('[data-redo]');
