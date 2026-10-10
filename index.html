@@ -18,6 +18,7 @@
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M6 20v-6M12 20V5M18 20v-9M3 20h18"/></symbol>
   <symbol id="i-manage" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.5-3.2 8.1-7.5 9.5-4.3-1.4-7.5-5-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-poe" viewBox="0 0 24 24"><path d="M3.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M8.5 13l2.5 2.5 4.5-5"/></symbol>
   <symbol id="i-me" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.4 3.6-5.5 7-5.5s6.2 2.1 7 5.5"/></symbol>
   <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.4L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.7 4.4L20 16"/><path d="M20 20.5V16h-4.5"/></symbol>
   <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM19 14h1M14 19h1M18 18h2v2h-2z"/></symbol>
@@ -76,6 +77,7 @@
   <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark</button>
   <button data-tab="sessions" role="tab"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg>Registers</button>
   <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Reports</button>
+  <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE<span id="poeCount" class="dot" hidden></span></button>
   <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
   <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Me</button>
 </nav>
@@ -195,6 +197,9 @@
     </div>
   </section>
 
+  <!-- POE: students' evidence -->
+  <section id="tab-poe" class="tab"><div id="poe"></div></section>
+
   <!-- MANAGE (HOD and MIS Officer) -->
   <section id="tab-manage" class="tab"><div id="manage"></div></section>
 
@@ -306,6 +311,7 @@
   </form>
 </dialog>
 
+<dialog id="poeDialog" class="sheet-dialog wide poe-dialog" aria-label="Evidence"><div id="poeDialogBody"></div></dialog>
 <dialog id="adminDialog" class="sheet-dialog wide"><div id="adminDialogBody"></div></dialog>
 
 <!-- Kept for one release: lets phones still running version 3.x start up on this page and update themselves. -->
@@ -323,5 +329,6 @@
 <script src="report.js"></script>
 <script src="app.js"></script>
 <script src="admin.js"></script>
+<script src="poe-staff.js"></script>
 </body>
 </html>

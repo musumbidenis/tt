@@ -318,6 +318,8 @@ async function render() {
   $('#who').textContent = p ? `${p.name} · ${p.classCode}` : 'Not set up';
   $('#profileCard').hidden = !p;
   $('#resetSetup').hidden = !p;
+  $('#viewTabs').hidden = !p;
+  if (!p) delete document.body.dataset.view;
   if (p) {
     $('#pName').textContent = p.name;
     $('#pMeta').textContent = `${p.admNo} · ${p.className || p.classCode}`;
@@ -418,6 +420,7 @@ async function init() {
   if (!st.profile && $('#setupCard').hidden) await openSetup();
   await render();
   sync();
+  POE.init().catch((e) => console.error('Evidence', e));
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
     const hadController = !!navigator.serviceWorker.controller;

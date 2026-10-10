@@ -213,5 +213,5 @@ const Imports = (() => {
     return same.filter(([, p]) => p.prog.length === best).map(([c]) => c).sort();
   }
 
-  return { classList, loading, suggestStreams, parseRegisterLines, toLines, isAdm };
+  return { classList, loading, suggestStreams, parseRegisterLines, toLines, isAdm, pdfLib };
 })();

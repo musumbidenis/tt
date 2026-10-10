@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.4.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1535,6 +1535,7 @@ async function signOut() {
   const pending = (await pendingSessions()).length;
   if (!confirm(pending ? `${pending} register(s) are not sent yet. They stay on this phone and are sent after you sign in again. Sign out?` : 'Sign out of this phone?')) return;
   await saveAuth(null);
+  PoeStaff.reset();
   showSignin();
 }
 
@@ -1588,6 +1589,7 @@ function switchTab(name) {
   if (name === 'sessions') renderSessions();
   if (name === 'reports') renderReport();
   if (name === 'manage') window.Admin?.render();
+  if (name === 'poe') PoeStaff.render();
   if (name === 'me') { renderDbInfo(); renderMe(); }
 }
 
@@ -1602,6 +1604,7 @@ function applyRoles() {
   renderIdentity();
   renderClassSelects();
   window.Admin?.refreshBadge?.();
+  if (me()) PoeStaff.refreshBadge();
 }
 
 function updateNet() {
@@ -1633,6 +1636,7 @@ function fillSettingsForms() {
 
 function wire() {
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  PoeStaff.wire();
   document.addEventListener('click', (e) => { const g = e.target.closest('[data-goto]'); if (g) { e.preventDefault(); switchTab(g.dataset.goto); } });
 
   // Sign-in

@@ -32,13 +32,14 @@ const Admin = (() => {
       parts.push(section('m-loading', 'Trainer loading', loadingHtml()));
       parts.push(section('m-classes', 'Class lists', classesHtml()));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
+      parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
       if (!OLD_SERVER.test(serverUrl())) parts.push(section('m-move', 'Bring in data from the Google Sheet', moveHtml()));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'));
     box().innerHTML = parts.join('');
     const jobs = [];
     if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
     jobs.push(loadRequests());
-    if (hasRole('MIS')) jobs.push(loadStaff());
+    if (hasRole('MIS')) jobs.push(loadStaff().then(loadDrive));
     await Promise.allSettled(jobs);
     refreshBadge();
   }
@@ -427,6 +428,32 @@ const Admin = (() => {
     }
   }
 
+  /* ---------- MIS: the Google Drive bridge (attendance sheets per trainer, POE files) ---------- */
+  async function loadDrive() {
+    try {
+      const { secret, report: r } = need(await api('driveStatus'));
+      if (!r) {
+        fill('m-drive', `<p class="muted">Not connected yet. Each trainer's attendance sheet and the students' POE files go to the college Google Drive through a small Apps Script in the school account. The README has the steps (about 10 minutes, once).</p>
+          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare → the Worker → Settings → Variables).</p>'}`);
+        return;
+      }
+      const opts = (sel) => `<option value="">Choose their folder…</option>${(r.folders || []).sort((a, b) => a.name.localeCompare(b.name)).map((f) => `<option value="${esc(f.id)}"${f.id === sel ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}`;
+      const staff = new Map((cache.staff || []).map((x) => [lower(x.code), x]));
+      fill('m-drive', `<p class="muted">Connected · last update ${esc(fmtShort(r.at))} · ${r.matched} trainer folder${r.matched === 1 ? '' : 's'} found${r.indexUrl ? ` · <a href="${esc(r.indexUrl)}" target="_blank" rel="noopener">POE evidence index</a>` : ''}</p>
+        ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> Their sheet is made once you choose their folder (or name a folder after them in the Trainers folder).</p>
+        <ul class="mlist drive-list">${r.unmatched.map((u) => `<li data-code="${esc(u.code)}"><span><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span></span>
+          <select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select></li>`).join('')}</ul>` : '<p>Every trainer with units has a folder and a sheet.</p>'}
+        <p class="muted small">Sheets refresh about every 10 minutes from the registers that have reached the server.</p>`);
+    } catch (e) { fill('m-drive', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  async function setDriveFolder(sel) {
+    const code = sel.closest('li').dataset.code;
+    sel.disabled = true;
+    try { need(await api('updateStaff', { code, driveFolder: sel.value })); toast('Saved — their sheet is made on the next Drive update (about 10 minutes)', 'ok'); }
+    catch (e) { toast(e.message, 'err'); }
+    finally { sel.disabled = false; }
+  }
+
   /* ---------- badge on the Manage tab ---------- */
   function refreshBadge() {
     const dot = $('#manageCount'); if (!dot) return;
@@ -485,6 +512,7 @@ const Admin = (() => {
     if (t.id === 'sheetExport' && t.files[0]) { importSheetFile(t.files[0]); t.value = ''; }
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');
     if (t.matches('.import .streams input, .import .misCode')) { const card = t.closest('.import'); const imp = readImportCard(card); imp.diff = null; card.outerHTML = importCard(imp, Number(card.dataset.i)); }
+    if (t.matches('[data-drivefolder]')) setDriveFolder(t);
     if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
     if (t.matches('.staff .rolechip input')) { const li = t.closest('li'); staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved'); }
   });

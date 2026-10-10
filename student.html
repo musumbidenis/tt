@@ -71,6 +71,12 @@
     </div>
   </section>
 
+  <div id="viewTabs" class="view-tabs" role="group" aria-label="Show" hidden>
+    <button type="button" data-view="checkin" aria-pressed="true">Check-in</button>
+    <button type="button" data-view="poe" aria-pressed="false">Evidence (POE)</button>
+  </div>
+
+  <div class="view-checkin">
   <button type="button" class="btn primary big" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan lesson QR</button>
   <p class="scan-hint">Or point your normal camera at your trainer's QR. No internet needed.</p>
 
@@ -78,6 +84,25 @@
     <h2>My check-ins</h2>
     <ul id="history" class="history"></ul>
   </section>
+  </div>
+
+  <div class="view-poe">
+  <section id="poeCard" class="card" hidden>
+    <h2>Send evidence</h2>
+    <p class="muted small">Scan your marked CAT or practical like a document. It is saved on this phone first and goes to the college Drive when you have internet. Your trainer then approves it.</p>
+    <label>Unit<select id="poeUnit"></select></label>
+    <p class="field-label">What are you sending? <span class="muted small">Pick one or more</span></p>
+    <div id="poeItems" class="item-chips" role="group" aria-label="Items"></div>
+    <div id="poeDocs"></div>
+    <button type="button" class="btn primary big" id="poeSave" disabled>Scan pages first</button>
+    <input type="file" id="poeCamera" accept="image/*" capture="environment" hidden>
+    <input type="file" id="poeGallery" accept="image/*,application/pdf" multiple hidden>
+  </section>
+  <section id="poeListCard" class="card" hidden>
+    <h2>My evidence</h2>
+    <ul id="poeList" class="history poe-list"></ul>
+  </section>
+  </div>
 
   <p id="deviceInfo" class="device-foot"></p>
   <p class="center"><button type="button" class="linkish" id="resetSetup" hidden>Wrong name? Set up again</button></p>
@@ -92,11 +117,26 @@
   <p class="scan-result">Point the camera at the code on your trainer's screen</p>
 </dialog>
 
+<dialog id="cropDialog" class="crop-dialog" aria-label="Adjust the page">
+  <div class="scan-head">
+    <strong>Drag the corners to the page edges</strong>
+    <button type="button" class="btn small ghost" id="cropCancel">Cancel</button>
+  </div>
+  <div id="cropStage" class="crop-stage"><canvas id="cropCanvas"></canvas><div id="cropHandles"></div></div>
+  <div class="crop-actions">
+    <button type="button" class="btn" id="cropRotate">Rotate</button>
+    <button type="button" class="btn" id="cropWhole">Whole photo</button>
+    <button type="button" class="btn primary" id="cropKeep">Keep page</button>
+  </div>
+</dialog>
+
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="config.js"></script>
 <script src="vendor/pouchdb.min.js"></script>
 <script src="vendor/jsQR.js"></script>
+<script src="scanner.js"></script>
+<script src="poe-student.js"></script>
 <script src="student.js"></script>
 </body>
 </html>

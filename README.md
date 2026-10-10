@@ -21,9 +21,9 @@ Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 
 
 | Role | Signs in with | Can |
 |---|---|---|
-| **Trainer** | staff code + PIN | Mark registers for the classes and units in their loading (offline). Add a student who isn't on the list (pending). Show a lesson QR. See and export their units' term registers. Submit them to the HOD. |
+| **Trainer** | staff code + PIN | Mark registers for the classes and units in their loading (offline). Add a student who isn't on the list (pending). Show a lesson QR. See and export their units' term registers. Submit them to the HOD. Preview, approve or return the POE evidence students send for their units. |
 | **HOD** | staff code + PIN | Everything a trainer can for their own units. Plus: approve or return submitted term registers, see every class's register, and see the department overview (which units are behind on marking). |
-| **MIS Officer** | staff code + PIN | Set up the term (12 teaching weeks, the breaks and the CAT weeks). Upload the trainer loading workbook and the class register PDFs. Approve students added by trainers. Issue PINs and give roles. |
+| **MIS Officer** | staff code + PIN | Set up the term (12 teaching weeks, the breaks and the CAT weeks). Upload the trainer loading workbook and the class register PDFs. Approve students added by trainers. Issue PINs and give roles. Receive the POE evidence trainers approved. |
 
 One person can have several roles; for example, an HOD who also teaches. Roles are set under **Manage → Staff and roles**.
 
@@ -60,6 +60,26 @@ If you used the earlier Google Sheet version, bring everything across once:
 Staff, their PINs, terms, loading, class lists, registers, QR check-ins, student phones and sign-offs all come across. Running it again does no harm, so you can repeat it if a few registers reached the Sheet after the first run. Once `config.js` points at the Worker, phones switch over on their own: trainers sign in once more, and every register on their phone is sent to the new database.
 
 The Apps Script version is kept only so its data can be moved across: the 12-week terms, CAT weeks, doubles, CAT registers and the stream preview need the Cloudflare database.
+
+### Connect Google Drive (once, about 10 minutes)
+
+This puts a Google Sheet of each trainer's attendance in their Drive folder, and stores the students' POE evidence in Drive. Do it with the **school Google Workspace account** that owns the folders.
+
+1. In that account's Drive, have one **Trainers** folder with a folder per trainer inside it (named after them, for example `Musumbi Denis` or `ICT020 Musumbi`), and a **POE** folder. Open each and copy its ID: the part of the address after `/folders/`.
+2. Open **https://script.google.com → New project**. Name it `RVNP Drive bridge`. Delete what is in `Code.gs`, paste in everything from [`apps-script/DriveBridge.gs`](apps-script/DriveBridge.gs) and **Save**.
+3. **Project Settings** (the cog) → **Script Properties → Add script property**, three times:
+   - `WORKER_URL`: the Worker's address from step 7 above
+   - `TRAINERS_FOLDER_ID`: the Trainers folder ID
+   - `POE_FOLDER_ID`: the POE folder ID
+4. Back in the editor choose the function **setup** and click **Run**. Allow access when Google asks. The log shows a long **SECRET**: copy it.
+5. In Cloudflare open the Worker → **Settings → Variables and Secrets → Add**: Type **Secret**, name `BRIDGE_SECRET`, value: the SECRET. Click **Deploy**.
+6. In Apps Script click **Deploy → New deployment → Select type: Web app**. Execute as: **Me**. Who has access: **Anyone**. Click **Deploy**.
+   If **Anyone** is not offered, the school's Workspace administrator has to allow sharing outside the school domain for Drive and Apps Script in the Admin console. Students upload without signing in to Google, so the web app must be open; every upload and preview still needs a ticket signed by the database.
+7. Within 10 minutes the sheets appear and **Manage → Google Drive** shows *Connected*, with any trainer whose folder was not found by name. Pick their folder there.
+
+Each trainer's sheet is called **Attendance register - <term>**: one tab per class and unit in the class register layout (WK1–WK12, hours and %), plus a CATs tab when CATs were taken. It is rewritten from the database, so edits made in the sheet are replaced on the next update. Evidence is stored as **POE / Class / Adm No - Name / Unit - CAT1 - v1.pdf**, and the sheet **POE - Evidence index** in the POE folder lists every file with its status.
+
+**Updating the bridge later**: paste the new `DriveBridge.gs`, Save, then **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The address stays the same.
 
 ## 2. MIS Officer: start of each term
 
@@ -156,6 +176,14 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 3. Whenever each phone gets internet, it syncs. The server verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
 
 Syncing is automatic on both sides. During a live lesson, the trainer's phone checks every few seconds with a tiny "anything new?" question. A student's scan shows up within about 3–5 seconds of them being online.
+
+## POE evidence (students send, trainers approve)
+
+**Students** open **Evidence (POE)** in the student app, choose the unit and tick one or more items (CAT1–CAT4, PRAC1–PRAC3). For each item they photograph the pages; the app finds the page edges (drag the corners if needed), straightens the page and makes it look like a scan (**Document**, **Grey** or **Colour**). Pages can be reordered or deleted, or an existing PDF chosen instead. **Save and send** keeps the PDF on the phone first (and **Save a copy** puts it in the phone's downloads), then sends it to Drive when there is internet. The list shows *With your trainer*, *Approved* or *Returned* with the trainer's note; **Scan again** sends a new version (v2, v3…).
+
+**Trainers** open the **POE** tab (the dot shows how many are waiting). Each submission opens inside the app with its pages; **Approve**, or **Return to student** with a note. After each decision the next one waiting opens. The HOD sees the whole department.
+
+**The MIS Officer** sees the approved ones under **POE → To receive**, and marks them received once filed. Uploading and previewing need internet; the files themselves never pass through the database.
 
 ## In the database
 

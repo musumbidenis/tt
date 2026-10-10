@@ -445,7 +445,7 @@ body.student main { max-width: 520px; }
 #historyCard { padding-bottom: 0; overflow: hidden; }
 body.student .topbar .btn.syncing { opacity: .7; }
 .linkish { background: none; border: 0; padding: .5rem; color: var(--link); font: inherit; font-size: .9375rem; text-decoration: underline; text-underline-offset: .15em; cursor: pointer; }
-body.student main > #scanBtn { margin: 0 0 .5rem; }
+body.student .view-checkin > #scanBtn { margin: 0 0 .5rem; }
 .device-foot { color: var(--muted); font-size: .8125rem; text-align: center; margin-top: 1.5rem; }
 
 /* ---------- sign-in ---------- */
@@ -638,3 +638,83 @@ fieldset .more[open] summary { flex-basis: 100%; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--btn-bg); color: var(--btn-ink); }
 .pill.extra { background: var(--l-soft); color: var(--l); }
+
+/* ---------- student app: evidence (POE) ---------- */
+.view-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 1rem; background: var(--sunk); border-radius: var(--r-lg); }
+.view-tabs button { appearance: none; border: 0; border-radius: 9px; padding: .65rem .5rem; background: none; color: var(--ink-2); font: 600 .9375rem var(--display); cursor: pointer; }
+.view-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+body.student[data-view="poe"] .view-checkin, body.student:not([data-view="poe"]) .view-poe { display: none; }
+.field-label { font-weight: 600; margin: .75rem 0 .4rem; }
+.item-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+.kchip-btn { appearance: none; padding: .45rem .85rem; border: 1px solid var(--line-strong); border-radius: 99px; background: var(--surface); color: var(--ink-2); font: 600 .9rem var(--text); cursor: pointer; min-height: 40px; }
+.kchip-btn.on { background: var(--btn-bg); border-color: var(--btn-bg); color: var(--btn-ink); }
+.kchip-btn.approved:not(.on) { border-color: var(--p); color: var(--p); }
+.kchip-btn.returned:not(.on) { border-color: var(--a); color: var(--a); }
+.poe-doc { border: 1px solid var(--line); border-radius: var(--r-lg); padding: .75rem; margin-bottom: .75rem; background: var(--paper); }
+.poe-doc-head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; margin-bottom: .5rem; }
+.poe-pages { list-style: none; margin: 0 0 .5rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: .5rem; }
+.poe-pages li { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.poe-pages img { display: block; width: 100%; aspect-ratio: 210 / 297; object-fit: cover; background: var(--sunk); }
+.poe-pages img.f-document { filter: grayscale(1) contrast(1.6) brightness(1.08); }
+.poe-pages img.f-grey { filter: grayscale(1); }
+.poe-pages li > span:not(.pg-tools) { position: absolute; top: 4px; left: 4px; background: rgba(0, 0, 0, .65); color: #fff; font-size: .75rem; font-weight: 700; border-radius: 99px; padding: 0 .4rem; }
+.pg-tools { display: flex; border-top: 1px solid var(--line); }
+.pg-tools button { flex: 1; appearance: none; border: 0; background: none; color: var(--ink-2); padding: .3rem 0; font: 600 .875rem var(--text); cursor: pointer; min-height: 32px; }
+.pg-tools button:disabled { opacity: .3; }
+.pg-tools button[data-del] { color: var(--a); }
+.seg.filt { margin-bottom: .5rem; }
+.seg.filt button { width: auto; height: 36px; padding: 0 .75rem; font: 600 .875rem var(--text); color: var(--ink-2); }
+.seg.filt button[aria-pressed="true"] { background: var(--btn-bg); border-color: var(--btn-bg); color: var(--btn-ink); }
+.poe-doc .row-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+#poeSave { margin-top: .25rem; }
+.poe-list li { align-items: flex-start; }
+.poe-acts { display: flex; flex-direction: column; align-items: flex-end; gap: .1rem; flex-shrink: 0; }
+.poe-acts .linkish { padding: .2rem 0; font-size: .875rem; }
+#poeListCard { padding-bottom: 0; overflow: hidden; }
+.crop-dialog { border: 0; border-radius: var(--r-lg); padding: .75rem; background: var(--surface); color: var(--ink); width: min(560px, 96vw); max-height: 96vh; }
+.crop-dialog::backdrop { background: rgba(4, 20, 11, .85); }
+.crop-stage { position: relative; display: flex; justify-content: center; touch-action: none; user-select: none; }
+.crop-stage canvas { display: block; max-width: 100%; border-radius: 6px; }
+#cropHandles { position: absolute; pointer-events: none; }
+.crop-stage .handle { position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 3px solid #4fcd84; background: rgba(79, 205, 132, .25); pointer-events: auto; touch-action: none; cursor: grab; }
+.crop-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .75rem; flex-wrap: wrap; }
+.crop-actions .primary { flex: 1 1 auto; }
+
+/* ---------- POE tab (trainers, HOD, MIS Officer) ---------- */
+.poe-head .row-actions { margin: .25rem 0 .75rem; }
+.poe-chips { margin: .5rem 0 .75rem; }
+.chipbtn .n { display: inline-block; min-width: 1.4em; padding: 0 .35em; margin-left: .2rem; border-radius: 99px; background: var(--sunk); color: var(--ink); font-size: .75rem; }
+.chipbtn.on .n { background: color-mix(in srgb, var(--btn-ink) 22%, transparent); color: inherit; }
+.poe-filters { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.poe-filters select, .poe-filters input { margin: 0; }
+.poe-filters input { grid-column: 1 / -1; }
+@media (min-width: 640px) { .poe-filters { grid-template-columns: 1fr 1.4fr 1.2fr; } .poe-filters input { grid-column: auto; } }
+.poe-receive { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.poe-group { padding-bottom: 0; overflow: hidden; }
+.poe-group .msec-head h2 { font-size: 1.0625rem; }
+.poe-row { display: flex; align-items: center; gap: .25rem; padding-left: 1rem; }
+.poe-pick { width: 22px; height: 22px; flex-shrink: 0; margin: 0 .25rem 0 0; }
+.poe-open { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr auto; grid-template-areas: "who pill" "what pill"; align-items: center; gap: .1rem .75rem;
+  appearance: none; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; padding: .65rem 1rem .65rem 0; cursor: pointer; }
+.poe-open:hover .poe-who b { text-decoration: underline; }
+.poe-who { grid-area: who; min-width: 0; display: flex; flex-wrap: wrap; gap: 0 .5rem; align-items: baseline; }
+.poe-who b { font-weight: 600; }
+.poe-what { grid-area: what; display: flex; gap: .5rem; align-items: center; }
+.poe-open .pill { grid-area: pill; }
+.item-tag { display: inline-block; font: 700 .75rem/1.5 var(--display); padding: 0 .45rem; border-radius: 5px; background: var(--e-soft); color: var(--e); vertical-align: middle; }
+.poe-dialog { padding: 1rem; max-height: 96vh; }
+.poe-view-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.poe-view-head h2 { margin: 0; font-size: 1.1875rem; }
+.poe-view-head p { margin: .2rem 0 0; }
+.poe-decided { margin: .5rem 0 0; padding: .45rem .7rem; border-radius: var(--r-sm); font-size: .9rem; background: var(--sunk); }
+.poe-decided.approved { background: var(--p-soft); color: var(--p); }
+.poe-decided.returned { background: var(--a-soft); color: var(--a); }
+.poe-pages-view { margin: .75rem -1rem; padding: .5rem; max-height: max(240px, calc(100vh - 380px)); overflow-y: auto; background: var(--sunk); display: flex; flex-direction: column; align-items: center; gap: .5rem; }
+.poe-pages-view .poe-page, .poe-img { max-width: 100%; height: auto; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.poe-view-actions { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.poe-nav { display: flex; gap: .5rem; }
+.poe-decide { margin-top: .75rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+.poe-decide textarea { width: 100%; }
+.poe-decide .row-actions { justify-content: flex-end; }
+.drive-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 1rem; }
+.drive-list select { width: auto; max-width: 100%; margin: 0; }

@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.2.0';
-const SCHEMA_VERSION = '3';
+export const VERSION = '5.3.0';
+const SCHEMA_VERSION = '4';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -45,9 +45,17 @@ CREATE INDEX IF NOT EXISTS checkins_updated ON checkins (updated_at);
 CREATE TABLE IF NOT EXISTS devices (device_id TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, name TEXT, class_code TEXT, registered_at TEXT, last_seen TEXT);
 CREATE INDEX IF NOT EXISTS devices_adm ON devices (adm_no);
 CREATE TABLE IF NOT EXISTS signoffs (id TEXT PRIMARY KEY, term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, lecturer_comment TEXT, submitted_at TEXT, status TEXT, hod_code TEXT, hod_name TEXT, hod_comment TEXT, decided_at TEXT);
-CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, staff_code TEXT, name TEXT, action TEXT, details TEXT);`;
+CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, staff_code TEXT, name TEXT, action TEXT, details TEXT);
+CREATE INDEX IF NOT EXISTS sessions_synced ON sessions (synced_at);
+CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, name TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, item TEXT, version INTEGER, file_id TEXT, file_name TEXT, bytes INTEGER, pages INTEGER, submitted_at TEXT, status TEXT, decided_by TEXT, decided_name TEXT, decided_at TEXT, comment TEXT, received_at TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS evidence_adm ON evidence (adm_no, unit_code, item);
+CREATE INDEX IF NOT EXISTS evidence_cu ON evidence (class_code, unit_code);
+CREATE INDEX IF NOT EXISTS evidence_upd ON evidence (updated_at);
+CREATE INDEX IF NOT EXISTS evidence_status ON evidence (status, submitted_at);
+CREATE INDEX IF NOT EXISTS evidence_sub ON evidence (submitted_at);`;
 
-const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER'];
+const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
+  'ALTER TABLE staff ADD COLUMN drive_folder TEXT'];
 
 /* ---------- small helpers ---------- */
 const nowIso = () => new Date().toISOString();
@@ -160,6 +168,7 @@ export default {
         const p = Object.fromEntries(new URL(request.url).searchParams);
         if (p.action === 'classes') return reply(await publicClasses(env));
         if (p.action === 'classlist') return reply(await classList(env, p.class));
+        if (p.action === 'units') return reply(await classUnits(env, p.class));
         if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso() });
         return reply({ ok: false, error: 'Unknown action' });
       }
@@ -167,6 +176,9 @@ export default {
       if (b.action === 'checkin') return reply(await receiveCheckins(env, b.checkins || []));
       if (b.action === 'register') return reply(await registerDevice(env, b));
       if (b.action === 'login') return reply(await login(env, b));
+      // Student phones (checked against their registration) and the Drive bridge (signed with BRIDGE_SECRET).
+      if (STUDENT_ACTIONS[b.action]) return reply(await STUDENT_ACTIONS[b.action](env, b));
+      if (BRIDGE_ACTIONS[b.action]) return reply(await BRIDGE_ACTIONS[b.action](env, b));
       const h = ACTIONS[b.action];
       // The sign-in check and the action's first reads go to the database together, in one trip.
       const [me, pre] = await auth(env, b.auth, h && h.pre ? h.pre(b) : []);
@@ -210,12 +222,17 @@ const ACTIONS = {
   staff: { role: ['MIS'], fn: (env) => listStaff(env) },
   updateStaff: { role: ['MIS'], fn: (env, b, me) => updateStaff(env, b, me) },
   importSheet: { role: ['MIS'], fn: (env, b, me) => importSheet(env, b, me) },
+  poeList: { fn: (env, b, me) => poeList(env, b, me) },
+  poeView: { fn: (env, b, me) => poeView(env, b, me) },
+  poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => poeDecide(env, b, me) },
+  poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
+  driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
 };
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
   return { code: r.code, name: r.name, roles: rolesList(r.roles), responsibility: r.responsibility || '', active: !!r.active,
-    hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
+    hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100, driveFolder: r.drive_folder || '' };
 }
 const getStaff = (env, code) => one(env, 'SELECT * FROM staff WHERE code=?', String(code || '').trim());
 
@@ -634,6 +651,12 @@ async function updateStaff(env, b, me) {
     if (lower(code) === lower(me.code) && !roles.includes('MIS')) fail('You cannot remove your own MIS role');
     row.roles = roles.join(', ');
   }
+  if (b.driveFolder !== undefined) {
+    // A Drive folder link or ID chosen by the MIS Officer when the name match does not find it.
+    const id = (String(b.driveFolder).match(/[-\w]{20,}/) || [''])[0];
+    await run(env, 'UPDATE staff SET drive_folder=?, updated_at=? WHERE code=?', id || null, nowIso(), code);
+    if (!b.roles && b.active === undefined && !b.resetPin && !b.name) return { ok: true, staff: staffPublic(await getStaff(env, code)) };
+  }
   if (b.active !== undefined) {
     if (lower(code) === lower(me.code) && !b.active) fail('You cannot switch off your own account');
     row.active = b.active ? 1 : 0;
@@ -1004,6 +1027,279 @@ async function importSheet(env, b, me) {
   await audit(env, me, 'import from Sheet', `${tab}: ${out.length} rows`);
   await bumpRoster(env);
   return { ok: true, tab, saved: out.length };
+}
+
+/* ====================== Google Drive bridge and POE evidence ======================
+ * The Drive bridge is a small Apps Script web app (apps-script/DriveBridge.gs) running under the school's
+ * Google Workspace account. It is the only part that touches Drive:
+ *   - every few minutes it asks this Worker what changed (bridgeFeed) and updates each trainer's attendance
+ *     sheet and the index of approved evidence;
+ *   - student phones send their evidence PDFs straight to it, with an upload ticket signed here;
+ *   - trainers' phones fetch a file to preview with a view ticket signed here.
+ * Both sides share the BRIDGE_SECRET (a Worker secret, and a Script Property on the bridge). */
+const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
+const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
+const b64u = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (t) => decodeURIComponent(escape(atob(t.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (t.length % 4)) % 4))));
+function bridgeSecret(env) {
+  if (!env.BRIDGE_SECRET) fail('The Google Drive link is not set up yet: the MIS Officer adds the BRIDGE_SECRET to the Worker (README → Google Drive).');
+  return String(env.BRIDGE_SECRET);
+}
+async function signTicket(env, payload) {
+  const body = b64u(JSON.stringify(payload));
+  return body + '.' + (await hmacHex(body, bridgeSecret(env)));
+}
+async function readTicket(env, ticket, kind, { late = false } = {}) {
+  const [body, sig] = String(ticket || '').split('.');
+  if (!body || !sig || (await hmacHex(body, bridgeSecret(env))) !== sig) fail('That upload ticket is not valid');
+  const t = JSON.parse(unb64u(body));
+  if (t.k !== kind) fail('That ticket is for something else');
+  if (!late && t.exp < Date.now()) fail('That ticket has expired; try again');
+  return t;
+}
+// Folder names keep the admission number as written (L6CS/25S/304001 - Name); Drive allows "/" in names.
+const folderName = (s) => String(s || '').replace(/[\\:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+
+/* ---------- requests from the bridge ---------- */
+async function verifyBridge(env, b) {
+  const ts = Number(b.ts) || 0;
+  if (Math.abs(Date.now() - ts) > 15 * 6e4) fail('Bridge request is too old (check the clock)');
+  if ((await hmacHex(`${b.action}|${ts}|${b.body || ''}`, bridgeSecret(env))) !== b.sig) fail('Bridge signature does not match: the BRIDGE_SECRET differs');
+  return JSON.parse(b.body || '{}');
+}
+const BRIDGE_ACTIONS = {
+  bridgeFeed: async (env, b) => bridgeFeed(env, await verifyBridge(env, b)),
+  bridgeReport: async (env, b) => {
+    const r = await verifyBridge(env, b);
+    await many(env, metaStmt('drive_report', JSON.stringify({ ...r, at: nowIso() })), r.url && metaStmt('drive_url', r.url));
+    return { ok: true };
+  },
+};
+
+/** Term register rows for one class and unit, the same way the app's Reports work them out. */
+const PERIOD_NO = (p) => { const m = /(\d+)/.exec(p || ''); return m ? Number(m[1]) : 9; };
+function buildRegister({ weeks, lessons, roster, alias, rejected, h, latePct, excPct }) {
+  const late = latePct / 100, exc = excPct / 100;
+  const list = [...lessons].sort((a, c) => (a.date + PERIOD_NO(a.period)).localeCompare(c.date + PERIOD_NO(c.period)));
+  const used = weeks.map(() => 0), cellsOf = new Map();
+  for (const l of list) {
+    const w = weeks.indexOf(mondayOf(l.date));
+    if (w === -1 || used[w] >= 3) continue;
+    const n = Math.min(Number(l.slots) === 2 ? 2 : 1, 3 - used[w]);
+    cellsOf.set(l.id, Array.from({ length: n }, (_, k) => w * 3 + used[w] + k));
+    used[w] += n;
+  }
+  const rows = new Map();
+  const ensure = (adm, name, pending = false) => {
+    if (!rows.has(adm)) rows.set(adm, { admNo: adm, name: name || adm, pending, cells: Array(TERM_WEEKS * 3).fill(''), P: 0, A: 0, L: 0, E: 0, held: 0 });
+    return rows.get(adm);
+  };
+  for (const t of roster) if (!rejected.has(t.admNo)) ensure(t.admNo, t.name, t.pending);
+  for (const l of list) {
+    const cells = cellsOf.get(l.id); if (!cells) continue;
+    const marks = {};
+    for (const [adm, st] of Object.entries(l.marks)) { const to = alias[adm] || adm; if (marks[to] && to !== adm) continue; marks[to] = st; }
+    for (const [adm, st] of Object.entries(marks)) {
+      if (!'PALE'.includes(st) || rejected.has(adm)) continue;
+      const r = ensure(adm, l.names[adm]);
+      for (const c of cells) { r.cells[c] = st; r[st]++; r.held++; }
+    }
+  }
+  return [...rows.values()].sort((a, c) => a.admNo.localeCompare(c.admNo, undefined, { numeric: true })).map((r) => {
+    const possible = Math.round(r.held * h * 100) / 100, actual = Math.round((r.P + r.L * late + r.E * exc) * h * 100) / 100;
+    return { admNo: r.admNo, name: r.name, pending: r.pending, cells: r.cells, possible, actual, pct: possible ? actual / possible : null };
+  });
+}
+
+/** What changed since the bridge last asked, one page of class-units at a time (keeps each request small). */
+const FEED_PAGE = 12;
+async function bridgeFeed(env, q) {
+  const since = String(q.since || ''), offset = Math.max(0, Number(q.offset) || 0), now = nowIso();
+  const [termRows, loading] = await many(env, [TERM_SQL], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`]);
+  const term = termOut(termRows[0]);
+  const unitKey = (u) => u.class_code + '|' + u.unit_code;
+  let keys;
+  if (!since) keys = loading.map(unitKey);
+  else {
+    const [sess, tr, rq, so, st, ld, tm] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM sessions WHERE synced_at > ?', since],
+      ['SELECT DISTINCT class_code FROM trainees WHERE updated_at > ? OR added_at > ?', since, since],
+      ['SELECT DISTINCT class_code FROM requests WHERE requested_at > ? OR decided_at > ?', since, since],
+      ['SELECT DISTINCT class_code, unit_code FROM signoffs WHERE submitted_at > ? OR decided_at > ?', since, since],
+      ['SELECT code FROM staff WHERE updated_at > ?', since], ['SELECT 1 AS x FROM loading WHERE updated_at > ? LIMIT 1', since], ['SELECT 1 AS x FROM terms WHERE updated_at > ? LIMIT 1', since]);
+    const all = ld.length || tm.length;
+    const want = new Set([...sess, ...so].map(unitKey));
+    const classes = new Set([...tr, ...rq].map((r) => r.class_code)), staffSet = new Set(st.map((r) => lower(r.code)));
+    keys = loading.filter((u) => all || want.has(unitKey(u)) || classParts(u.class_code).some((c) => classes.has(c)) || staffSet.has(lower(u.trainer_code))).map(unitKey);
+  }
+  keys = [...new Set(keys)].sort();
+  const page = keys.slice(offset, offset + FEED_PAGE);
+  const out = { ok: true, now, term, total: keys.length, next: offset + FEED_PAGE < keys.length ? offset + FEED_PAGE : null, units: [] };
+  if (offset === 0) {
+    const [staffRows, ev] = await many(env, ['SELECT code, name, drive_folder FROM staff WHERE active=1'],
+      ['SELECT * FROM evidence WHERE updated_at > ? ORDER BY updated_at LIMIT 1000', since]);
+    const codes = new Set(loading.map((u) => lower(u.trainer_code)));
+    out.trainers = staffRows.filter((r) => codes.has(lower(r.code))).map((r) => ({ code: r.code, name: r.name, folder: r.drive_folder || '' }));
+    out.evidence = ev.map(evidenceOut);
+  }
+  if (!page.length || !term) return out;
+  const units = page.map((k) => loading.find((u) => unitKey(u) === k));
+  const classSet = [...new Set(units.flatMap((u) => classParts(u.class_code)))];
+  const stmts = units.flatMap((u) => [
+    ['SELECT id, data FROM sessions WHERE class_code=? AND unit_code=?', u.class_code, u.unit_code],
+    ["SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN (SELECT id FROM sessions WHERE class_code=? AND unit_code=?)", u.class_code, u.unit_code],
+  ]);
+  const res = await many(env, ...stmts, [`SELECT adm_no, name, class_code, status FROM trainees WHERE class_code IN ${IN}`, JSON.stringify(classSet)],
+    [`SELECT adm_no, name, class_code, status, merged_into FROM requests WHERE class_code IN ${IN} AND status IN ('pending','rejected','merged')`, JSON.stringify(units.map((u) => u.class_code))],
+    [`SELECT * FROM signoffs WHERE term_id=?`, term.id], [`SELECT code, late_pct, excused_pct FROM staff`], [`SELECT code, mis_class FROM classes WHERE code IN ${IN}`, JSON.stringify(units.map((u) => u.class_code))]);
+  const [trainees, reqs, signoffs, staffPct, classes] = res.slice(units.length * 2);
+  const weeks = teachingWeeks(term);
+  const from = weeks[0], to = (() => { const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); return e.toISOString().slice(0, 10); })();
+  units.forEach((u, i) => {
+    const accepted = acceptedOf(res[i * 2 + 1]);
+    const all = res[i * 2].map((r) => {
+      const s = JSON.parse(r.data), marks = {}, names = {};
+      for (const m of finalMarks(s, accepted[r.id])) { const k = STATUS_CODE[m.status]; if (k) { marks[m.admNo] = k; names[m.admNo] = m.name; } }
+      return { id: r.id, date: s.date, period: s.period, slots: s.slots, kind: s.kind || 'lesson', title: s.title || '', marks, names };
+    }).filter((l) => l.date >= from && l.date <= to);
+    const parts = classParts(u.class_code);
+    const roster = trainees.filter((t) => parts.includes(t.class_code) && active(t)).map((t) => ({ admNo: t.adm_no, name: t.name }));
+    const mine = reqs.filter((r) => r.class_code === u.class_code);
+    for (const r of mine) if (r.status === 'pending' && !roster.some((t) => lower(t.admNo) === lower(r.adm_no))) roster.push({ admNo: r.adm_no, name: r.name, pending: true });
+    const rejected = new Set(mine.filter((r) => r.status === 'rejected').map((r) => r.adm_no));
+    const alias = Object.fromEntries(mine.filter((r) => r.status === 'merged' && r.merged_into).map((r) => [r.adm_no, r.merged_into]));
+    const pct = staffPct.find((x) => lower(x.code) === lower(u.trainer_code)) || {};
+    const h = (Number(u.hours_per_week) || 3) / (Number(u.lessons_per_week) || 2);
+    const so = signoffs.find((x) => x.class_code === u.class_code && x.unit_code === u.unit_code);
+    const lessons = all.filter((l) => l.kind === 'lesson');
+    out.units.push({
+      key: unitKey(u), trainerCode: u.trainer_code, trainerName: u.trainer_name, classCode: u.class_code, unitCode: u.unit_code, unitName: u.unit_name,
+      misClass: (classes.find((c) => c.code === u.class_code) || {}).mis_class || u.class_code, level: levelOf(u.class_code), termName: term.name, duration: term.duration || '',
+      weeks, lessonHours: h, lessonsHeld: lessons.length,
+      rows: buildRegister({ weeks, lessons, roster, alias, rejected, h, latePct: pct.late_pct ?? 50, excPct: pct.excused_pct ?? 100 }),
+      lecturerComment: so?.lecturer_comment || '', hodComment: so?.hod_comment || '', signoff: so?.status || '',
+      cats: all.filter((l) => l.kind !== 'lesson').sort((a, c) => a.date.localeCompare(c.date)).map((l) => ({ title: l.title || (l.kind === 'cat' ? 'CAT' : 'Extra'), date: l.date, kind: l.kind, marks: l.marks })),
+    });
+  });
+  return out;
+}
+
+/* ---------- the student phone: units, upload tickets, my evidence ---------- */
+async function studentOf(env, b) {
+  const [tRows, dRows] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim()], ['SELECT * FROM devices WHERE device_id=?', String(b.deviceId || '')]);
+  const t = tRows[0], d = dRows[0];
+  if (!t || !active(t)) fail('That student is not on the class list');
+  if (!d || lower(d.adm_no) !== lower(t.adm_no)) fail('This phone is not registered to that student. Set up the phone first.');
+  return t;
+}
+const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class_code).includes(cls) || u.class_code === cls);
+async function classUnits(env, cls) {
+  if (!cls) fail('Choose a class');
+  const [loading, url] = await many(env, [`SELECT class_code, unit_code, unit_name FROM loading WHERE term_id=${ACTIVE_TERM}`], ["SELECT value FROM meta WHERE key='drive_url'"]);
+  const seen = new Set(), units = [];
+  for (const u of unitsForClass(loading, cls)) if (!seen.has(u.unit_code)) { seen.add(u.unit_code); units.push({ code: u.unit_code, name: u.unit_name || u.unit_code }); }
+  return { ok: true, classCode: cls, units, items: ITEMS, driveReady: !!url[0] };
+}
+const evidenceOut = (r) => ({ id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
+  version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.status,
+  decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at });
+const STUDENT_ACTIONS = {
+  async poeTicket(env, b) {
+    const t = await studentOf(env, b);
+    const item = String(b.item || '').toUpperCase();
+    if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
+    if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
+    const [loading, ver, url] = await many(env, [`SELECT unit_code, unit_name, class_code FROM loading WHERE term_id=${ACTIVE_TERM} AND unit_code=?`, String(b.unitCode || '')],
+      ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item], ["SELECT value FROM meta WHERE key='drive_url'"]);
+    const unit = unitsForClass(loading, t.class_code)[0];
+    if (!unit) fail('That unit is not taught to your class this term');
+    if (!url[0]) fail('Evidence uploads are not switched on yet (the Google Drive link is not set up). Your scan is kept on this phone.');
+    const v = (Number(ver[0]?.v) || 0) + 1, unitName = unit.unit_name || unit.unit_code;
+    const fileName = `${safeName(unitName)} - ${item} - v${v}.pdf`;
+    const ticket = await signTicket(env, { k: 'up', id: crypto.randomUUID(), adm: t.adm_no, sname: t.name, cls: t.class_code, unit: unit.unit_code, unitName, item, v, name: fileName,
+      folders: [safeName(t.class_code), folderName(`${t.adm_no} - ${t.name}`)], bytes: Number(b.bytes) || 0, pages: Number(b.pages) || 0, exp: Date.now() + 6 * 3600e3 });
+    return { ok: true, ticket, driveUrl: url[0].value, fileName, version: v };
+  },
+  /** After the bridge saved the file: it signed what it saved, so the record cannot be made up. */
+  async poeDone(env, b) {
+    // Late is fine here: the bridge's signature proves the file was saved while the ticket was valid.
+    const t = await readTicket(env, b.ticket, 'up', { late: true });
+    if ((await hmacHex(`done|${t.id}|${b.fileId}|${b.version}|${b.fileName}`, bridgeSecret(env))) !== b.sig) fail('The Drive bridge did not confirm this file');
+    const now = nowIso();
+    await run(env, `INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?) ON CONFLICT(id) DO NOTHING`, t.id, t.adm, t.sname, t.cls, t.unit, t.unitName, t.item, Number(b.version) || t.v,
+    String(b.fileId), String(b.fileName), t.bytes, t.pages, now, now);
+    return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', t.id)) };
+  },
+  async poeMine(env, b) {
+    const t = await studentOf(env, b);
+    return { ok: true, evidence: (await all(env, 'SELECT * FROM evidence WHERE adm_no=? ORDER BY submitted_at DESC', t.adm_no)).map(evidenceOut) };
+  },
+};
+
+/* ---------- trainers, HOD and MIS ---------- */
+async function myUnitPairs(env, me) {
+  const loading = await all(env, `SELECT class_code, unit_code, unit_name, trainer_code FROM loading WHERE term_id=${ACTIVE_TERM}`);
+  const mine = loading.filter((u) => lower(u.trainer_code) === lower(me.code));
+  return { loading, pairs: new Set(mine.flatMap((u) => classParts(u.class_code).map((c) => c + '|' + u.unit_code))) };
+}
+const seesAll = (me) => me.roles.includes('HOD') || me.roles.includes('MIS');
+async function poeList(env, b, me) {
+  const { pairs } = await myUnitPairs(env, me);
+  const status = ['submitted', 'approved', 'returned'].includes(b.status) ? b.status : '';
+  let list = [];
+  if (seesAll(me)) {
+    list = status ? await all(env, 'SELECT * FROM evidence WHERE status=? ORDER BY submitted_at DESC LIMIT 3000', status)
+      : await all(env, 'SELECT * FROM evidence ORDER BY submitted_at DESC LIMIT 3000');
+  } else {
+    // Only this trainer's class-units are read (through the class/unit index), a few dozen at a time.
+    const keys = [...pairs].map((k) => k.split('|'));
+    for (let i = 0; i < keys.length; i += 40) {
+      const part = keys.slice(i, i + 40);
+      const rows = await all(env, `SELECT * FROM evidence WHERE (${part.map(() => '(class_code=? AND unit_code=?)').join(' OR ')})${status ? ' AND status=?' : ''}`,
+        ...part.flat(), ...(status ? [status] : []));
+      list.push(...rows);
+    }
+    list.sort((a, c) => String(c.submitted_at).localeCompare(String(a.submitted_at)));
+  }
+  // Links into Drive: the trainer's own attendance sheet; the evidence index for the HOD and MIS Officer.
+  const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
+  const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(me.code))?.[1] || '';
+  return { ok: true, evidence: list.map(evidenceOut), mine: [...pairs], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
+}
+async function evidenceFor(env, id, me, decide) {
+  const r = await one(env, 'SELECT * FROM evidence WHERE id=?', String(id || ''));
+  if (!r) fail('That submission no longer exists');
+  const { pairs } = await myUnitPairs(env, me);
+  const ok = pairs.has(r.class_code + '|' + r.unit_code) || me.roles.includes('HOD') || (!decide && me.roles.includes('MIS'));
+  if (!ok) fail('Only the trainer of this unit or the HOD can do that');
+  return r;
+}
+async function poeView(env, b, me) {
+  const r = await evidenceFor(env, b.id, me, false);
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
+}
+async function poeDecide(env, b, me) {
+  const r = await evidenceFor(env, b.id, me, true);
+  if (!['approved', 'returned'].includes(b.decision)) fail('Choose approve or return');
+  const comment = String(b.comment || '').trim().slice(0, 500);
+  if (b.decision === 'returned' && !comment) fail('Say what needs fixing when returning evidence');
+  const now = nowIso();
+  await run(env, 'UPDATE evidence SET status=?, decided_by=?, decided_name=?, decided_at=?, comment=?, updated_at=? WHERE id=?', b.decision, me.code, me.name, now, comment, now, r.id);
+  await audit(env, me, 'evidence', `${r.adm_no} ${r.unit_code} ${r.item} v${r.version} ${b.decision}`);
+  return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', r.id)) };
+}
+async function poeReceive(env, b, me) {
+  const ids = (b.ids || []).map(String).slice(0, 1000), now = nowIso();
+  await run(env, `UPDATE evidence SET received_at=?, updated_at=? WHERE status='approved' AND received_at IS NULL AND id IN ${IN}`, now, now, JSON.stringify(ids));
+  await audit(env, me, 'evidence received', `${ids.length} file(s)`);
+  return { ok: true };
+}
+async function driveStatus(env) {
+  const r = await getMeta(env, 'drive_report');
+  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r ? JSON.parse(r) : null };
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */
