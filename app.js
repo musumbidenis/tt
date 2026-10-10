@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.3.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -20,6 +20,11 @@ const LIVE_MID_MS = window.__liveMidMs || Math.min(15000, LIVE_SLOW_MS);
 // and again when the QR is closed. The server accepts genuine codes for "right now" without waiting for it.
 const QR_UPLOAD_MS = window.__qrUploadMs || 120000;
 const MAX_LESSONS_PER_WEEK = 3; // the register has 3 lesson cells per week
+// The college timetable: six slots a day. Two slots back to back make a double lesson (two cells in the register).
+const SLOTS = [['7.30', '9.00'], ['9.00', '10.30'], ['10.30', '12.00'], ['13.00', '14.30'], ['14.30', '16.00'], ['16.00', '17.30']];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+const LUNCH_AFTER = 3; // a double is two slots in the same morning or afternoon
+const KIND_LABEL = { lesson: 'Lesson', cat: 'CAT', extra: 'Extra CAT attendance' };
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
   { code: 'L3', label: 'Lesson 3' }, { code: 'L4', label: 'Lesson 4' },
@@ -53,6 +58,17 @@ const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.g
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
   : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
 const periodLabel = (code) => (PERIODS.find((p) => p.code === code) || { label: code }).label;
+const slotNo = (period) => { const m = /^L(\d)$/.exec(period || ''); return m ? Number(m[1]) : 0; };
+/** "Lesson 2 · 9.00–10.30", or for a double "Lessons 1–2 · 7.30–10.30". */
+function slotLabel(period, slots = 1) {
+  const n = slotNo(period);
+  if (!n || !SLOTS[n - 1]) return periodLabel(period);
+  const end = SLOTS[Math.min(SLOTS.length, n + (slots === 2 ? 1 : 0)) - 1][1];
+  return (slots === 2 ? `Lessons ${n}–${n + 1}` : `Lesson ${n}`) + ` · ${SLOTS[n - 1][0]}–${end}`;
+}
+const kindOf = (s) => (s && ['cat', 'extra'].includes(s.kind) ? s.kind : 'lesson');
+/** What a register is: "Lesson 2 · 9.00–10.30" or "CAT 1 · Lesson 3 · 10.30–12.00". */
+const sessionLabel = (s) => (kindOf(s) === 'lesson' ? '' : `${s.title || KIND_LABEL[kindOf(s)]} · `) + slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1);
 const fmtDate = (iso) => { if (!iso) return ''; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtShort = (iso) => { if (!iso) return ''; const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso); return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -148,7 +164,7 @@ async function loadRoster() {
   $('#rosterInfo').textContent = state.classes.length
     ? `On this phone: ${markClasses().length} of your classes, ${markableUnits().length} units${state.meta.term ? ` · ${state.meta.term.name}` : ''}.`
     : 'No class lists on this phone yet.';
-  renderWeekHint();
+  renderWeekSelect();
 }
 
 /** Units this person marks: their own loading, or every unit when no loading has been uploaded. */
@@ -237,13 +253,14 @@ function termRange() {
 }
 function renderWeekHint() {
   const el = $('#weekHint'); if (!el) return;
-  const { week, term } = weekInfo($('#fDate').value);
+  const { week, term } = weekInfo($('#fDate').value || $('#fWeek').value);
   el.className = 'hint' + (term && !week ? ' bad' : '');
-  el.textContent = !term ? '' : week ? `Week ${week} of 10 · ${term.name}` : `Not a teaching week of ${term.name}`;
+  const cats = term?.catWeeks || [];
+  el.textContent = !term ? '' : week ? `Week ${week} of ${(state.meta.weeks || []).length || 12} · ${term.name}${cats.includes(week) ? ' · CAT week' : ''}` : `Not a teaching week of ${term.name}`;
 }
 
 /* ---------------- Mark tab ---------------- */
-const sessionId = (date, classCode, unitCode, period) => `session:${date}:${classCode}:${unitCode}:${period}`;
+const sessionId = (date, classCode, unitCode, period, kind = 'lesson') => `session:${date}:${classCode}:${unitCode}:${period}${kind === 'lesson' ? '' : ':' + kind}`;
 const unitsFor = (classCode, list = markableUnits()) => list.filter((u) => u.classCode === classCode);
 const activeTraineesFor = (classCode) => state.trainees.filter((t) => t.classCode === classCode && t.active !== false);
 
@@ -287,25 +304,142 @@ function openReport(classCode, unitCode) {
 function renderUnitSelect() {
   const opts = unitsFor($('#fClass').value).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
   fillSelect($('#fUnit'), opts, undefined, opts.length ? null : 'No units for this class');
+  renderTimetable();
+}
+
+/* ---------------- choosing the lesson: week and timetable ---------------- */
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+/** Weeks to choose from: the term's 12 teaching weeks, or (no term yet) the last few weeks. */
+function weekOptions() {
+  const weeks = state.meta.weeks || [], cats = state.meta.term?.catWeeks || [];
+  const range = (m) => `${fmtShort(m)} – ${fmtShort(addDays(m, 4))}`;
+  if (weeks.length) return weeks.map((m, i) => ({ value: m, label: `Week ${i + 1} · ${range(m)}${cats.includes(i + 1) ? ' · CAT week' : ''}` }));
+  const now = TermReport.mondayOf(todayISO());
+  return [0, 1, 2, 3, 4, 5].map((k) => addDays(now, -7 * k)).map((m) => ({ value: m, label: `Week of ${range(m)}` }));
+}
+/** The current teaching week, or the nearest one before it (break weeks), or week 1 before the term starts. */
+function currentWeek() {
+  const opts = weekOptions().map((o) => o.value).sort();
+  const now = TermReport.mondayOf(todayISO());
+  return [...opts].reverse().find((m) => m <= now) || opts[0] || now;
+}
+function renderWeekSelect(keep = true) {
+  fillSelect($('#fWeek'), weekOptions(), keep && $('#fWeek').value ? $('#fWeek').value : currentWeek());
+  if (!$('#fWeek').value) $('#fWeek').value = currentWeek();
+  renderKind();
+}
+const chosenKind = () => ($$('input[name="fKind"]').find((r) => r.checked) || {}).value || 'lesson';
+const isCatWeek = (monday) => { const i = (state.meta.weeks || []).indexOf(monday); return i !== -1 && (state.meta.term?.catWeeks || []).includes(i + 1); };
+function renderKind() {
+  const cat = isCatWeek($('#fWeek').value);
+  const catRadio = $('input[name="fKind"][value="cat"]');
+  catRadio.disabled = !cat;
+  $('#kindCat').classList.toggle('off', !cat);
+  $('#kindCat').title = cat ? '' : 'CAT registers are for the CAT weeks the MIS Officer set';
+  if (!cat && catRadio.checked) $('input[name="fKind"][value="lesson"]').checked = true;
+  $('#fTitleBox').hidden = chosenKind() !== 'extra';
+  renderTimetable();
+}
+
+/** Mon–Fri × 6 slots for the chosen week: registers already made, and the slot(s) chosen now. */
+async function renderTimetable() {
+  const box = $('#timetable'); if (!box) return;
+  const monday = $('#fWeek').value, classCode = $('#fClass').value, unitCode = $('#fUnit').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(monday || '')) { box.innerHTML = ''; return; }
+  const seq = (renderTimetable.seq = (renderTimetable.seq || 0) + 1);
+  const days = DAYS.map((d, k) => ({ name: d, date: addDays(monday, k) }));
+  const r = monday ? await db.allDocs({ include_docs: true, startkey: 'session:' + monday, endkey: 'session:' + addDays(monday, 4) + '￿' }) : { rows: [] };
+  if (seq !== renderTimetable.seq) return;
+  const mineHere = {}, elsewhere = {};
+  for (const { doc } of r.rows) {
+    if (!doc || doc.type !== 'session') continue;
+    const n = slotNo(doc.period); if (!n) continue;
+    const span = Number(doc.slots) === 2 ? [n, n + 1] : [n];
+    for (const k of span) {
+      const key = `${doc.date}|${k}`;
+      if (doc.classCode === classCode && doc.unitCode === unitCode) mineHere[key] = { doc, first: k === n };
+      else (elsewhere[key] = elsewhere[key] || []).push(doc);
+    }
+  }
+  // The chosen slot belongs to one class, unit and week; a background refresh of the lists keeps it.
+  const p = state.pick;
+  const sel = p && p.monday === monday && (!p.classCode || (p.classCode === classCode && p.unitCode === unitCode)) ? p : null;
+  const today = todayISO();
+  let html = '<div class="tt-corner"></div>' + days.map((d) => `<div class="tt-day${d.date === today ? ' today' : ''}"><b>${d.name}</b><span>${esc(fmtShort(d.date))}</span></div>`).join('');
+  SLOTS.forEach(([a, b], i) => {
+    const n = i + 1;
+    if (n === LUNCH_AFTER + 1) html += `<div class="tt-lunch">Lunch ${SLOTS[LUNCH_AFTER - 1][1]}–${a}</div>`;
+    html += `<div class="tt-time"><b>${a}</b><span>${b}</span></div>`;
+    for (const d of days) {
+      const key = `${d.date}|${n}`, have = mineHere[key], other = elsewhere[key];
+      const picked = sel && sel.date === d.date && n >= sel.slot && n < sel.slot + sel.slots;
+      const future = d.date > today;
+      if (have) {
+        const k = kindOf(have.doc);
+        const c = countMarks(have.doc);
+        html += `<button type="button" class="tt-cell have ${k}${have.first ? '' : ' cont'}" data-open="${esc(have.doc._id)}" title="Open this register">
+          <b>${have.first ? esc(k === 'lesson' ? (Number(have.doc.slots) === 2 ? 'Double' : 'Marked') : (have.doc.title || KIND_LABEL[k])) : '↑'}</b>${have.first ? `<span>${c.P + c.L}/${c.P + c.L + c.A + c.E}</span>` : ''}</button>`;
+      } else {
+        html += `<button type="button" class="tt-cell${picked ? ' picked' : ''}${picked && n > sel.slot ? ' cont' : ''}${future ? ' future' : ''}" data-date="${d.date}" data-slot="${n}" ${future ? 'disabled' : ''}
+          aria-pressed="${picked}">${other ? `<span class="other">${esc(other.map((o) => o.classCode.split(' ').pop() + ' ' + o.unitCode).join(', '))}</span>` : ''}</button>`;
+      }
+    }
+  });
+  box.innerHTML = html;
+  // The button says exactly what will open.
+  const btn = $('#openBtn');
+  if (sel) {
+    $('#fDate').value = sel.date; $('#fPeriod').value = 'L' + sel.slot; $('#fSlots').value = String(sel.slots);
+    btn.disabled = false;
+    const dayName = new Date(sel.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short' });
+    btn.textContent = `Open ${sel.slots === 2 ? 'double ' : ''}${chosenKind() === 'lesson' ? 'register' : KIND_LABEL[chosenKind()]} · ${dayName} ${fmtShort(sel.date)} · ${slotLabel('L' + sel.slot, sel.slots).split(' · ')[1]}`;
+  } else {
+    $('#fDate').value = ''; $('#fPeriod').value = '';
+    btn.disabled = true;
+    btn.textContent = 'Tap a slot above (tap the next one too for a double)';
+  }
+  renderWeekHint();
+}
+function pickSlot(date, slot) {
+  const monday = TermReport.mondayOf(date), p = state.pick;
+  if (p && p.monday === monday && p.date === date && p.classCode === $('#fClass').value && p.unitCode === $('#fUnit').value) {
+    if (slot === p.slot && p.slots === 1) { state.pick = null; return renderTimetable(); }           // tap again: clear
+    const sameHalf = (a, b) => (a <= LUNCH_AFTER) === (b <= LUNCH_AFTER);
+    if (slot === p.slot + 1 && p.slots === 1 && sameHalf(slot, p.slot)) { p.slots = 2; return renderTimetable(); }   // next slot: double
+    if (slot === p.slot - 1 && p.slots === 1 && sameHalf(slot, p.slot)) { p.slot = slot; p.slots = 2; return renderTimetable(); }
+    if (p.slots === 2 && (slot === p.slot || slot === p.slot + 1)) { p.slots = 1; p.slot = slot === p.slot ? p.slot + 1 : p.slot; return renderTimetable(); }
+  }
+  state.pick = { monday, date, slot, slots: 1, classCode: $('#fClass').value, unitCode: $('#fUnit').value };
+  return renderTimetable();
 }
 
 async function openFromForm(e) {
   e?.preventDefault();
   const date = $('#fDate').value, classCode = $('#fClass').value, unitCode = $('#fUnit').value, period = $('#fPeriod').value;
-  if (!date || !classCode || !unitCode || !period) { toast('Choose a date, class, unit and lesson first', 'err'); return; }
+  const slots = Number($('#fSlots').value) === 2 ? 2 : 1, kind = chosenKind(), title = $('#fTitle').value.trim();
+  if (!date || !classCode || !unitCode || !period) { toast('Choose a class, unit and a slot on the timetable first', 'err'); return; }
+  if (kind === 'extra' && !title) { toast('Give this attendance a title, e.g. "CAT 1 make-up"', 'err'); $('#fTitle').focus(); return; }
+  if (date > todayISO()) { toast('That day has not come yet', 'err'); return; }
   if (state.dirty) await saveCurrent();
-  const id = sessionId(date, classCode, unitCode, period);
+  const id = sessionId(date, classCode, unitCode, period, kind);
   let doc;
   try { doc = await db.get(id); }
   catch (err) {
     if (err.status !== 404) throw err;
     const { week, term } = weekInfo(date);
     if (term && !week) { toast(`${fmtDate(date)} is not in a teaching week of ${term.name}`, 'err'); return; }
+    if (kind === 'cat' && !isCatWeek(TermReport.mondayOf(date))) { toast('CAT registers are for the CAT weeks set by the MIS Officer. Use "Extra CAT attendance" for other weeks.', 'err'); return; }
     const sameWeek = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
       && TermReport.mondayOf(s.date) === TermReport.mondayOf(date));
-    if (sameWeek.length >= MAX_LESSONS_PER_WEEK) {
-      toast(`${unitCode} already has ${MAX_LESSONS_PER_WEEK} lessons in ${week ? 'week ' + week : 'this week'}. The register has room for ${MAX_LESSONS_PER_WEEK} a week; open one of those instead.`, 'err');
-      return;
+    const n = slotNo(period);
+    const clash = sameWeek.find((s) => s.date === date && (() => { const a = slotNo(s.period), b = a + (Number(s.slots) === 2 ? 1 : 0); return n <= b && n + slots - 1 >= a; })());
+    if (clash) { toast(`That slot already has a register (${sessionLabel(clash)}); opening it`); setCurrent(clash); return; }
+    if (kind === 'lesson') {
+      const used = sameWeek.filter((s) => kindOf(s) === 'lesson').reduce((a, s) => a + (Number(s.slots) === 2 ? 2 : 1), 0);
+      if (used + slots > MAX_LESSONS_PER_WEEK) {
+        toast(`${unitCode} already has ${used} lesson(s) in ${week ? 'week ' + week : 'this week'}. The register has room for ${MAX_LESSONS_PER_WEEK} a week${slots === 2 ? ' (a double counts as two)' : ''}; open one of those instead.`, 'err');
+        return;
+      }
     }
     if (!rosterFor(classCode).length && navigator.onLine && state.auth) {
       toast('No students on this phone for ' + classCode + ' yet — downloading class lists…');
@@ -315,14 +449,17 @@ async function openFromForm(e) {
     const cls = state.classes.find((c) => c.code === classCode);
     const marks = {}, names = {};
     for (const t of rosterFor(classCode)) { marks[t.admNo] = state.settings.defaultStatus || 'P'; names[t.admNo] = t.name; }
+    const catNo = kind === 'cat' ? (state.meta.term?.catWeeks || []).indexOf(week) + 1 : 0;
     doc = {
       _id: id, type: 'session', date, classCode, className: cls?.name || classCode,
-      unitCode, unitName: unit?.name || unitCode, period, periodLabel: periodLabel(period),
+      unitCode, unitName: unit?.name || unitCode, period, slots, kind, title: kind === 'cat' ? (title || `CAT ${catNo || ''}`.trim()) : kind === 'extra' ? title : '',
+      periodLabel: slotLabel(period, slots),
       termId: term?.id || '', week: week || '',
       trainerId: me()?.code || '', trainerName: trainerLabel(), deviceId: state.deviceId,
       marks, names, explicit: {}, notes: '', createdAt: nowISO(), updatedAt: nowISO(), editLog: [],
     };
   }
+  state.pick = null;
   setCurrent(doc, !doc._rev);
 }
 
@@ -385,7 +522,8 @@ function renderRegister() {
   $('#register').hidden = false;
   $('#regTitle').textContent = `${s.classCode} · ${s.unitCode}`;
   const wk = s.week ? `Week ${s.week}, ` : '';
-  $('#regSub').textContent = `${s.unitName} — ${wk}${fmtDate(s.date)}, ${periodLabel(s.period)}${isLocked(s) ? ' · locked' : ''}`;
+  $('#regSub').textContent = `${s.unitName} — ${wk}${fmtDate(s.date)}, ${sessionLabel(s)}${isLocked(s) ? ' · locked' : ''}`;
+  $('#register').dataset.kind = kindOf(s);
   const q = $('#regSearch').value.trim().toLowerCase();
   const rows = rosterForCurrent().filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
   $('#traineeList').innerHTML = rows.length ? rows.map((t) => {
@@ -468,6 +606,7 @@ function markDirty() {
 function setSaveState(text, kind = '') { const el = $('#saveState'); el.textContent = text; el.className = 'save-state ' + kind; }
 
 let saving = Promise.resolve();
+const shownInGrid = new WeakSet();
 function saveCurrent() {
   clearTimeout(saveTimer);
   saving = saving.then(doSave, doSave);
@@ -491,6 +630,7 @@ async function doSave() {
       setSaveState('Saved on this device', 'ok');
       refreshPending();
       scheduleAutoSync();
+      if (!shownInGrid.has(s)) { shownInGrid.add(s); renderTimetable(); } // a new register appears on the timetable
       return;
     } catch (e) {
       if (e.status === 409) { const latest = await db.get(s._id); s._rev = latest._rev; continue; }
@@ -633,7 +773,7 @@ async function renderSessions() {
     const c = countMarks(s);
     const synced = map[s._id] === s._rev;
     return `<button class="sitem" data-id="${esc(s._id)}">
-      <span class="s-title">${esc(s.classCode)} · ${esc(s.unitCode)} — ${esc(periodLabel(s.period))}</span>
+      <span class="s-title">${esc(s.classCode)} · ${esc(s.unitCode)} — ${esc(sessionLabel(s))}</span>
       <span class="s-badges">
         <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'Sent' : 'Waiting to sync'}</span>
         ${isLocked(s) ? '<span class="pill locked">Locked</span>' : ''}
@@ -647,9 +787,12 @@ async function openSessionById(id) {
   if (state.dirty) await saveCurrent();
   const doc = await db.get(id);
   switchTab('mark');
-  $('#fDate').value = doc.date; renderWeekHint();
   $('#fClass').value = doc.classCode; renderUnitSelect();
-  $('#fUnit').value = doc.unitCode; $('#fPeriod').value = doc.period;
+  $('#fUnit').value = doc.unitCode;
+  const monday = TermReport.mondayOf(doc.date);
+  if (![...$('#fWeek').options].some((o) => o.value === monday)) $('#fWeek').insertAdjacentHTML('beforeend', `<option value="${monday}">Week of ${esc(fmtShort(monday))}</option>`);
+  $('#fWeek').value = monday;
+  state.pick = null; renderKind();
   setCurrent(doc);
 }
 
@@ -665,7 +808,8 @@ async function reportSource(classCode, unitCode) {
   const range = termRange();
   const local = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
     && (!range || (s.date >= range.from && s.date <= range.to)))
-    .map((s) => ({ id: s._id, date: s.date, period: periodLabel(s.period), marks: s.marks || {}, names: s.names || {}, updatedAt: s.updatedAt, local: true }));
+    .map((s) => ({ id: s._id, date: s.date, period: sessionLabel(s), slots: Number(s.slots) === 2 ? 2 : 1, kind: kindOf(s), title: s.title || '',
+      marks: s.marks || {}, names: s.names || {}, updatedAt: s.updatedAt, local: true }));
   const key = `report:${classCode}|${unitCode}`;
   let server = null;
   if (navigator.onLine && state.auth) {
@@ -680,7 +824,9 @@ async function reportSource(classCode, unitCode) {
     const mine = byId.get(l.id);
     if (!mine || String(l.updatedAt) > String(mine.updatedAt)) byId.set(l.id, { ...l, local: false });
   }
-  return { unit, lessons: [...byId.values()], server, localCount: local.length };
+  const all = [...byId.values()];
+  // The term register is lessons only; CATs and extra CAT attendance are listed on their own.
+  return { unit, lessons: all.filter((l) => kindOf(l) === 'lesson'), assessments: all.filter((l) => kindOf(l) !== 'lesson'), server, localCount: local.length };
 }
 
 async function renderReport() {
@@ -731,6 +877,22 @@ async function renderReport() {
   $('#reportLegend').hidden = false;
   drawReportBody();
   renderSignoff();
+  renderCats(src.assessments, rosterFor(classCode));
+}
+
+/** CATs and extra CAT attendance for this class and unit (not part of the term register's hours). */
+function renderCats(list, roster) {
+  const card = $('#catCard');
+  if (!list.length) { card.hidden = true; return; }
+  const rows = [...list].sort((a, b) => (a.date + a.period).localeCompare(b.date + b.period)).map((l) => {
+    const v = Object.values(l.marks || {});
+    const sat = v.filter((x) => x === 'P' || x === 'L').length;
+    return `<li><button type="button" class="mrow" ${l.local ? `data-session="${esc(l.id)}"` : 'disabled'}>
+      <span><b>${esc(l.title || KIND_LABEL[kindOf(l)])}</b><small>${esc(fmtDate(l.date))} · ${esc(String(l.period).replace(/^.*?· (?=Lesson)/, ''))}${l.local ? '' : ' · marked on another phone'}</small></span>
+      <span class="pill ${kindOf(l)}">${sat} sat · ${v.filter((x) => x === 'A').length} absent</span></button></li>`;
+  }).join('');
+  card.hidden = false;
+  card.innerHTML = `<h2>CATs and extra attendance</h2><p class="muted small">Recorded separately: these do not count in the term register's hours. ${roster.length} on the class list.</p><ul class="mlist">${rows}</ul>`;
 }
 
 function reportView() {
@@ -750,7 +912,7 @@ function drawReportBody() {
   tgl.querySelector('use').setAttribute('href', view === 'sheet' ? '#i-rows' : '#i-grid');
   tgl.querySelector('span').textContent = view === 'sheet' ? 'List view' : 'Sheet view';
   const warn = r.overflow.length
-    ? `<p class="card warn-banner">${r.overflow.length} lesson(s) are not on the register: ${r.overflow.slice(0, 3).map((l) => esc(fmtShort(l.date) + ' ' + l.period)).join(', ')}${r.overflow.length > 3 ? '…' : ''}. They fall outside the term's 10 weeks or are a 4th lesson in one week.</p>` : '';
+    ? `<p class="card warn-banner">${r.overflow.length} lesson(s) are not on the register: ${r.overflow.slice(0, 3).map((l) => esc(fmtShort(l.date) + ' ' + l.period)).join(', ')}${r.overflow.length > 3 ? '…' : ''}. They fall outside the term's 12 weeks or go past 3 lessons in one week (a double counts as two).</p>` : '';
   if (view === 'sheet') {
     $('#reportBody').innerHTML = warn + `<div class="card sheet-wrap">${TermReport.sheetTable({ ...r, list }, esc)}</div>`;
     return;
@@ -964,7 +1126,8 @@ function toSheetSession(s) {
   const c = countMarks(s);
   return {
     sessionId: s._id, date: s.date, classCode: s.classCode, className: s.className || '',
-    unitCode: s.unitCode, unitName: s.unitName || '', period: periodLabel(s.period),
+    unitCode: s.unitCode, unitName: s.unitName || '', period: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1),
+    kind: kindOf(s), title: s.title || '', slots: Number(s.slots) === 2 ? 2 : 1,
     trainerId: s.trainerId || '', trainerName: s.trainerName || '', deviceId: s.deviceId || '',
     termId: s.termId || '', week: s.week || '',
     notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
@@ -1176,7 +1339,7 @@ async function openLessonQR() {
   // Upload straight away, so the server can confirm students' scans from the first second.
   saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false, force: true }); });
   renderQrLive();
-  $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${periodLabel(s.period)}`;
+  $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${sessionLabel(s)}`;
   $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
   $('#lessonQrDialog').showModal();
   goLive();
@@ -1189,7 +1352,7 @@ async function openLessonQR() {
       const iv = s.qr.intervals[s.qr.intervals.length - 1];
       if (iv[1] !== w) { iv[1] = w; markDirty(); saveCurrent().then(() => scheduleAutoSync()); }
       const t = await qrToken(s.qr.secret, s._id, w);
-      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: s.unitName, p: periodLabel(s.period), n: s.trainerName, u: serverUrl(), w, t });
+      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: (kindOf(s) === 'lesson' ? '' : (s.title || 'CAT') + ' · ') + s.unitName, p: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1), n: s.trainerName, u: serverUrl(), w, t });
       const box = $('#lessonQrCode');
       box.innerHTML = qrSvg(url, 6);
       box.dataset.url = url;
@@ -1481,7 +1644,16 @@ function wire() {
   // Mark
   $('#sessionForm').addEventListener('submit', openFromForm);
   $('#fClass').addEventListener('change', renderUnitSelect);
-  $('#fDate').addEventListener('change', renderWeekHint);
+  $('#fUnit').addEventListener('change', () => renderTimetable());
+  $('#fWeek').addEventListener('change', () => renderKind());
+  $$('input[name="fKind"]').forEach((r) => r.addEventListener('change', renderKind));
+  $('#catCard').addEventListener('click', (e) => { const b = e.target.closest('[data-session]'); if (b) openSessionById(b.dataset.session); });
+  $('#timetable').addEventListener('click', async (e) => {
+    const open = e.target.closest('[data-open]');
+    if (open) { if (state.dirty) await saveCurrent(); setCurrent(await db.get(open.dataset.open)); return; }
+    const cell = e.target.closest('.tt-cell[data-slot]');
+    if (cell && !cell.disabled) pickSlot(cell.dataset.date, Number(cell.dataset.slot));
+  });
   $('#traineeList').addEventListener('click', async (e) => {
     if (e.target.closest('[data-action="pull-roster"]')) { await pullRoster(); renderRegister(); return; }
     const b = e.target.closest('button[data-s]'); if (!b) return;
@@ -1600,8 +1772,6 @@ async function repairAndReload(err) {
 
 async function init() {
   registerServiceWorker();
-  fillSelect($('#fPeriod'), PERIODS.map((p) => ({ value: p.code, label: p.label })));
-  $('#fDate').value = todayISO();
   await loadDevice();
   await protectStorage();
   await loadSettings();

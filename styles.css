@@ -175,13 +175,49 @@ label.check input { width: auto; height: auto; margin: 0; }
 label.file input { padding: .45rem; }
 
 /* ---------- open a register ---------- */
-.session-form { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: .75rem; align-items: end; }
+.session-form { display: flex; flex-direction: column; gap: .75rem; }
 .session-form label { margin: 0; }
-.session-form .btn { min-height: 46px; }
-@media (max-width: 760px) {
-  .session-form { grid-template-columns: 1fr 1fr; }
-  .session-form .btn { grid-column: 1 / -1; min-height: 52px; font-size: 1rem; }
-}
+.session-form .btn { min-height: 48px; font-size: 1rem; }
+.sf-row { display: grid; grid-template-columns: 1fr 1.4fr 1.2fr; gap: .75rem; }
+@media (max-width: 760px) { .sf-row { grid-template-columns: 1fr 1fr; } .sf-row label:last-child { grid-column: 1 / -1; } }
+.kind-row, .catweeks { display: flex; flex-wrap: wrap; gap: .4rem; }
+.catweeks { border: 0; padding: 0; margin: .5rem 0; }
+.catweeks legend { font-weight: 600; margin-bottom: .35rem; }
+.kchip { display: inline-flex; margin: 0; cursor: pointer; }
+.kchip input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.kchip span { padding: .4rem .8rem; border: 1px solid var(--line-strong); border-radius: 99px; font-weight: 600; font-size: .9rem; color: var(--ink-2); }
+.kchip input:checked + span { background: var(--btn-bg); border-color: var(--btn-bg); color: var(--btn-ink); }
+.kchip input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.kchip.off { cursor: not-allowed; }
+.kchip.off span { opacity: .45; }
+
+/* the weekly timetable: Mon–Fri × 6 slots; tap a slot, tap the next for a double */
+.timetable { display: grid; grid-template-columns: 3.4rem repeat(5, minmax(0, 1fr)); gap: 4px; }
+.tt-corner { }
+.tt-day, .tt-time { display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: .78rem; color: var(--muted); line-height: 1.15; padding: .2rem 0; }
+.tt-day b, .tt-time b { color: var(--ink); font-size: .85rem; }
+.tt-day.today b { color: var(--p); }
+.tt-time { align-items: flex-end; padding-right: .3rem; }
+.tt-cell { min-height: 46px; border: 1px dashed var(--line-strong); border-radius: 8px; background: var(--surface); padding: 2px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; font: inherit; font-size: .72rem; color: var(--muted); cursor: pointer; overflow: hidden; }
+.tt-cell:hover:not(:disabled) { border-style: solid; border-color: var(--ink-2); }
+.tt-cell.future { background: var(--sunk); border-style: solid; border-color: transparent; cursor: default; }
+.tt-cell.picked { background: var(--btn-bg); border: 1px solid var(--btn-bg); color: var(--btn-ink); }
+.tt-cell.picked::after { content: "✓"; font-size: 1rem; font-weight: 700; }
+.tt-cell .other { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 100%; }
+.tt-cell.have { border: 1px solid transparent; background: var(--p-soft); color: var(--p); }
+.tt-cell.have b { font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tt-cell.have.cat { background: var(--e-soft); color: var(--e); }
+.tt-cell.have.extra { background: var(--l-soft); color: var(--l); }
+.tt-cell.cont { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -4px; min-height: 50px; }
+.tt-cell.picked.cont::after { content: ""; }
+.tt-lunch { grid-column: 1 / -1; text-align: center; font-size: .72rem; color: var(--muted); padding: .1rem 0; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); }
+#openBtn { white-space: normal; line-height: 1.25; padding-top: .55rem; padding-bottom: .55rem; }
+#register[data-kind="cat"] { border-top: 4px solid var(--e); }
+#register[data-kind="extra"] { border-top: 4px solid var(--l); }
+.pill.cat { background: var(--e-soft); color: var(--e); }
+.weeks li.catwk b { color: var(--e); }
+.cats h2 { margin-top: 0; }
 
 /* ---------- the register ---------- */
 .register { padding-top: 1rem; }
@@ -584,3 +620,21 @@ fieldset .more[open] summary { flex-basis: 100%; }
 
 .roster-empty { display: flex; flex-direction: column; align-items: center; gap: .5rem; text-align: center; padding: 1.5rem 1rem; }
 .roster-empty span { max-width: 34em; }
+
+/* Class list preview: which stream each student goes to */
+.placement { margin-top: .75rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+.pl-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-bottom: .35rem; }
+.pl-head .btn { margin-left: auto; }
+.placement .plSearch { margin: .35rem 0 .5rem; }
+.pl-list { list-style: none; margin: 0; padding: 0; max-height: 26rem; overflow: auto; border: 1px solid var(--line); border-radius: 10px; counter-reset: pl; }
+.pl-list li { display: flex; align-items: center; gap: .5rem; padding: .4rem .6rem; border-bottom: 1px solid var(--line); counter-increment: pl; }
+.pl-list li:last-child { border-bottom: 0; }
+.pl-list li::before { content: counter(pl); color: var(--muted); font-size: .75rem; min-width: 1.6rem; text-align: right; }
+.pl-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pl-who b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-who small { color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.seg button { border: 0; background: transparent; padding: .35rem .65rem; min-width: 2.2rem; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--btn-bg); color: var(--btn-ink); }
+.pill.extra { background: var(--l-soft); color: var(--l); }

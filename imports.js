@@ -205,11 +205,12 @@ const Imports = (() => {
     if (exact.length) return exact;
     const m = codeParts(misClass);
     if (!m) return [];
-    const progOk = (a, b) => a === b || a.startsWith(b) || b.startsWith(a);
-    return classCodes.filter((c) => {
-      const p = codeParts(c);
-      return p && p.level === m.level && p.year === m.year && p.intake === m.intake && progOk(p.prog, m.prog) && (!m.stream || p.stream === m.stream);
-    }).sort();
+    // The MIS code may add a letter to the programme (CSCL6 for the CS streams), but a different
+    // programme that merely starts the same (CSF) must not be picked up. The closest programme wins.
+    const same = classCodes.map((c) => [c, codeParts(c)]).filter(([, p]) => p && p.level === m.level && p.year === m.year && p.intake === m.intake
+      && m.prog.startsWith(p.prog) && (!m.stream || p.stream === m.stream));
+    const best = Math.max(0, ...same.map(([, p]) => p.prog.length));
+    return same.filter(([, p]) => p.prog.length === best).map(([c]) => c).sort();
   }
 
   return { classList, loading, suggestStreams, parseRegisterLines, toLines, isAdm };

@@ -69,7 +69,7 @@ const Admin = (() => {
       if (!o.term) { fill('m-overview', '<p class="muted">The MIS Officer has not set up the term yet.</p>'); return; }
       const rows = o.rows.sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
       const behind = rows.filter((r) => r.lessons < r.due - 1).length;
-      fill('m-overview', `<p class="muted">${esc(o.term.name)} · week ${o.week} of 10 · ${rows.length} class units${behind ? ` · <b class="warn-text">${behind} behind on registers</b>` : ''}</p>
+      fill('m-overview', `<p class="muted">${esc(o.term.name)} · week ${o.week} of 12 · ${rows.length} class units${behind ? ` · <b class="warn-text">${behind} behind on registers</b>` : ''}</p>
         <div class="table-wrap"><table class="report-table overview-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Marked</th><th class="num">Due</th><th>Last</th><th class="num">Att.</th><th>HOD</th></tr></thead>
         <tbody>${rows.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
           <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
@@ -126,7 +126,7 @@ const Admin = (() => {
     const t = state.meta.term;
     const weeks = state.meta.weeks || [];
     return `${t ? `<p><b>${esc(t.name)}</b> <span class="muted">· ${esc(t.duration || '')} · code ${esc(t.id)}</span></p>
-      <ol class="weeks">${weeks.map((w, i) => `<li><b>Week ${i + 1}</b> ${fmtShort(w)}</li>`).join('')}</ol>` : '<p class="muted">No term is set up. Trainers can mark, but registers are not tied to weeks until you set the term.</p>'}
+      <ol class="weeks">${weeks.map((w, i) => `<li${(t.catWeeks || []).includes(i + 1) ? ' class="catwk"' : ''}><b>Week ${i + 1}</b> ${fmtShort(w)}${(t.catWeeks || []).includes(i + 1) ? ' · CAT' : ''}</li>`).join('')}</ol>` : '<p class="muted">No term is set up. Trainers can mark, but registers are not tied to weeks until you set the term.</p>'}
       <details ${t ? '' : 'open'}><summary>${t ? 'Change the term or start a new one' : 'Set up the term'}</summary>
       <form id="termForm" class="termform">
         <div class="grid2">
@@ -138,7 +138,9 @@ const Admin = (() => {
           <label>First teaching day<input id="tStart" type="date" required value="${esc(t?.startDate || '')}"></label>
         </div>
         <label>Break weeks (no teaching), any day in each week<span id="tBreaks" class="breaks">${(t?.breaks || []).map((b) => `<input type="date" value="${esc(b)}">`).join('')}<input type="date"></span></label>
-        <p class="muted small">Every term has 10 teaching weeks; break weeks are skipped. Saving a new code starts a new term and closes the old one.</p>
+        <fieldset class="catweeks"><legend>CAT weeks: trainers can take CAT registers in these weeks</legend>
+          ${Array.from({ length: 12 }, (_, i) => `<label class="kchip"><input type="checkbox" value="${i + 1}" ${(t?.catWeeks || []).includes(i + 1) ? 'checked' : ''}><span>Week ${i + 1}</span></label>`).join('')}</fieldset>
+        <p class="muted small">Every term has 12 teaching weeks; break weeks are skipped. Saving a new code starts a new term and closes the old one.</p>
         <button class="btn primary">Save term</button>
       </form></details>`;
   }
@@ -148,8 +150,10 @@ const Admin = (() => {
     busy(btn, true, 'Saving…');
     try {
       const breaks = $$('#tBreaks input').map((i) => i.value).filter(Boolean);
-      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks }));
-      toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week 10 starts ${fmtShort(res.weeks[9])}`, 'ok');
+      const catWeeks = $$('.catweeks input:checked').map((i) => Number(i.value));
+      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks }));
+      const last = res.weeks.length;
+      toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week ${last} starts ${fmtShort(res.weeks[last - 1])}${res.term.catWeeks?.length ? ` · CAT weeks ${res.term.catWeeks.join(', ')}` : ''}`, 'ok');
       await pullRoster({ silent: true });
       $('#m-term') && replaceBody($('#m-term'), termHtml());
     } catch (err) { toast(err.message, 'err'); }
@@ -242,6 +246,7 @@ const Admin = (() => {
         ${d.renamed.length ? `<label class="check"><input type="checkbox" class="useNew" ${imp.useNewNames ? 'checked' : ''}>Use this list's spelling for ${d.renamed.length} name(s): ${d.renamed.slice(0, 2).map((r) => `${esc(r.old)} → ${esc(r.name)}`).join('; ')}${d.renamed.length > 2 ? '…' : ''}</label>` : ''}
         ${d.missing.length ? `<fieldset class="missing"><legend>${d.missing.length} on the app's list but not in this file. Tick anyone who has left:</legend>
           ${d.missing.map((m) => `<label class="check"><input type="checkbox" class="wd" value="${esc(m.admNo)}" ${imp.withdraw.includes(m.admNo) ? 'checked' : ''}>${esc(m.name)} <span class="tadm">${esc(m.admNo)} · ${esc(m.classCode)}</span></label>`).join('')}</fieldset>` : ''}
+        ${placementHtml(imp)}
         <p class="muted small">After saving: ${split}</p></div>`;
     }
     return `<div class="card import" data-i="${i}">
@@ -251,6 +256,34 @@ const Admin = (() => {
       ${streamsBox}${diff}
       <div class="row-actions">${d ? `<button type="button" class="btn primary" data-apply>Save class list</button>` : ''}<button type="button" class="btn${d ? '' : ' primary'}" data-preview>${d ? 'Check again' : 'Check changes'}</button></div>
     </div>`;
+  }
+  /** Short names for the streams: what differs between them ("A", "B", "C"). */
+  function streamLabels(streams) {
+    if (streams.length < 2) return Object.fromEntries(streams.map((s) => [s, s.split(' ').pop()]));
+    let pre = streams[0];
+    for (const x of streams) while (!x.startsWith(pre)) pre = pre.slice(0, -1);
+    return Object.fromEntries(streams.map((x) => [x, x.slice(pre.length).replace(/^[-\s]+/, '') || x.split(' ').pop()]));
+  }
+  /** Every student in the file with the stream they will be in; tap a stream to move someone. */
+  function placementHtml(imp) {
+    const d = imp.diff;
+    if (!d || !d.plan || imp.streams.length < 2) return '';
+    const lab = streamLabels(imp.streams);
+    const count = (st) => d.plan.filter((p) => p.to === st).length;
+    return `<div class="placement">
+      <div class="pl-head"><b>Streams</b>${imp.streams.map((st) => `<span class="pill" data-count="${esc(st)}">${esc(lab[st])}: ${count(st)}</span>`).join('')}
+        <button type="button" class="btn small ghost" data-resplit>Split the list evenly again</button></div>
+      <p class="muted small">Students already in a stream stay there; new students are shared out. Tap a letter to move a student, then save.</p>
+      <input type="search" class="plSearch" placeholder="Search name or admission number" aria-label="Search students">
+      <ol class="pl-list">${d.plan.map((p, k) => `<li data-k="${k}" data-q="${esc((p.name + ' ' + p.admNo).toLowerCase())}">
+        <span class="pl-who"><b>${esc(p.name)}</b><small>${esc(p.admNo)}${p.isNew ? ' · new' : p.from && !imp.streams.includes(p.from) ? ` · now in ${esc(p.from)}` : ''}</small></span>
+        <span class="seg">${imp.streams.map((st) => `<button type="button" data-to="${esc(st)}" aria-pressed="${p.to === st}" title="${esc(st)}">${esc(lab[st])}</button>`).join('')}</span></li>`).join('')}</ol></div>`;
+  }
+  function refreshCounts(card, imp) {
+    for (const st of imp.streams) {
+      const el = card.querySelector(`[data-count="${CSS.escape(st)}"]`);
+      if (el) el.textContent = `${streamLabels(imp.streams)[st]}: ${imp.diff.plan.filter((p) => p.to === st).length}`;
+    }
   }
   function readImportCard(card) {
     const imp = classImports[Number(card.dataset.i)];
@@ -280,9 +313,11 @@ const Admin = (() => {
     const btn = card.querySelector(apply ? '[data-apply]' : '[data-preview]');
     busy(btn, true, apply ? 'Saving…' : 'Checking…');
     try {
-      const res = need(await api('importClassList', { misClass: imp.misClass, streams: imp.streams, students: imp.students, dryRun: !apply, withdraw: imp.withdraw, useNewNames: imp.useNewNames }));
+      const assign = imp.diff && imp.diff.plan ? Object.fromEntries(imp.diff.plan.map((p) => [p.admNo, p.to])) : undefined;
+      const res = need(await api('importClassList', { misClass: imp.misClass, streams: imp.streams, students: imp.students, dryRun: !apply, withdraw: imp.withdraw, useNewNames: imp.useNewNames, assign }));
       if (apply) {
-        toast(`${imp.misClass}: ${res.added.length} added${res.moved.length ? `, ${res.moved.length} moved` : ''}${imp.withdraw.length ? `, ${imp.withdraw.length} withdrawn` : ''}`, 'ok');
+        const split = imp.streams.length > 1 ? ' — ' + Object.entries(res.byStream).map(([st, n]) => `${streamLabels(imp.streams)[st]} ${n}`).join(', ') : '';
+        toast(`${imp.misClass}: ${res.added.length} added${res.moved.length ? `, ${res.moved.length} moved` : ''}${imp.withdraw.length ? `, ${imp.withdraw.length} withdrawn` : ''}${split}`, 'ok');
         classImports.splice(Number(card.dataset.i), 1);
         await pullRoster({ silent: true });
         replaceBody($('#m-classes'), classesHtml());
@@ -420,6 +455,21 @@ const Admin = (() => {
     const card = t.closest('.import');
     if (card && t.closest('[data-preview]')) { runImport(card, false); return; }
     if (card && t.closest('[data-apply]')) { runImport(card, true); return; }
+    const seg = t.closest('.placement [data-to]');
+    if (card && seg) {
+      const imp = classImports[Number(card.dataset.i)], li = seg.closest('li');
+      imp.diff.plan[Number(li.dataset.k)].to = seg.dataset.to;
+      li.querySelectorAll('[data-to]').forEach((x) => x.setAttribute('aria-pressed', String(x === seg)));
+      refreshCounts(card, imp);
+      return;
+    }
+    if (card && t.closest('[data-resplit]')) {
+      const imp = classImports[Number(card.dataset.i)], n = imp.streams.length, total = imp.diff.plan.length;
+      imp.diff.plan.forEach((p, k) => { p.to = imp.streams[Math.floor((k * n) / total)]; }); // equal parts in list order
+      readImportCard(card); card.outerHTML = importCard(imp, Number(card.dataset.i));
+      toast('Split in list order — move anyone who belongs elsewhere, then save');
+      return;
+    }
     if (card && t.closest('[data-remove]')) { classImports.splice(Number(card.dataset.i), 1); $('#classImports').innerHTML = classImports.map(importCard).join(''); return; }
     const grp = t.closest('[data-group]'); if (grp) { showGroup(grp.dataset.group); return; }
     const st = t.closest('.students [data-status]'); if (st) { updateStudent(st.closest('li'), { status: st.dataset.status }); return; }
@@ -440,6 +490,10 @@ const Admin = (() => {
   });
   document.addEventListener('input', (e) => {
     const t = e.target;
+    if (t.matches('.plSearch')) {
+      const q = t.value.trim().toLowerCase();
+      t.closest('.placement').querySelectorAll('.pl-list li').forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
+    }
     if (t.id === 'grpSearch' || t.id === 'staffSearch') {
       const q = t.value.trim().toLowerCase();
       const list = t.id === 'grpSearch' ? $$('#adminDialog .students li') : $$('#m-staff .staff li');

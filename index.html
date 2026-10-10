@@ -92,11 +92,21 @@
     </div>
 
     <form id="sessionForm" class="card session-form">
-      <label>Date<input type="date" id="fDate" required><span id="weekHint" class="hint"></span></label>
-      <label>Class<select id="fClass" required></select></label>
-      <label>Unit<select id="fUnit" required></select></label>
-      <label>Lesson<select id="fPeriod" required></select></label>
-      <button type="submit" class="btn primary" id="openBtn">Open register</button>
+      <div class="sf-row">
+        <label>Class<select id="fClass" required></select></label>
+        <label>Unit<select id="fUnit" required></select></label>
+        <label>Week<select id="fWeek"></select></label>
+      </div>
+      <div class="kind-row" role="radiogroup" aria-label="Register for">
+        <label class="kchip"><input type="radio" name="fKind" value="lesson" checked><span>Lesson</span></label>
+        <label class="kchip" id="kindCat"><input type="radio" name="fKind" value="cat"><span>CAT</span></label>
+        <label class="kchip"><input type="radio" name="fKind" value="extra"><span>Extra CAT attendance</span></label>
+      </div>
+      <label id="fTitleBox" hidden>Title<input id="fTitle" maxlength="80" placeholder="e.g. CAT 1 make-up"></label>
+      <div id="timetable" class="timetable"></div>
+      <p id="weekHint" class="hint"></p>
+      <input type="hidden" id="fDate"><input type="hidden" id="fPeriod"><input type="hidden" id="fSlots" value="1">
+      <button type="submit" class="btn primary" id="openBtn" disabled>Choose a slot on the timetable</button>
     </form>
 
     <div id="register" class="card register" hidden>
@@ -174,6 +184,8 @@
     <p id="reportLegend" class="legend" hidden><span><i class="P"></i>Present</span><span><i class="L"></i>Late</span><span><i class="A"></i>Absent</span><span><i class="E"></i>Excused</span><span><i class="n"></i>Not held yet</span><span id="legendHours"></span></p>
 
     <div id="signoffCard" class="card signoff" hidden></div>
+
+    <div id="catCard" class="card cats" hidden></div>
 
     <div class="row-actions report-actions">
       <button class="btn primary" id="exportXlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel register</button>

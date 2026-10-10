@@ -16,11 +16,11 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.1.0';
-const SCHEMA_VERSION = '2';
+export const VERSION = '5.2.0';
+const SCHEMA_VERSION = '3';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
-const TERM_WEEKS = 10;       // every term has 10 teaching weeks (the register template has 10 week blocks)
+const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
 const STATUS_CODE = { Present: 'P', Absent: 'A', Late: 'L', Excused: 'E' };
 const ROLES = ['TRAINER', 'HOD', 'MIS'];
 const GONE = "('withdrawn','rejected')";
@@ -29,7 +29,7 @@ const GONE = "('withdrawn','rejected')";
 const SCHEMA = `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS staff (code TEXT PRIMARY KEY COLLATE NOCASE, name TEXT, roles TEXT, responsibility TEXT, active INTEGER DEFAULT 1, pin_hash TEXT, pin_salt TEXT, pin_version INTEGER DEFAULT 0, must_change INTEGER DEFAULT 1, late_pct INTEGER, excused_pct INTEGER, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS login_fails (code TEXT PRIMARY KEY COLLATE NOCASE, fails INTEGER, until TEXT);
-CREATE TABLE IF NOT EXISTS terms (id TEXT PRIMARY KEY, name TEXT, duration TEXT, start_date TEXT, weeks INTEGER, breaks TEXT, status TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS terms (id TEXT PRIMARY KEY, name TEXT, duration TEXT, start_date TEXT, weeks INTEGER, breaks TEXT, status TEXT, updated_at TEXT, cat_weeks TEXT);
 CREATE TABLE IF NOT EXISTS classes (code TEXT PRIMARY KEY, name TEXT, level TEXT, mis_class TEXT, population INTEGER);
 CREATE TABLE IF NOT EXISTS units (class_code TEXT, code TEXT, name TEXT, PRIMARY KEY (class_code, code));
 CREATE TABLE IF NOT EXISTS loading (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT COLLATE NOCASE, trainer_name TEXT, lessons_per_week REAL, hours_per_week REAL, population INTEGER, updated_at TEXT, PRIMARY KEY (term_id, class_code, unit_code));
@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS trainees_class ON trainees (class_code);
 CREATE INDEX IF NOT EXISTS trainees_mis ON trainees (mis_class);
 CREATE INDEX IF NOT EXISTS classes_mis ON classes (mis_class);
 CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, adm_no TEXT, name TEXT, class_code TEXT, reason TEXT, requested_by TEXT, requested_name TEXT, requested_at TEXT, status TEXT, decided_by TEXT, decided_at TEXT, merged_into TEXT, note TEXT);
-CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, date TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, period TEXT, trainer_id TEXT, trainer_name TEXT, present INTEGER, absent INTEGER, late INTEGER, excused INTEGER, total INTEGER, pct REAL, updated_at TEXT, synced_at TEXT, term_id TEXT, week INTEGER, data TEXT);
+CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, date TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, period TEXT, trainer_id TEXT, trainer_name TEXT, present INTEGER, absent INTEGER, late INTEGER, excused INTEGER, total INTEGER, pct REAL, updated_at TEXT, synced_at TEXT, term_id TEXT, week INTEGER, data TEXT, kind TEXT, slots INTEGER);
 CREATE INDEX IF NOT EXISTS sessions_cu ON sessions (class_code, unit_code, date);
 CREATE TABLE IF NOT EXISTS checkins (session_id TEXT, adm_no TEXT, device_id TEXT, name TEXT, w TEXT, code TEXT, scanned_at TEXT, updated_at TEXT, status TEXT, reason TEXT, PRIMARY KEY (session_id, adm_no, device_id)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS checkins_updated ON checkins (updated_at);
@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS devices (device_id TEXT PRIMARY KEY, adm_no TEXT COLL
 CREATE INDEX IF NOT EXISTS devices_adm ON devices (adm_no);
 CREATE TABLE IF NOT EXISTS signoffs (id TEXT PRIMARY KEY, term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, lecturer_comment TEXT, submitted_at TEXT, status TEXT, hod_code TEXT, hod_name TEXT, hod_comment TEXT, decided_at TEXT);
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, staff_code TEXT, name TEXT, action TEXT, details TEXT);`;
+
+const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER'];
 
 /* ---------- small helpers ---------- */
 const nowIso = () => new Date().toISOString();
@@ -109,6 +111,8 @@ async function ready(env) {
     if (r && r.value === SCHEMA_VERSION) { schemaReady = true; return; }
   } catch { /* first run: no tables yet */ }
   await env.DB.exec(SCHEMA);
+  // Columns added after a database was first created (fail harmlessly when already there).
+  for (const sql of MIGRATIONS) { try { await env.DB.exec(sql); } catch { /* column exists */ } }
   await setMeta(env, 'schema', SCHEMA_VERSION);
   schemaReady = true;
 }
@@ -118,7 +122,9 @@ const setMeta = (env, key, value) => many(env, metaStmt(key, value));
 const changedStmt = () => metaStmt('last_change', nowIso());
 const markChanged = (env) => many(env, changedStmt());
 const bumpRoster = (env) => setMeta(env, 'roster_v', nowIso() + '#' + Math.random().toString(36).slice(2, 6));
-const termOut = (r) => (r ? { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean) } : null);
+const catWeeksOf = (v) => [...new Set(String(v || '').split(/[\s,;]+/).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= TERM_WEEKS))].sort((a, b) => a - b);
+const termOut = (r) => (r ? { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean),
+  catWeeks: catWeeksOf(r.cat_weeks) } : null);
 async function audit(env, me, action, details) {
   await run(env, 'INSERT INTO audit (at,staff_code,name,action,details) VALUES (?,?,?,?,?)', nowIso(), me.code, me.name, action, String(details || '').slice(0, 2000));
 }
@@ -137,9 +143,10 @@ const randomPin = () => [...crypto.getRandomValues(new Uint8Array(6))].map((b) =
 let secretCache = null;
 async function authSecret(env) {
   if (secretCache) return secretCache;
-  let s = await getMeta(env, 'auth_secret');
-  if (!s) { s = crypto.randomUUID() + crypto.randomUUID(); await setMeta(env, 'auth_secret', s); }
-  return (secretCache = s);
+  // Created once: if two requests race on a new database, both end up with the one that was stored first.
+  const [, rows] = await many(env, ["INSERT INTO meta (key,value) VALUES ('auth_secret',?) ON CONFLICT(key) DO NOTHING", crypto.randomUUID() + crypto.randomUUID()],
+    ["SELECT value FROM meta WHERE key='auth_secret'"]);
+  return (secretCache = rows[0].value);
 }
 
 /* ---------- web requests ---------- */
@@ -321,10 +328,11 @@ async function saveTerm(env, b, me) {
   const id = String(b.termId || '').trim() || 'T' + b.startDate;
   const breaks = (b.breaks || []).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x)).map(mondayOf);
   await run(env, "UPDATE terms SET status='closed' WHERE status='active' AND id<>?", id);
-  await run(env, `INSERT INTO terms (id,name,duration,start_date,weeks,breaks,status,updated_at) VALUES (?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at`,
-  id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso());
-  await audit(env, me, b.close ? 'close term' : 'save term', `${id} ${b.name} from ${b.startDate}${breaks.length ? ' breaks ' + breaks.join(' ') : ''}`);
+  const cats = catWeeksOf((b.catWeeks || []).join(','));
+  await run(env, `INSERT INTO terms (id,name,duration,start_date,weeks,breaks,status,updated_at,cat_weeks) VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at, cat_weeks=excluded.cat_weeks`,
+  id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso(), cats.join(', '));
+  await audit(env, me, b.close ? 'close term' : 'save term', `${id} ${b.name} from ${b.startDate}${breaks.length ? ' breaks ' + breaks.join(' ') : ''}${cats.length ? ' CAT weeks ' + cats.join(' ') : ''}`);
   await bumpRoster(env);
   const term = await activeTerm(env);
   return { ok: true, term, weeks: teachingWeeks(term) };
@@ -452,7 +460,7 @@ const TCOLS = ['adm_no', 'name', 'class_code', 'status', 'mis_class', 'added_by'
 /** Applies (or, with dryRun, previews) one MIS class register: new students are added, nobody is removed. */
 async function importClassList(env, b, me) {
   const mis = String(b.misClass || '').trim();
-  let streams = (b.streams || []).map((s) => String(s).trim()).filter(Boolean);
+  let streams = [...new Set((b.streams || []).map((s) => String(s).trim()).filter(Boolean))];
   if (!mis) fail('The class code is missing');
   if (!streams.length) streams = [mis];
   const students = [], seenAdm = new Set();
@@ -463,43 +471,44 @@ async function importClassList(env, b, me) {
     students.push({ admNo: adm, name: name || adm });
   }
   if (!students.length) fail('No students found in that list');
+  // The MIS Officer's placement from the preview: { admNo: stream }. Anything else follows the rules below.
+  const assign = new Map(Object.entries(b.assign || {}).map(([k, v]) => [lower(k), String(v)]).filter(([, v]) => streams.includes(v)));
   const now = nowIso();
-  const rows = await all(env, `SELECT * FROM trainees WHERE class_code IN ${IN} OR adm_no IN ${IN}`, JSON.stringify(streams), JSON.stringify(students.map((s) => s.admNo)));
+  const [rows, pend] = await many(env, [`SELECT * FROM trainees WHERE class_code IN ${IN} OR adm_no IN ${IN}`, JSON.stringify(streams), JSON.stringify(students.map((s) => s.admNo))],
+    [`SELECT * FROM requests WHERE status='pending' AND adm_no IN ${IN}`, JSON.stringify(students.map((s) => s.admNo))]);
   const byAdm = new Map(rows.map((r) => [lower(r.adm_no), r]));
   const inStream = Object.fromEntries(streams.map((s) => [s, 0]));
   for (const r of rows) if (inStream[r.class_code] !== undefined && active(r)) inStream[r.class_code]++;
   const firstUpload = streams.every((s) => !inStream[s]);
-  const out = { added: [], unchanged: 0, renamed: [], moved: [], confirmed: [], missing: [], byStream: {} };
-  const fresh = students.filter((s) => !byAdm.has(lower(s.admNo)));
-  const per = Math.ceil(fresh.length / streams.length) || 1;
+  const out = { added: [], unchanged: 0, renamed: [], moved: [], confirmed: [], missing: [], byStream: {}, plan: [] };
+  // First upload: the whole list is divided into equal parts, in list order. Later: students already in one of
+  // these streams stay there, and newcomers go to the smallest stream. The preview lets the MIS Officer move anyone.
   const smallest = () => [...streams].sort((a, c) => inStream[a] - inStream[c] || (a < c ? -1 : 1))[0];
   const writes = [];
-  let freshIdx = 0;
-  for (const s of students) {
+  students.forEach((s, idx) => {
     const old = byAdm.get(lower(s.admNo));
+    const here = old && streams.includes(old.class_code) ? old.class_code : '';
+    let to = assign.get(lower(s.admNo));
+    // Equal parts: 82 students in 3 streams are 28, 27 and 27.
+    if (!to) to = here || (firstUpload ? streams[Math.floor((idx * streams.length) / students.length)] : smallest());
+    if (here && active(old)) inStream[here]--;
+    inStream[to]++;
+    out.plan.push({ admNo: s.admNo, name: s.name, from: old ? old.class_code : '', fromActive: old ? active(old) : false, to, isNew: !old });
     if (!old) {
-      const target = firstUpload ? streams[Math.min(streams.length - 1, Math.floor(freshIdx / per))] : smallest();
-      freshIdx++; inStream[target]++;
-      out.added.push({ admNo: s.admNo, name: s.name, classCode: target });
-      writes.push({ adm_no: s.admNo, name: s.name, class_code: target, status: 'active', mis_class: mis, added_by: me.code, added_at: now, updated_by: me.code, updated_at: now, note: '' });
-      continue;
+      out.added.push({ admNo: s.admNo, name: s.name, classCode: to });
+      writes.push({ adm_no: s.admNo, name: s.name, class_code: to, status: 'active', mis_class: mis, added_by: me.code, added_at: now, updated_by: me.code, updated_at: now, note: '' });
+      return;
     }
     const row = { ...old };
     let changed = false;
     if (row.name !== s.name) { out.renamed.push({ admNo: row.adm_no, old: row.name, name: s.name }); if (b.useNewNames) { row.name = s.name; changed = true; } }
-    if (!streams.includes(row.class_code)) {
-      // On another class's list: the MIS register is authoritative, so the student moves here.
-      const to = smallest();
-      out.moved.push({ admNo: row.adm_no, name: row.name, from: row.class_code, to });
-      inStream[to]++; row.class_code = to; changed = true;
-    }
+    if (row.class_code !== to) { out.moved.push({ admNo: row.adm_no, name: row.name, from: row.class_code, to, within: !!here }); row.class_code = to; changed = true; }
     if (!active(row)) { row.status = 'active'; changed = true; }
     if (row.mis_class !== mis) { row.mis_class = mis; changed = true; }
     if (changed) writes.push({ ...row, updated_by: me.code, updated_at: now });
     else out.unchanged++;
-  }
+  });
   // Students added by trainers while marking are confirmed when the official list includes them.
-  const pend = await all(env, `SELECT * FROM requests WHERE status='pending' AND adm_no IN ${IN}`, JSON.stringify(students.map((s) => s.admNo)));
   for (const r of pend) out.confirmed.push({ admNo: r.adm_no, name: r.name, requestedBy: r.requested_name });
   // Anyone on these streams who is not on this list is reported, never removed automatically.
   const withdraw = new Set((b.withdraw || []).map(lower));
@@ -513,10 +522,10 @@ async function importClassList(env, b, me) {
   }
   for (const s of streams) out.byStream[s] = inStream[s];
   if (!b.dryRun) {
-    await upsertMany(env, 'trainees', TCOLS, writes, ['adm_no']);
-    if (pend.length) await run(env, `UPDATE requests SET status='approved', decided_by=?, decided_at=?, note=? WHERE id IN ${IN}`, me.code, now, 'On the MIS list for ' + mis, JSON.stringify(pend.map((r) => r.id)));
-    // Link the streams to this MIS class so the student app groups them and reports show the MIS code.
-    await upsertMany(env, 'classes', ['code', 'name', 'level', 'mis_class'], streams.map((s) => ({ code: s, name: s, level: levelOf(s) || levelOf(mis), mis_class: mis })), ['code'], ['mis_class']);
+    await many(env, ...upsertStmts('trainees', TCOLS, writes, ['adm_no']),
+      pend.length && [`UPDATE requests SET status='approved', decided_by=?, decided_at=?, note=? WHERE id IN ${IN}`, me.code, now, 'On the MIS list for ' + mis, JSON.stringify(pend.map((r) => r.id))],
+      // Link the streams to this MIS class so the student app groups them and reports show the MIS code.
+      ...upsertStmts('classes', ['code', 'name', 'level', 'mis_class'], streams.map((s) => ({ code: s, name: s, level: levelOf(s) || levelOf(mis), mis_class: mis })), ['code'], ['mis_class']));
     await audit(env, me, 'class list', `${mis} → ${streams.join(', ')}: ${out.added.length} added, ${out.moved.length} moved, ${(b.withdraw || []).length} withdrawn, ${out.confirmed.length} trainer additions confirmed`);
     await bumpRoster(env);
   }
@@ -674,9 +683,10 @@ function sessionRow(s, accepted, term, now) {
     trainer_id: s.trainerId, trainer_name: s.trainerName, present: c.P, absent: c.A, late: c.L, excused: c.E, total: c.P + c.A + c.L + c.E,
     pct: counted ? Math.round(((c.P + c.L) / counted) * 1000) / 10 : null, updated_at: s.updatedAt || '', synced_at: now,
     term_id: s.termId || term?.id || '', week: Number(s.week) || (term ? weekOf(term, s.date) : null), data: JSON.stringify(s),
+    kind: ['cat', 'extra'].includes(s.kind) ? s.kind : 'lesson', slots: Number(s.slots) === 2 ? 2 : 1,
   };
 }
-const SCOLS = ['id', 'date', 'class_code', 'unit_code', 'unit_name', 'period', 'trainer_id', 'trainer_name', 'present', 'absent', 'late', 'excused', 'total', 'pct', 'updated_at', 'synced_at', 'term_id', 'week', 'data'];
+const SCOLS = ['id', 'date', 'class_code', 'unit_code', 'unit_name', 'period', 'trainer_id', 'trainer_name', 'present', 'absent', 'late', 'excused', 'total', 'pct', 'updated_at', 'synced_at', 'term_id', 'week', 'data', 'kind', 'slots'];
 
 const pushList = (sessions) => sessions.filter((s) => s && s.sessionId).slice(0, 50);
 /** Read together with the sign-in check: the stored copies, the term, and check-ins for these lessons. */
@@ -749,7 +759,8 @@ async function reportData(env, b, me, pre) {
     const s = JSON.parse(r.data);
     const marks = {}, names = {};
     for (const m of finalMarks(s, accepted[r.id])) { const k = STATUS_CODE[m.status]; if (k) { marks[m.admNo] = k; names[m.admNo] = m.name; } }
-    return { id: r.id, date: s.date, period: s.period, trainerId: s.trainerId, trainerName: s.trainerName, updatedAt: s.updatedAt, marks, names };
+    return { id: r.id, date: s.date, period: s.period, slots: Number(s.slots) === 2 ? 2 : 1, kind: s.kind || 'lesson', title: s.title || '',
+      trainerId: s.trainerId, trainerName: s.trainerName, updatedAt: s.updatedAt, marks, names };
   });
   const so = soRows.find((r) => r.id === signoffId(term, b.classCode, b.unitCode));
   return { ok: true, term, weeks, lessons, serverTime: nowIso(), signoff: so ? signoffOut(so) : null,
@@ -793,8 +804,8 @@ async function listSignoffs(env, me) {
 
 /** HOD view: for each class and unit in the loading, how many lessons are marked against how many were due. */
 const overviewPre = () => [[TERM_SQL],
-  [`SELECT class_code, unit_code, COUNT(*) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted FROM sessions
-    WHERE term_id=${ACTIVE_TERM} OR ((term_id IS NULL OR term_id='') AND date >= date((SELECT start_date FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1), '-6 days'))
+  [`SELECT class_code, unit_code, SUM(COALESCE(slots,1)) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted FROM sessions
+    WHERE COALESCE(kind,'lesson')='lesson' AND (term_id=${ACTIVE_TERM} OR ((term_id IS NULL OR term_id='') AND date >= date((SELECT start_date FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1), '-6 days')))
     GROUP BY class_code, unit_code`],
   [`SELECT class_code, unit_code, status FROM signoffs WHERE term_id=${ACTIVE_TERM}`], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`]];
 function overview(pre) {
@@ -945,7 +956,7 @@ const numOr = (v, d = null) => { const n = Number(String(v ?? '').replace(/\.$/,
 const SHEET_MAP = {
   Staff: (r) => ['staff', { code: r.StaffCode, name: r.Name, roles: r.Roles, responsibility: r.Responsibility, active: /^(no|n|false|0|inactive)$/i.test(r.Active || '') ? 0 : 1,
     pin_hash: r.PinHash || null, pin_salt: r.PinSalt || null, pin_version: numOr(r.PinVersion, 0), must_change: yes(r.MustChange) ? 1 : 0, late_pct: numOr(r.LatePct), excused_pct: numOr(r.ExcusedPct), updated_at: r.UpdatedAt }, ['code']],
-  Terms: (r) => ['terms', { id: r.TermID, name: r.Name, duration: r.Duration, start_date: r.StartDate, weeks: TERM_WEEKS, breaks: r.Breaks, status: r.Status, updated_at: r.UpdatedAt }, ['id']],
+  Terms: (r) => ['terms', { id: r.TermID, name: r.Name, duration: r.Duration, start_date: r.StartDate, weeks: TERM_WEEKS, breaks: r.Breaks, status: r.Status, updated_at: r.UpdatedAt, cat_weeks: r.CatWeeks || null }, ['id']],
   Classes: (r) => ['classes', { code: r.ClassCode, name: r.ClassName, level: r.Level, mis_class: r.MisClass || null, population: numOr(r.Population) }, ['code']],
   Units: (r) => ['units', { class_code: r.ClassCode, code: r.UnitCode, name: r.UnitName }, ['class_code', 'code']],
   Loading: (r) => ['loading', { term_id: r.TermID, class_code: r.ClassCode, unit_code: r.UnitCode, unit_name: r.UnitName, trainer_code: r.TrainerCode, trainer_name: r.TrainerName,

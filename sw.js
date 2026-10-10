@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.2.0';
+const CACHE = 'rvnp-attendance-v4.3.0';
 const ASSETS = [
   './',
   './index.html',

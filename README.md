@@ -23,7 +23,7 @@ Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 
 |---|---|---|
 | **Trainer** | staff code + PIN | Mark registers for the classes and units in their loading (offline). Add a student who isn't on the list (pending). Show a lesson QR. See and export their units' term registers. Submit them to the HOD. |
 | **HOD** | staff code + PIN | Everything a trainer can for their own units. Plus: approve or return submitted term registers, see every class's register, and see the department overview (which units are behind on marking). |
-| **MIS Officer** | staff code + PIN | Set up the term (10 teaching weeks and the breaks). Upload the trainer loading workbook and the class register PDFs. Approve students added by trainers. Issue PINs and give roles. |
+| **MIS Officer** | staff code + PIN | Set up the term (12 teaching weeks, the breaks and the CAT weeks). Upload the trainer loading workbook and the class register PDFs. Approve students added by trainers. Issue PINs and give roles. |
 
 One person can have several roles; for example, an HOD who also teaches. Roles are set under **Manage → Staff and roles**.
 
@@ -59,7 +59,7 @@ If you used the earlier Google Sheet version, bring everything across once:
 
 Staff, their PINs, terms, loading, class lists, registers, QR check-ins, student phones and sign-offs all come across. Running it again does no harm, so you can repeat it if a few registers reached the Sheet after the first run. Once `config.js` points at the Worker, phones switch over on their own: trainers sign in once more, and every register on their phone is sent to the new database.
 
-The Apps Script version still works as a fallback (set it up with `setup`, deploy as a web app for **Anyone**, and put its `/exec` address in `config.js`), but the Cloudflare database is the one to use.
+The Apps Script version is kept only so its data can be moved across: the 12-week terms, CAT weeks, doubles, CAT registers and the stream preview need the Cloudflare database.
 
 ## 2. MIS Officer: start of each term
 
@@ -67,9 +67,10 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 
 1. **Term**:
    - enter the name (for example *Term 3 2026*), the code (*2026-T3*), the duration as printed on registers (*Sep - Dec 2026*) and the first teaching day;
-   - add any break weeks.
+   - add any break weeks;
+   - tick the **CAT weeks** (for example weeks 6 and 11). In these weeks trainers can take CAT registers.
 
-   The app makes the **10 teaching weeks** and skips the breaks. Saving a new code starts a new term and closes the old one.
+   The app makes the **12 teaching weeks** and skips the breaks. Saving a new code starts a new term and closes the old one.
 2. **Trainer loading**: choose the department loading workbook (`.xlsm` or `.xlsx`). The app reads only three tabs:
    - **Subject Loading** (class, subject code and name, trainer, lessons per week, hours per week);
    - **List of Trainers** (code, name, responsibility);
@@ -80,9 +81,10 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
    - the app reads the class code (for example *CSCL6-25-S-RS*) and every student;
    - it ticks the streams in the loading that the class belongs to (*ICT L6CS-25SA / SB / SC*);
    - tap **Check changes** to see what will happen: who is new, who is already on the list, names spelt differently, and anyone missing from the file;
-   - tap **Save class list**.
+   - for a class with streams, every student is listed with the stream they will go to. The first time, the whole list is divided into equal parts in list order (82 students in 3 streams: 28, 27, 27). Tap **A / B / C** next to a student to move them, or **Split the list evenly again** to start over; the counts update as you go;
+   - tap **Save class list**: students are placed exactly as shown.
 
-   On the first upload, students are split between the streams in list order. Later uploads add newcomers to the smallest stream. **Nobody is removed** unless you tick them as having left. To move a student between streams, or withdraw or restore them, tap the class.
+   Uploading a newer list later keeps everyone in the stream they are in; only new students are shared out, and you can still move anyone before saving. **Nobody is removed** unless you tick them as having left. To move a student between streams later, or withdraw or restore them, tap the class.
 4. **Staff and roles**: tap **Issue PIN** for each staff member and give them the PIN privately. They choose their own PIN the first time they sign in. Here you can also tick roles, or switch an account off (it is signed out everywhere).
 5. **Students added by trainers** appear at the top of Manage. For each one:
    - **Approve** adds them to the class (or moves them if they're on another list);
@@ -95,20 +97,25 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 
 1. Open https://musumbidenis.github.io/tt/ in Chrome **while online**, then choose **⋮ → Add to Home screen**. Sign in with your staff code and the PIN from the MIS Officer, then choose your own PIN. Your classes download straight away. From then on, the phone works with or without network.
 2. **Mark**:
-   - pick the date (the app shows *Week 3 of 10*), your class and unit (only those in your loading) and the lesson;
-   - tap **P / A / L / E** for each student. Every tap is saved on the phone instantly, even offline.
+   - pick your class and unit (only those in your loading), and the **week** (it starts on the current week);
+   - a timetable for that week appears: Monday to Friday, six slots a day (7.30–9.00, 9.00–10.30, 10.30–12.00, 13.00–14.30, 14.30–16.00, 16.00–17.30). Tap the slot where the class was. For a **double**, tap the next slot too. Registers already taken show in their slots; tap one to open it again;
+   - tap **Open register**, then **P / A / L / E** for each student. Every tap is saved on the phone instantly, even offline.
 
-   A unit can have up to **3 lessons a week**, matching the register's 3 cells per week. Dates outside the term's teaching weeks are refused.
+   A unit can have up to **3 lessons a week**, matching the register's 3 cells per week; a double counts as two and fills two cells. Future days and dates outside the term's teaching weeks can't be chosen.
+   - **CAT**: in a CAT week, choose **CAT** above the timetable to take the attendance of a CAT sitting (it is named *CAT 1*, *CAT 2*… in order of the CAT weeks).
+   - **Extra CAT attendance**: in any week, choose it, give it a title (for example *CAT 1 make-up*) and pick the slot.
+
+   CAT and extra CAT registers are kept separately: they are listed under the term register in Reports and don't count in its hours or percentage.
 3. **Add student**: for someone attending who isn't on the list. Mark them straight away; they show as **Pending** until the MIS Officer approves.
 4. **Sync** happens automatically whenever the phone is online. The number on the Sync button counts what's still waiting.
 5. **Reports → class and unit** shows the **term register**:
    - **The four cards**: lessons recorded, trainees, average attendance, and how many are below the minimum.
-   - **On a phone**: one row per student, with a strip of the 10 weeks × 3 lessons (green present, amber late, red absent, blue excused). It also shows the student's percentage and Actual/Possible hours. You can filter (*Below 75%*, *Pending*) and sort.
+   - **On a phone**: one row per student, with a strip of the 12 weeks × 3 lessons (green present, amber late, red absent, blue excused). It also shows the student's percentage and Actual/Possible hours. You can filter (*Below 75%*, *Pending*) and sort.
    - **Sheet view** shows the full grid like the Excel register. It's for tablets, computers, or turning the phone sideways.
    - **Export Excel register** fills RVNP's General Class Register template exactly:
      - the crest and title block;
      - lecturer, class, level, duration and subject;
-     - WK1–WK10 with 3 lessons each;
+     - WK1–WK12 with 3 lessons each;
      - Possible hours, Actual hours and the % formula;
      - the lecturer's and HOD's comments.
 
@@ -162,7 +169,7 @@ You can look at, search or download any table from the dashboard: **D1 → rvnp-
 | `classes` | Streams from the loading, linked to their MIS class list (`mis_class`). |
 | `trainees` | The official class lists. `status` is active or withdrawn. |
 | `requests` | Students added by trainers, and the MIS Officer's decisions. |
-| `sessions` | One row per lesson with its counts, `term_id` and `week`; `data` holds every student's mark. |
+| `sessions` | One row per register with its counts, `term_id` and `week`; `kind` is lesson, cat or extra, `slots` is 2 for a double; `data` holds every student's mark. |
 | `signoffs` | Term registers submitted to the HOD, and the decisions. |
 | `checkins` / `devices` | Student QR check-ins and which phone belongs to whom. Delete a `devices` row to let a student set up a new phone. |
 | `audit` | Who changed what in Manage. |

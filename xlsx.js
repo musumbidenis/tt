@@ -1,7 +1,7 @@
 /* Small Excel helpers built on JSZip:
  *   Xlsx.open(data)          read the sheets of an .xlsx / .xlsm file (values only)
  *   Xlsx.registerFile(t, d)  fill the class register template (templates/class-register.xlsx)
- * The template keeps RVNP's layout exactly: crest, title block, 10 week blocks of 3 lessons,
+ * The template keeps RVNP's layout exactly: crest, title block, 12 week blocks of 3 lessons,
  * Possible / Actual hours, the % formula, landscape A4 print setup and the comment rows. */
 'use strict';
 
@@ -111,7 +111,7 @@ const Xlsx = (() => {
 
   /**
    * d = { lecturer, duration, classLabel, level, subject, filter, weekLabels[10], sheetName,
-   *       students: [{ admNo, name, cells: [30 × 'P'|'A'|'L'|'E'|''], possible, actual }],
+   *       students: [{ admNo, name, cells: [36 × 'P'|'A'|'L'|'E'|''], possible, actual }],
    *       lecturerComment, hodComment }
    */
   async function registerFile(templateData, d) {
@@ -130,7 +130,7 @@ const Xlsx = (() => {
     setCell(doc, byNum['3'], 'AB3', d.level || '');
     setCell(doc, byNum['4'], 'D4', d.subject || '');
     setCell(doc, byNum['6'], 'A6', d.filter || '');
-    for (let w = 0; w < 10; w++) setCell(doc, byNum['7'], colName(4 + w * 3) + '7', (d.weekLabels || [])[w] || `WK${w + 1}`);
+    for (let w = 0; w < 12; w++) setCell(doc, byNum['7'], colName(4 + w * 3) + '7', (d.weekLabels || [])[w] || `WK${w + 1}`);
 
     const list = d.students.length ? d.students : [{ admNo: '', name: '', cells: [], possible: '', actual: '' }];
     list.forEach((s, i) => {
@@ -140,12 +140,12 @@ const Xlsx = (() => {
         setCell(doc, row, 'A' + r, i + 1);
         setCell(doc, row, 'B' + r, s.admNo);
         setCell(doc, row, 'C' + r, s.name + (s.pending ? ' (pending)' : ''));
-        for (let k = 0; k < 30; k++) setCell(doc, row, colName(4 + k) + r, s.cells[k] || '');
-        setCell(doc, row, 'AH' + r, s.possible);
-        setCell(doc, row, 'AI' + r, s.actual);
+        for (let k = 0; k < 36; k++) setCell(doc, row, colName(4 + k) + r, s.cells[k] || '');
+        setCell(doc, row, 'AN' + r, s.possible);
+        setCell(doc, row, 'AO' + r, s.actual);
       }
       const ratio = Number(s.possible) ? Number(s.actual) / Number(s.possible) : '-';
-      setCell(doc, row, 'AJ' + r, { f: `IF(N(AH${r})=0,"-",AI${r}/AH${r})`, v: ratio });
+      setCell(doc, row, 'AP' + r, { f: `IF(N(AN${r})=0,"-",AO${r}/AN${r})`, v: ratio });
       sheetData.appendChild(row);
     });
     const lr = 9 + list.length, hr = lr + 1;
@@ -160,17 +160,17 @@ const Xlsx = (() => {
     for (const m of kids(merges, 'mergeCell')) {
       if (Number((m.getAttribute('ref').match(/\d+/) || ['0'])[0]) >= 9) merges.removeChild(m);
     }
-    for (const ref of [`A${lr}:C${lr}`, `D${lr}:AJ${lr}`, `A${hr}:C${hr}`, `D${hr}:AJ${hr}`]) {
+    for (const ref of [`A${lr}:C${lr}`, `D${lr}:AP${lr}`, `A${hr}:C${hr}`, `D${hr}:AP${hr}`]) {
       const m = doc.createElementNS(NS, 'mergeCell'); m.setAttribute('ref', ref); merges.appendChild(m);
     }
     merges.setAttribute('count', String(kids(merges, 'mergeCell').length));
-    doc.getElementsByTagName('dimension')[0]?.setAttribute('ref', `A1:AJ${hr}`);
+    doc.getElementsByTagName('dimension')[0]?.setAttribute('ref', `A1:AP${hr}`);
     zip.file(path, serialize(doc));
 
     const name = safeSheetName(d.sheetName);
     const quoted = `'${name.replace(/'/g, "''")}'`;
     let wb = await zip.file('xl/workbook.xml').async('string');
-    wb = wb.replace('name="Register"', `name="${xmlEsc(name)}"`).replace(/'Register'/g, xmlEsc(quoted)).replace('$A$1:$AJ$12', `$A$1:$AJ$${hr}`);
+    wb = wb.replace('name="Register"', `name="${xmlEsc(name)}"`).replace(/'Register'/g, xmlEsc(quoted)).replace('$A$1:$AP$12', `$A$1:$AP$${hr}`);
     zip.file('xl/workbook.xml', wb);
     const app = zip.file('docProps/app.xml');
     if (app) zip.file('docProps/app.xml', (await app.async('string')).replace('<vt:lpstr>Register</vt:lpstr>', `<vt:lpstr>${xmlEsc(name)}</vt:lpstr>`));
