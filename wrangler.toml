@@ -12,4 +12,4 @@ mode = "smart"              # run next to the database (README step 8)
 [[d1_databases]]
 binding = "DB"
 database_name = "rvnp-attendance"
-database_id = "PASTE-THE-DATABASE-ID-HERE"   # Storage & Databases → D1 → rvnp-attendance → the ID on its page
+database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
