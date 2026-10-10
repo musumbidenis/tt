@@ -1,7 +1,7 @@
 /* RVNP Attendance Register — offline-first, for the ICT Department.
  * Storage: PouchDB (IndexedDB) on the device.
  * Sync:    to the online database (Cloudflare Worker + D1; the older Apps Script + Google Sheet also works).
- *          Staff sign in once with their staff code and PIN; registers are pushed whenever the phone
+ *          Staff sign in once with their staff code and PIN; registers are pushed whenever the device
  *          is online, and class lists and loading come back from the server.
  * Roles:   TRAINER marks; HOD approves term registers; MIS sets up terms, loading and class lists.
  */
@@ -13,7 +13,7 @@ const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
 // Live updates: while the lesson QR is on screen the app asks the server a tiny "anything new?" every few
 // seconds; with today's QR register open, every 15 seconds; otherwise once a minute, and once every three
-// minutes when the phone has been left alone for ten. Nothing at all is asked while the app is off screen.
+// minutes when the device has been left alone for ten. Nothing at all is asked while the app is off screen.
 const LIVE_FAST_MS = window.__liveFastMs || 4000;
 const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
 const LIVE_MID_MS = window.__liveMidMs || Math.min(15000, LIVE_SLOW_MS);
@@ -82,8 +82,8 @@ const lower = (s) => String(s ?? '').trim().toLowerCase();
 const me = () => state.auth?.staff || null;
 const hasRole = (r) => !!me()?.roles?.includes(r);
 const trainerLabel = () => me()?.name || 'Unknown trainer';
-/* The server: the address in config.js, unless this phone was given another one. An old Google Apps Script
- * address saved on the phone gives way once config.js points at the new database. */
+/* The server: the address in config.js, unless this device was given another one. An old Google Apps Script
+ * address saved on the device gives way once config.js points at the new database. */
 const OLD_SERVER = /script\.google(usercontent)?\.com/;
 const serverUrl = () => {
   const own = state.settings.serverUrl || '', cfg = window.ATTENDANCE_CONFIG?.serverUrl || window.ATTENDANCE_CONFIG?.sheetsUrl || '';
@@ -132,7 +132,7 @@ async function saveAuth(a) {
   renderIdentity();
 }
 async function loadDevice() {
-  // Kept in the database and in a second place, so the phone ID survives if one is lost.
+  // Kept in the database and in a second place, so the device ID survives if one is lost.
   let mirror = null;
   try { mirror = localStorage.getItem('rvnp_trainer_device'); } catch { /* blocked */ }
   const d = await updateLocal('device', (doc) => { if (!doc.deviceId) doc.deviceId = mirror || 'dev-' + uuid().slice(0, 8); });
@@ -165,8 +165,8 @@ async function loadRoster() {
   renderClassSelects();
   $('#emptyRoster').hidden = markableUnits().length > 0;
   $('#rosterInfo').textContent = state.classes.length
-    ? `On this phone: ${markClasses().length} of your classes, ${markableUnits().length} units${state.meta.term ? ` · ${state.meta.term.name}` : ''}.`
-    : 'No class lists on this phone yet.';
+    ? `On this device: ${markClasses().length} classes, ${markableUnits().length} units${state.meta.term ? ` - ${state.meta.term.name}` : ''}.`
+    : 'No class lists on this device yet.';
   renderWeekSelect();
 }
 
@@ -445,7 +445,7 @@ async function openFromForm(e) {
       }
     }
     if (!rosterFor(classCode).length && navigator.onLine && state.auth) {
-      toast('No students on this phone for ' + classCode + ' yet — downloading class lists…');
+      toast('No students on this device for ' + classCode + ' yet — downloading class lists…');
       await pullRoster({ silent: true });
     }
     const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
@@ -537,8 +537,8 @@ function renderRegister() {
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
       </div></li>`;
   }).join('') : q ? '<li class="empty">No trainees match.</li>'
-    : `<li class="empty roster-empty"><b>No students on ${esc(s.classCode)}'s list on this phone yet.</b>
-      <span>Tap <b>Download class lists</b>. If it stays empty, the MIS Officer needs to upload this class's register under Manage → Class lists, with stream ${esc(s.classCode.split(' ').pop())} ticked.</span>
+    : `<li class="empty roster-empty"><b>No students on ${esc(s.classCode)}'s list on this device yet.</b>
+      <span>Tap <b>Download class lists</b>. If it stays empty, the MIS Officer needs to upload this class's register, with stream ${esc(s.classCode.split(' ').pop())} ticked.</span>
       <button type="button" class="btn" data-action="pull-roster">Download class lists</button></li>`;
   renderCounts();
   const log = s.editLog || [];
@@ -805,7 +805,7 @@ function renderReportUnitSelect() {
   fillSelect($('#rUnit'), opts, undefined, opts.length ? null : 'No units');
 }
 
-/** Lessons for one class and unit this term: this phone's registers, plus the server's copy when online. */
+/** Lessons for one class and unit this term: this device's registers, plus the server's copy when online. */
 async function reportSource(classCode, unitCode) {
   const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
   const range = termRange();
@@ -864,8 +864,8 @@ async function renderReport() {
 
   $('#reportSource').textContent = src.server
     ? (src.server.cached ? `From the server as of ${fmtTime(src.server.cached)}` : 'Up to date with the server')
-      + (src.localCount ? ` · includes this phone's ${src.localCount} register(s)` : '')
-    : src.localCount ? 'From the registers on this phone (connect to include other phones)' : (mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.');
+      + (src.localCount ? ` · includes this device's ${src.localCount} register(s)` : '')
+    : src.localCount ? 'From the registers on this device (connect to include other devices)' : (mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.');
   $('#reportSummary').innerHTML = `
     <div class="stat"><b>${r.lessonsHeld}</b><span>Lessons recorded</span></div>
     <div class="stat"><b>${r.list.length}</b><span>Trainees</span></div>
@@ -892,7 +892,7 @@ function renderCats(list, roster) {
     const v = Object.values(l.marks || {});
     const sat = v.filter((x) => x === 'P' || x === 'L').length;
     return `<li><button type="button" class="mrow" ${l.local ? `data-session="${esc(l.id)}"` : 'disabled'}>
-      <span><b>${esc(l.title || KIND_LABEL[kindOf(l)])}</b><small>${esc(fmtDate(l.date))} · ${esc(String(l.period).replace(/^.*?· (?=Lesson)/, ''))}${l.local ? '' : ' · marked on another phone'}</small></span>
+      <span><b>${esc(l.title || KIND_LABEL[kindOf(l)])}</b><small>${esc(fmtDate(l.date))} · ${esc(String(l.period).replace(/^.*?· (?=Lesson)/, ''))}${l.local ? '' : ' · marked on another device'}</small></span>
       <span class="pill ${kindOf(l)}">${sat} sat · ${v.filter((x) => x === 'A').length} absent</span></button></li>`;
   }).join('');
   card.hidden = false;
@@ -956,7 +956,7 @@ function renderSignoff() {
 
 async function submitSignoff() {
   const rep = state.report; if (!rep) return;
-  if (!navigator.onLine) { toast('Submitting needs internet. Your register is safe on this phone.', 'err'); return; }
+  if (!navigator.onLine) { toast('Submitting needs internet. Your register is safe on this device.', 'err'); return; }
   try {
     await syncSheets({ silent: true, pull: false });
     const res = await api('submitSignoff', { classCode: rep.classCode, unitCode: rep.unitCode, unitName: rep.unit.name, comment: $('#soComment').value.trim(), resubmit: true });
@@ -1071,7 +1071,7 @@ function googleMessage(html) {
   return raw.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
-/** Signed-in call. If the sign-in has ended, shows the sign-in screen (nothing on the phone is lost). */
+/** Signed-in call. If the sign-in has ended, shows the sign-in screen (nothing on the device is lost). */
 async function api(action, body = {}) {
   if (!state.auth?.token) { showSignin(); throw new Error('Sign in first'); }
   const used = state.auth.token;
@@ -1083,7 +1083,7 @@ async function api(action, body = {}) {
 }
 
 /* Which register versions the server has. Kept per server address: after a move to a new server every
- * register on this phone is sent again, so nothing is left behind. */
+ * register on this device is sent again, so nothing is left behind. */
 const LEGACY_SERVER = 'https://script.google.com/macros/s/AKfycbw3bSI2h4GrfV2BBmZOqDkyioa4tYZz3ND_PL-0JurcQKneg9TNBwbuLMPBh3qqIKOxTA/exec';
 async function sheetsSyncMap() {
   const d = await getLocal('sheetsSync', { map: {} });
@@ -1121,10 +1121,10 @@ async function refreshPending() {
   const warn = $('#syncWarn');
   if (days >= 2) {
     warn.hidden = false;
-    warn.textContent = `${pending.length} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this phone and will be sent when the device is online.`;
+    warn.textContent = `${pending.length} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this device and will be sent when the device is online.`;
   } else if (state.storage === 'not-protected' && n) {
     warn.hidden = false;
-    warn.textContent = 'Install this app (browser menu → Add to Home screen) so the phone keeps unsent registers safely.';
+    warn.textContent = 'Install this app (Browser menu → Add to Home screen) so the device keeps unsent registers safely.';
   } else warn.hidden = true;
 }
 
@@ -1217,7 +1217,7 @@ async function pullRoster({ silent = false } = {}) {
   if (!silent) showSyncStatus('Downloading class lists...');
   try {
     const log0 = await getLocal('syncLog');
-    // Background checks send the version this phone has; the server then answers "unchanged" in a few bytes.
+    // Background checks send the version this device has; the server then answers "unchanged" in a few bytes.
     const have = silent && state.trainees.length && log0.rosterServer === serverUrl() ? log0.rosterVersion || '' : '';
     const res = await api('roster', have ? { version: have } : {});
     if (!res.ok) throw new Error(res.error || 'Could not read the class lists');
@@ -1227,12 +1227,12 @@ async function pullRoster({ silent = false } = {}) {
       renderSheetsStatus();
       return;
     }
-    if (!(res.trainees || []).length && state.trainees.length) throw new Error('the server has no students yet — kept the class lists already on this phone');
+    if (!(res.trainees || []).length && state.trainees.length) throw new Error('the server has no students yet — kept the class lists already on this device');
     const r = await replaceRoster(res);
     await updateLocal('meta', (d) => {
       Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {} });
     });
-    // Students this phone added: done once the MIS Officer has decided (on the list, rejected or merged).
+    // Students this device added: done once the MIS Officer has decided (on the list, rejected or merged).
     const stillPending = new Set((res.pending || []).map((p) => `${p.classCode}|${lower(p.admNo)}`));
     const done = state.addreqs.filter((a) => a.sentAt && !a.done && !stillPending.has(`${a.classCode}|${lower(a.admNo)}`));
     if (done.length) await db.bulkDocs(done.map((a) => ({ ...a, done: true })));
@@ -1316,7 +1316,7 @@ const onDbChange = debounce(async () => {
 
 /* ---------------- QR check-in: students scan a code the trainer shows ----------------
  * The lesson QR changes every QR_WINDOW seconds. Each code is an HMAC of the lesson and the
- * time window, made with a secret that only this phone (and later the server) knows, so
+ * time window, made with a secret that only this device (and later the server) knows, so
  * students cannot make their own codes. The server checks every check-in against it. */
 const QR_WINDOW = 20; // seconds — must match WINDOW_SECONDS in Code.gs
 const qrWindow = (t = Date.now()) => Math.floor(t / 1000 / QR_WINDOW);
@@ -1394,7 +1394,7 @@ function isLiveLesson() {
 }
 
 /* One loop decides how often to check: every few seconds while the QR is shown, every 15 s with today's QR
- * register open, else every minute — or every three minutes once the phone has been left alone for ten.
+ * register open, else every minute — or every three minutes once the device has been left alone for ten.
  * While the app is off screen it stops altogether and starts again the moment it is back. */
 let liveTimer = null, liveBusy = false;
 let lastTouch = Date.now();
@@ -1425,7 +1425,7 @@ function liveDelay() {
   return idle() ? LIVE_IDLE_MS : LIVE_SLOW_MS;                 // left alone for ten minutes: ease off
 }
 /* Check again now instead of waiting out the current round: when a live lesson starts, and when the
- * phone is picked up after being left alone. */
+ * device is picked up after being left alone. */
 function goLive() {
   if (document.visibilityState === 'hidden') return;
   clearTimeout(liveTimer);
@@ -1444,7 +1444,7 @@ function closeLessonQR() {
 }
 
 /* Fetch check-ins that reached the server since the last check and save them into the
- * register for that lesson. Runs automatically whenever the phone is online. */
+ * register for that lesson. Runs automatically whenever the device is online. */
 async function pullCheckins() {
   const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10); // students may sync months late
   const sessions = (await byPrefix('session:')).filter((s) => s.qr && s.date >= since);
@@ -1556,7 +1556,7 @@ async function afterSignIn() {
 }
 async function signOut() {
   const pending = (await pendingSessions()).length;
-  if (!confirm(pending ? `${pending} register(s) are not sent yet. They stay on this phone and are sent after you sign in again. Sign out?` : 'Sign out of this phone?')) return;
+  if (!confirm(pending ? `${pending} register(s) are not sent yet. They stay on this device and are sent after you sign in again. Sign out?` : 'Sign out of this device?')) return;
   await saveAuth(null);
   PoeStaff.reset();
   showSignin();
@@ -1760,14 +1760,14 @@ function wire() {
   $('#syncBtn')?.addEventListener('click', () => syncSheets());
   window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
-  // Automatic sync: fast during a live lesson, once a minute otherwise, slower when the phone is left
+  // Automatic sync: fast during a live lesson, once a minute otherwise, slower when the device is left
   // alone, nothing while the app is off screen, and straight away whenever it comes back into view.
   liveTimer = setTimeout(liveTick, 1500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { clearTimeout(liveTimer); if (state.dirty) saveCurrent(); }
     if (document.visibilityState === 'visible') { lastTouch = Date.now(); liveTick(); if (navigator.onLine) maybeRefreshRoster(); }
   });
-  // "Has anyone touched this phone lately?" — a tap or a key press is enough to go back to once a minute.
+  // "Has anyone touched this device lately?" — a tap or a key press is enough to go back to once a minute.
   for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
     document.addEventListener(ev, () => {
       const wasIdle = idle();
@@ -1797,7 +1797,7 @@ function registerServiceWorker() {
 }
 
 /** If start-up fails (for example, parts of two app versions were cached), clear the app's cached files once and reload.
- *  Registers and other data in the phone's database are not touched. */
+ *  Registers and other data in the device's database are not touched. */
 async function repairAndReload(err) {
   console.error(err);
   let tried = false;
