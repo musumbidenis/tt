@@ -443,6 +443,7 @@ const Admin = (() => {
       const schoolOnly = /\/a\/macros\//.test(r.url || '');
       const noFolders = !(r.folders || []).length;
       fill('m-drive', `<p class="muted">Connected · last update ${esc(fmtShort(r.at))} · ${r.matched} trainer folder${r.matched === 1 ? '' : 's'} found${r.indexUrl ? ` · <a href="${esc(r.indexUrl)}" target="_blank" rel="noopener">POE evidence index</a>` : ''}</p>
+        <div class="drive-test"><code class="drive-url">${esc(r.url || '')}</code> <button type="button" class="btn small" data-act="testBridge">Test connection</button> <span id="driveTest" class="muted small"></span></div>
         ${schoolOnly ? `<p class="err-text small">The bridge address is the school-only form, so students who are not signed in to the school account cannot send evidence. In Apps Script, deploy a new version of the web app with <b>Who has access: Anyone</b>, then run sync() once.</p>` : ''}
         ${noFolders ? '<p class="warn-text small">The Trainers folder in Drive has no folders inside it yet. Create one folder per trainer inside it, or paste each trainer\'s folder link below.</p>' : ''}
         ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> Choose their folder, or paste its link. Their sheet is made after that.</p>
@@ -452,6 +453,21 @@ const Admin = (() => {
         <p class="muted small">Sheets refresh about every 10 minutes from the registers that have reached the server.</p>`);
     } catch (e) { fill('m-drive', `<p class="err-text">${esc(e.message)}</p>`); }
   }
+  /** Asks the bridge a question the way a phone does. A sign-in page or no answer shows here, not on a student's phone. */
+  async function testBridge(btn) {
+    const out = $('#driveTest'); const url = $('.drive-url')?.textContent || '';
+    if (!url) { out.textContent = 'No bridge address yet.'; return; }
+    btn.disabled = true; out.textContent = 'Testing…';
+    try {
+      const res = await fetch(url, { redirect: 'follow' });
+      let j = null; try { j = await res.json(); } catch { /* not JSON */ }
+      out.innerHTML = j && j.ok ? '<b class="ok-text">Reachable — students can send evidence.</b>'
+        : '<b class="err-text">It asks for a sign-in. Redeploy the web app with Who has access: Anyone, then run sync().</b>';
+    } catch (e) {
+      out.innerHTML = '<b class="err-text">No answer from this address. Check it in Apps Script → Deploy → Manage deployments.</b>';
+    } finally { btn.disabled = false; }
+  }
+
   async function setDriveFolder(input) {
     const code = input.closest('li').dataset.code;
     const value = input.dataset.drivelink !== undefined ? input.value.trim() : input.value;
@@ -479,6 +495,7 @@ const Admin = (() => {
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
+    const tb = t.closest('[data-act="testBridge"]'); if (tb) { testBridge(tb); return; }
     const dec = t.closest('[data-decide]'); if (dec) { decide(dec.closest('.req').dataset.id, dec.dataset.decide); return; }
     if (t.closest('#mergeGo')) {
       const id = t.closest('#mergeGo').dataset.id;

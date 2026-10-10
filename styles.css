@@ -745,3 +745,4 @@ body.student[data-view="poe"] .view-checkin, body.student:not([data-view="poe"])
 .poe-why { color: var(--muted); max-width: 22ch; text-align: right; line-height: 1.3; }
 .drive-pick { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: flex-end; }
 .drive-pick input[type=text] { width: 16rem; max-width: 100%; margin: 0; }
+.ok-text { color: var(--p); }

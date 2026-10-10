@@ -213,9 +213,16 @@ const POE = (() => {
             const blob = await attachment(d, 'doc.pdf');
             const t = await api('POST', null, { action: 'poeTicket', deviceId: st.deviceId, admNo: p.admNo, unitCode: d.unitCode, item: d.item, bytes: blob.size, pages: d.pageCount });
             if (!t.ok) throw new Error(t.error);
-            const res = await fetch(t.driveUrl, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-              body: JSON.stringify({ action: 'upload', ticket: t.ticket, data: await b64(blob), mime: 'application/pdf' }) });
-            const up = await res.json();
+            let res;
+            try {
+              res = await fetch(t.driveUrl, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ action: 'upload', ticket: t.ticket, data: await b64(blob), mime: 'application/pdf' }) });
+            } catch (netErr) {
+              // The browser could not complete the request at all (blocked, offline, or the address does not answer).
+              throw Object.assign(new Error('bridge-unreachable'), { bridge: true });
+            }
+            let up;
+            try { up = await res.json(); } catch { throw Object.assign(new Error('bridge-signin'), { bridge: true }); } // a sign-in page came back instead of an answer
             if (!up.ok) throw new Error(up.error || 'The Drive did not take the file');
             d.upload = { ticket: t.ticket, fileId: up.fileId, fileName: up.fileName, version: up.version, sig: up.sig };
             await saveDraft(d);
@@ -230,7 +237,8 @@ const POE = (() => {
           d.status = 'error';
           d.error = !navigator.onLine ? 'Waiting for internet'
             : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this phone.'
-            : 'Could not reach the Drive: ' + e.message;
+            : e.bridge ? 'The college Drive did not answer this phone. Your file is safe on this phone. Your MIS Officer can check Manage → Google Drive.'
+            : 'Could not send: ' + e.message;
           await saveDraft(d);
         }
       }
