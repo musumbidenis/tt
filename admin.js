@@ -464,7 +464,8 @@ const Admin = (() => {
       out.innerHTML = j && j.ok ? '<b class="ok-text">Reachable — students can send evidence.</b>'
         : '<b class="err-text">It asks for a sign-in. Redeploy the web app with Who has access: Anyone, then run sync().</b>';
     } catch (e) {
-      out.innerHTML = '<b class="err-text">No answer from this address. Check it in Apps Script → Deploy → Manage deployments.</b>';
+      // A Google sign-in page on another site also ends here: the browser blocks it before the app can read it.
+      out.innerHTML = '<b class="err-text">The phone could not read an answer. Open the address above in a private (incognito) window: a Google sign-in page means the web app is not open to Anyone; "unable to open the file" means the address is out of date.</b>';
     } finally { btn.disabled = false; }
   }
 
