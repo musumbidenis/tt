@@ -21,7 +21,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.0.1';
+var BRIDGE_VERSION = '1.0.2';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -152,11 +152,17 @@ function sync() {
       offset = feed.next;
       if (Date.now() - started > TIME_BUDGET_MS) { p.setProperty('PENDING', JSON.stringify({ since: since, offset: offset, now: startNow })); break; }
     }
+    var matchedNow = [];
     (trainers || []).forEach(function (tr) {
       var f = resolveFolder_(tr, folders);
-      if (f) { report.matched++; var id = sheets[tr.code + '|' + currentTerm_(sheets, tr.code)]; if (id) report.sheets[tr.code] = 'https://docs.google.com/spreadsheets/d/' + id; }
+      if (f) { report.matched++; matchedNow.push(tr.code + '=' + f.getId()); var id = sheets[tr.code + '|' + currentTerm_(sheets, tr.code)]; if (id) report.sheets[tr.code] = 'https://docs.google.com/spreadsheets/d/' + id; }
       else report.unmatched.push({ code: tr.code, name: tr.name });
     });
+    // A trainer whose folder was only just found (or a new Trainers folder) gets all their registers next run,
+    // not only the ones that change from now on.
+    var before = JSON.parse(p.getProperty('MATCHED') || '[]'), fresh = matchedNow.filter(function (k) { return before.indexOf(k) === -1; });
+    if (fresh.length && since && !p.getProperty('PENDING')) p.deleteProperty('CURSOR');
+    p.setProperty('MATCHED', JSON.stringify(matchedNow));
     report.url = webAppUrl_();
     report.indexUrl = p.getProperty('INDEX_ID') ? 'https://docs.google.com/spreadsheets/d/' + p.getProperty('INDEX_ID') : '';
     report.folders = folders.map(function (f) { return { id: f.id, name: f.name }; });
@@ -170,6 +176,12 @@ function webAppUrl_() {
   var own = PropertiesService.getScriptProperties().getProperty('WEB_APP_URL');
   var url = own || ScriptApp.getService().getUrl() || '';
   return url.replace(/\/a\/macros\/[^/]+\//, '/macros/').replace(/\/dev$/, '/exec');
+}
+/** Run by hand to rewrite every trainer's sheet from the database on the next update (or straight away). */
+function resyncAll() {
+  var p = PropertiesService.getScriptProperties();
+  p.deleteProperty('CURSOR'); p.deleteProperty('PENDING');
+  sync();
 }
 function currentTerm_(sheets, code) {
   var keys = Object.keys(sheets).filter(function (k) { return k.indexOf(code + '|') === 0; });
