@@ -183,7 +183,7 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 2. Students scan it with the app or their normal camera. The phone checks the class straight away, so a student from another class is refused. In a combined lesson (two classes in one loading row), students of both classes can check in.
 3. Whenever each phone gets internet, it syncs. The server verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
 
-Syncing is automatic on both sides. During a live lesson, the trainer's phone checks every few seconds with a tiny "anything new?" question. A student's scan shows up within about 3–5 seconds of them being online.
+Syncing is automatic on both sides. During a live lesson, the trainer's phone checks every few seconds with a tiny "anything new?" question. A student's scan shows up within about 3–5 seconds of them being online. When the trainer's app is off screen it stops asking altogether, and starts again as soon as it is opened.
 
 ## Marks (continuous assessment marksheets)
 
@@ -285,7 +285,7 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
   - when the MIS Officer resets a PIN or switches an account off, that person is signed out on every phone;
   - easy PINs like 1234 or 0000 are refused.
 - The class register PDFs, loading workbook and Excel template stay on the computer that opens them. Only the rows the MIS Officer confirms are sent to the database.
-- Phones ask for new class lists every 10 minutes, but the answer is a few bytes unless something changed. While the lesson QR is on screen they ask a tiny "anything new?" every 4 seconds; with today's QR register open, every 15 seconds; otherwise once a minute. During a QR lesson the register is uploaded every 2 minutes and when the QR is closed (the server accepts students' genuine codes straight away without waiting for it).
+- **How often phones ask the server anything.** Nothing at all while the app is off screen (in another app, or the phone locked); it starts again the moment the app is back. While the lesson QR is on screen, a tiny "anything new?" every 4 seconds; with today's QR register open, every 15 seconds; otherwise once a minute, easing off to once every 3 minutes when nobody has touched the phone for 10 minutes — one tap and it is back to once a minute. During a QR lesson the register is uploaded every 2 minutes and when the QR is closed (the server accepts students' genuine codes straight away without waiting for it). The student app asks about its evidence only when it opens, when it comes back into view, after an upload, and when a notification arrives.
 - Load tests and their results are in [`loadtest/`](loadtest/README.md).
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.2`) so phones fetch the new version.
 - **Testing the Worker on a computer** (for developers): `npx wrangler dev` with `worker/dev.js` as the main file and a local D1 binding called `DB` adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.

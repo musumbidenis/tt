@@ -7,15 +7,18 @@
  */
 'use strict';
 
-const APP_VERSION = '4.5.0';
+const APP_VERSION = '4.6.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
 // Live updates: while the lesson QR is on screen the app asks the server a tiny "anything new?" every few
-// seconds; with today's QR register open, every 15 seconds; otherwise once a minute. Only while online and on screen.
+// seconds; with today's QR register open, every 15 seconds; otherwise once a minute, and once every three
+// minutes when the phone has been left alone for ten. Nothing at all is asked while the app is off screen.
 const LIVE_FAST_MS = window.__liveFastMs || 4000;
 const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
 const LIVE_MID_MS = window.__liveMidMs || Math.min(15000, LIVE_SLOW_MS);
+const LIVE_IDLE_MS = window.__liveIdleMs || Math.max(LIVE_SLOW_MS, 3 * 60000);
+const IDLE_AFTER_MS = window.__idleAfterMs || 10 * 60000;
 // While the QR is shown, the register (whose QR record grows every 20 s) is uploaded at most every 2 minutes,
 // and again when the QR is closed. The server accepts genuine codes for "right now" without waiting for it.
 const QR_UPLOAD_MS = window.__qrUploadMs || 120000;
@@ -1381,15 +1384,20 @@ function isLiveLesson() {
   return $('#lessonQrDialog').open || !!(s && s.qr && s.date === todayISO());
 }
 
-/* One loop decides how often to check: every few seconds while the QR is shown, every 15 s with today's QR register open, else every minute. */
+/* One loop decides how often to check: every few seconds while the QR is shown, every 15 s with today's QR
+ * register open, else every minute — or every three minutes once the phone has been left alone for ten.
+ * While the app is off screen it stops altogether and starts again the moment it is back. */
 let liveTimer = null, liveBusy = false;
+let lastTouch = Date.now();
+const idle = () => Date.now() - lastTouch > IDLE_AFTER_MS;
 async function liveTick() {
   clearTimeout(liveTimer);
   if (liveBusy) return; // a check is already running; it schedules the next one when done
+  // Off screen: nothing is asked and nothing is scheduled. visibilitychange starts it again.
+  if (document.visibilityState === 'hidden') return;
   liveBusy = true;
-  const live = isLiveLesson();
   try {
-    if (navigator.onLine && document.visibilityState === 'visible' && state.auth && !state.auth.mustChange && !state.syncing) {
+    if (navigator.onLine && state.auth && !state.auth.mustChange && !state.syncing) {
       // A tiny "anything new?" first; fetch details only when the server says something changed (or it cannot tell).
       const res = await api('pulse');
       if (!res.ok || res.last !== state.lastPulse) {
@@ -1400,15 +1408,19 @@ async function liveTick() {
   } catch { /* offline or slow network: try again next round */ }
   liveBusy = false;
   clearTimeout(liveTimer);
-  liveTimer = setTimeout(liveTick, liveDelay());
+  if (document.visibilityState !== 'hidden') liveTimer = setTimeout(liveTick, liveDelay());
 }
 function liveDelay() {
-  if ($('#lessonQrDialog').open) return LIVE_FAST_MS;
-  return isLiveLesson() ? LIVE_MID_MS : LIVE_SLOW_MS;
+  if ($('#lessonQrDialog').open) return LIVE_FAST_MS;          // the QR is on screen: students are scanning now
+  if (isLiveLesson()) return LIVE_MID_MS;                      // today's QR register is open
+  return idle() ? LIVE_IDLE_MS : LIVE_SLOW_MS;                 // left alone for ten minutes: ease off
 }
-/* Switch to fast checking straight away when a live lesson starts, instead of waiting out a slow round. */
+/* Check again now instead of waiting out the current round: when a live lesson starts, and when the
+ * phone is picked up after being left alone. */
 function goLive() {
-  if (isLiveLesson()) { clearTimeout(liveTimer); liveTimer = setTimeout(liveTick, 1000); }
+  if (document.visibilityState === 'hidden') return;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(liveTick, 1000);
 }
 
 function closeLessonQR() {
@@ -1735,12 +1747,21 @@ function wire() {
   $('#syncBtn').addEventListener('click', () => syncSheets());
   window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
-  // Automatic sync: fast during a live lesson, once a minute otherwise, and whenever the app comes back into view.
+  // Automatic sync: fast during a live lesson, once a minute otherwise, slower when the phone is left
+  // alone, nothing while the app is off screen, and straight away whenever it comes back into view.
   liveTimer = setTimeout(liveTick, 1500);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && state.dirty) saveCurrent();
-    if (document.visibilityState === 'visible' && navigator.onLine) { liveTick(); maybeRefreshRoster(); }
+    if (document.visibilityState === 'hidden') { clearTimeout(liveTimer); if (state.dirty) saveCurrent(); }
+    if (document.visibilityState === 'visible') { lastTouch = Date.now(); liveTick(); if (navigator.onLine) maybeRefreshRoster(); }
   });
+  // "Has anyone touched this phone lately?" — a tap or a key press is enough to go back to once a minute.
+  for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+    document.addEventListener(ev, () => {
+      const wasIdle = idle();
+      lastTouch = Date.now();
+      if (wasIdle) goLive();   // back from idle: check now rather than waiting out the slow round
+    }, { passive: true, capture: true });
+  }
   window.addEventListener('pagehide', () => { if (state.dirty) saveCurrent(); });
 
   db.changes({ since: 'now', live: true }).on('change', (c) => {
