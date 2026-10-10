@@ -47,6 +47,8 @@ The tables are created by themselves the first time anyone uses the app. Then si
 
 **Updating later**: open the Worker → **Edit code**, paste the new `worker/worker.js`, click **Deploy**. The address and the data stay the same.
 
+**Or let Cloudflare update itself from GitHub** (once, about 5 minutes): put the database ID in [`wrangler.toml`](wrangler.toml) (D1 → `rvnp-attendance` → copy its ID), then open the Worker → **Settings → Builds → Connect** → GitHub → the `tt` repository, branch `main`. Build command: empty. Deploy command: `npx wrangler deploy`. Root directory: `/`. Click **Connect**. Every push to GitHub then deploys the Worker within a minute or two; the build log is under **Deployments**. The secrets and the data are not touched.
+
 **Locked out?** In the dashboard open the D1 database → **Console**, run `DELETE FROM staff WHERE code = 'MIS';`, and sign in again with `MIS` and the `ADMIN_PIN` (change the secret first if you've forgotten it). Nothing else is touched.
 
 ### Moving from the Google Sheet

@@ -1,0 +1,15 @@
+# Cloudflare deploys the database Worker from this file on every push to GitHub (Workers Builds).
+# Only worker/worker.js is deployed; the website itself stays on GitHub Pages.
+# Secrets (ADMIN_PIN, BRIDGE_SECRET) are kept in the Cloudflare dashboard and are not touched by a deploy.
+name = "rvnp-attendance"
+main = "worker/worker.js"
+compatibility_date = "2025-09-01"
+keep_vars = true            # keep any plain variables set in the dashboard
+
+[placement]
+mode = "smart"              # run next to the database (README step 8)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rvnp-attendance"
+database_id = "PASTE-THE-DATABASE-ID-HERE"   # Storage & Databases → D1 → rvnp-attendance → the ID on its page
