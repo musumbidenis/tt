@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.4.0';
+export const VERSION = '5.5.0';
 const SCHEMA_VERSION = '5';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -178,8 +178,10 @@ export default {
       if (b.action === 'checkin') return reply(await receiveCheckins(env, b.checkins || []));
       if (b.action === 'register') return reply(await registerDevice(env, b));
       if (b.action === 'login') return reply(await login(env, b));
+      // After a change the Drive bridge cares about, poke it (never from the bridge's own requests: no loops).
+      const nudge = () => { if (ctx?.waitUntil && NUDGE_ACTIONS.has(b.action)) ctx.waitUntil(nudgeDrive(env).catch((e) => console.error('nudge', e))); };
       // Student phones (checked against their registration) and the Drive bridge (signed with BRIDGE_SECRET).
-      if (STUDENT_ACTIONS[b.action]) return reply(await STUDENT_ACTIONS[b.action](env, b));
+      if (STUDENT_ACTIONS[b.action]) { const out = await STUDENT_ACTIONS[b.action](env, b, ctx); nudge(); return reply(out); }
       if (BRIDGE_ACTIONS[b.action]) return reply(await BRIDGE_ACTIONS[b.action](env, b));
       const h = ACTIONS[b.action];
       // The sign-in check and the action's first reads go to the database together, in one trip.
@@ -187,7 +189,8 @@ export default {
       if (!h) return reply({ ok: false, error: 'Unknown action' });
       if (h.role && !me.roles.some((r) => h.role.includes(r))) fail(`This needs the ${h.role.join(' or ')} role. Ask the MIS Officer.`);
       if (me.mustChange && b.action !== 'setPin') fail('Choose a new PIN first', { mustChange: true });
-      const out = await h.fn(env, b, me, pre);
+      const out = await h.fn(env, b, me, pre, ctx);
+      nudge();
       if (b.action === 'roster' && ctx?.waitUntil) ctx.waitUntil(foldOldCheckins(env).catch((e) => console.error('fold', e)));
       return reply(out);
     } catch (err) {
@@ -234,6 +237,12 @@ const ACTIONS = {
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   importRegCodes: { role: ['MIS'], fn: (env, b, me) => importRegCodes(env, b, me) },
 };
+
+/* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
+ * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
+const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeReceive', 'submitSignoff', 'decideSignoff',
+  'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'importSheet', 'addStudents', 'decideRequest',
+  'updateStudent', 'updateStaff', 'mySettings']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -1205,6 +1214,32 @@ function marksheetOf(u, roster, trainees, markRows, classes, term) {
   return { courseCode: cls.mis_class || u.class_code, courseName: cls.name && cls.name !== cls.code ? cls.name : (cls.mis_class || u.class_code), series: term.series || '', entered: mine.length, rows };
 }
 
+/* ---------- poking the Drive bridge when something changes ---------- */
+/* The bridge used to ask every 10 minutes whether anything had changed. Now the Worker pokes it right
+ * after a change and it syncs about two minutes later; an hourly trigger on its side is the safety net.
+ * At most one poke a minute, it happens after the reply has gone out (ctx.waitUntil), and a poke that
+ * fails is simply forgotten - nothing here can slow down or break the request that caused it. */
+const NUDGE_EVERY_MS = 60e3;
+let nudgedAt = 0;   // this isolate's last poke, so most requests never even read the database
+async function nudgeDrive(env) {
+  const now = Date.now();
+  if (!env.BRIDGE_SECRET || now - nudgedAt < NUDGE_EVERY_MS) return 'skipped';
+  nudgedAt = now;
+  const url = await getMeta(env, 'drive_url');
+  if (!url) return 'no-bridge';                              // the bridge has not reported in yet
+  // One statement settles it, so two Workers at once cannot both poke: the marker only moves on when it
+  // is already a minute old, and whoever moves it is the one that sends.
+  const claim = await run(env, `INSERT INTO meta (key,value) VALUES ('drive_nudged_at', ?1)
+    ON CONFLICT(key) DO UPDATE SET value=?1 WHERE CAST(meta.value AS INTEGER) < ?2`, String(now), now - NUDGE_EVERY_MS);
+  if (!claim.meta?.changes) return 'skipped';                // another Worker poked it a moment ago
+  const ts = now, body = '{}';
+  const payload = JSON.stringify({ action: 'nudge', ts, body, sig: await hmacHex(`nudge|${ts}|${body}`, bridgeSecret(env)) });
+  // Apps Script answers a web app POST with a redirect to script.googleusercontent.com, so follow it.
+  const res = await fetch(url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: payload });
+  if (!res.ok) { console.error(`nudge: the Drive bridge answered ${res.status}`); return 'error'; }
+  return 'sent';
+}
+
 /* ---------- the student phone: units, upload tickets, my evidence ---------- */
 async function studentOf(env, b) {
   const [tRows, dRows] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim()], ['SELECT * FROM devices WHERE device_id=?', String(b.deviceId || '')]);
@@ -1380,5 +1415,6 @@ async function driveStatus(env) {
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */
-export const internals = { all, one, run, many, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf,
-  resetCaches() { schemaReady = false; secretCache = null; keys.clear(); } };
+export const internals = { all, one, run, many, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf, nudgeDrive,
+  resetCaches() { schemaReady = false; secretCache = null; keys.clear(); nudgedAt = 0; },
+  resetNudge() { nudgedAt = 0; } };

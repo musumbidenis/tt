@@ -2,9 +2,11 @@
  * RVNP Attendance — Google Drive bridge (Apps Script web app, under the school's Google Workspace account).
  *
  * The attendance database lives on Cloudflare; this small script is the only part that touches Drive:
- *   1. Every 10 minutes it asks the database what changed and updates, in each trainer's Drive folder,
- *      the Google Sheet "Attendance register - <term>": one tab per class and unit in the class register
- *      layout (WK1–WK12, Possible/Actual hours, %), and a CAT tab where CATs were taken.
+ *   1. Whenever something changes, the database pokes this script (action: nudge) and about two minutes
+ *      later it asks what changed and updates, in each trainer's Drive folder, the Google Sheet
+ *      "Attendance register - <term>": one tab per class and unit in the class register layout
+ *      (WK1–WK12, Possible/Actual hours, %), and a CAT tab where CATs were taken. An hourly trigger
+ *      catches anything a missed poke would have left behind.
  *   2. Student phones send POE evidence (PDF) here; it is saved as
  *      POE / <Class> / <Adm No - Name> / <Unit name> - <CAT1…PRAC3> - v<N>.pdf
  *      and listed in the sheet "POE - Evidence index" in the POE folder.
@@ -17,11 +19,11 @@
  *   TRAINERS_FOLDER_ID  the folder that holds one folder per trainer (the ID from its Drive link)
  *   POE_FOLDER_ID       the POE folder
  *   (WEB_APP_URL        optional: the web app's /exec address, if the automatic one is ever wrong)
- * Then run setup() once (it makes the SECRET, shows it, and starts the 10-minute updates), and
+ * Then run setup() once (it makes the SECRET, shows it, and starts the hourly safety check), and
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.1.1';
+var BRIDGE_VERSION = '1.2.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -34,10 +36,16 @@ function setup() {
   });
   DriveApp.getFolderById(p.getProperty('TRAINERS_FOLDER_ID')).getName();   // checks access
   DriveApp.getFolderById(p.getProperty('POE_FOLDER_ID')).getName();
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'sync') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('sync').timeBased().everyMinutes(10).create();
+  // Out with the old 10-minute trigger (and any one-off left over): the database now pokes this script
+  // after a change, and an hourly run is only the safety net.
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sync' || t.getHandlerFunction() === 'syncOnce') ScriptApp.deleteTrigger(t);
+  });
+  p.deleteProperty('NUDGE_ID'); p.deleteProperty('NUDGE_AT'); p.deleteProperty('NUDGE_WANTED');
+  ScriptApp.newTrigger('sync').timeBased().everyHours(1).create();
   var msg = 'Drive bridge ready.\n\nCopy this SECRET into the Cloudflare Worker as the secret BRIDGE_SECRET:\n\n' + p.getProperty('SECRET') +
-    '\n\nThen Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone). Updates run every 10 minutes.';
+    '\n\nThen Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone). The database then asks for an' +
+    ' update whenever something changes, and an hourly check catches anything missed.';
   Logger.log(msg);
   return msg;
 }
@@ -53,6 +61,7 @@ function doPost(e) {
     var b = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (b.action === 'upload') return json_(upload_(b));
     if (b.action === 'file') return json_(viewFile_(b.ticket));
+    if (b.action === 'nudge') return json_(nudge_(b));
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -81,6 +90,64 @@ function readTicket_(ticket, kind) {
 function childFolder_(parent, name) {
   var it = parent.getFoldersByName(name);
   return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+
+/* ---------- "something changed": the database asks for an update ---------- */
+var NUDGE_DELAY_MS = 2 * 60 * 1000;   // wait two minutes, so a burst of changes becomes one update
+var NUDGE_STALE_MS = 15 * 60 * 1000;
+/** The same signature the database uses for bridgeFeed and bridgeReport, the other way round. */
+function verifySigned_(b) {
+  var ts = Number(b.ts) || 0;
+  if (Math.abs(Date.now() - ts) > NUDGE_STALE_MS) throw new Error('That request is too old (check the clock)');
+  if (hmacHex_(b.action + '|' + ts + '|' + (b.body || '')) !== b.sig) throw new Error('The signature does not match: the SECRET differs');
+  return JSON.parse(b.body || '{}');
+}
+/** How long an update is already waiting for, or 0 when none is. Clears away anything left behind,
+ *  so one-off triggers never pile up (Apps Script allows only 20 per script). */
+function pendingSync_() {
+  var p = PropertiesService.getScriptProperties();
+  var id = p.getProperty('NUDGE_ID'), at = Number(p.getProperty('NUDGE_AT') || 0);
+  var waiting = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'syncOnce'; });
+  var live = id && at > Date.now() - NUDGE_STALE_MS && waiting.filter(function (t) { return t.getUniqueId() === id; })[0];
+  if (live) return at;
+  waiting.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  p.deleteProperty('NUDGE_ID'); p.deleteProperty('NUDGE_AT');
+  return 0;
+}
+/** Books one update in two minutes, unless one is already booked. */
+function scheduleSync_() {
+  var waiting = pendingSync_();
+  if (waiting) return waiting;
+  var p = PropertiesService.getScriptProperties();
+  var t = ScriptApp.newTrigger('syncOnce').timeBased().after(NUDGE_DELAY_MS).create();
+  p.setProperty('NUDGE_ID', t.getUniqueId());
+  p.setProperty('NUDGE_AT', String(Date.now() + NUDGE_DELAY_MS));
+  return Number(p.getProperty('NUDGE_AT'));
+}
+/** Asks for one update soon. Twenty nudges in a row still make a single update. */
+function nudge_(b) {
+  verifySigned_(b);
+  var lock = LockService.getScriptLock();
+  // A sync may be running right now and holding the lock. Rather than lose this change until the hourly
+  // run, leave a note: the sync books another update for itself when it finishes.
+  if (!lock.tryLock(10000)) {
+    PropertiesService.getScriptProperties().setProperty('NUDGE_WANTED', '1');
+    return { ok: true, queued: false, reason: 'busy' };
+  }
+  try {
+    var before = pendingSync_();
+    var at = scheduleSync_();
+    return { ok: true, queued: !before, at: at };
+  } finally { lock.releaseLock(); }
+}
+/** What the one-off trigger runs. It deletes itself first, so nothing is left behind even if sync() fails. */
+function syncOnce() {
+  var p = PropertiesService.getScriptProperties();
+  try {
+    ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncOnce') ScriptApp.deleteTrigger(t); });
+  } catch (e) { Logger.log('syncOnce: could not tidy the trigger: ' + e); }
+  p.deleteProperty('NUDGE_ID'); p.deleteProperty('NUDGE_AT');
+  sync();
 }
 
 /** POE / Class / Adm - Name / Unit - ITEM - vN.pdf. A version already in the folder moves the new one up. */
@@ -125,7 +192,10 @@ function callWorker_(action, body) {
 
 function sync() {
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return;                 // the previous run is still going
+  if (!lock.tryLock(1000)) {                       // the previous run is still going
+    PropertiesService.getScriptProperties().setProperty('NUDGE_WANTED', '1');
+    return;
+  }
   var started = Date.now(), p = PropertiesService.getScriptProperties();
   try {
     // A traversal of the changes can span several runs: PENDING keeps where it got to.
@@ -170,6 +240,12 @@ function sync() {
     report.bridge = BRIDGE_VERSION;
     callWorker_('bridgeReport', report);
   } finally { lock.releaseLock(); }
+  // Anything that changed while this run was going, or a page of changes still to work through,
+  // gets its own update in two minutes instead of waiting for the hour.
+  if (p.getProperty('NUDGE_WANTED') || p.getProperty('PENDING')) {
+    p.deleteProperty('NUDGE_WANTED');
+    try { scheduleSync_(); } catch (e) { Logger.log('could not book the next update: ' + e); }
+  }
 }
 /** The address phones use. A school-domain address (/a/macros/<domain>/) is turned into the plain one, which
  * works for students who are not signed in; WEB_APP_URL in Script Properties overrides it if ever needed. */
@@ -181,7 +257,8 @@ function webAppUrl_() {
 /** Run by hand to rewrite every trainer's sheet from the database on the next update (or straight away). */
 function resyncAll() {
   var p = PropertiesService.getScriptProperties();
-  p.deleteProperty('CURSOR'); p.deleteProperty('PENDING');
+  p.deleteProperty('CURSOR'); p.deleteProperty('PENDING'); p.deleteProperty('NUDGE_WANTED');
+  pendingSync_();   // an update already waiting is dropped: this run covers everything anyway
   sync();
 }
 function currentTerm_(sheets, code) {
@@ -229,8 +306,8 @@ function trainerSheet_(tr, folder, termName, sheets, kind) {
     var first = ss.getSheets()[0];
     first.setName('About');
     first.getRange(1, 1, 3, 1).setValues(marks
-      ? [['Continuous assessment marksheets for ' + tr.name + ' — ' + termName], ['Updated automatically from the marks entered in the RVNP attendance app (every 10 minutes). Changes made here are overwritten: enter marks in the app.'], ['One tab per class and unit, in the RVNP marksheet layout.']]
-      : [['Attendance register for ' + tr.name + ' — ' + termName], ['Updated automatically from the RVNP attendance app every 10 minutes. Changes made here are overwritten.'], ['One tab per class and unit; CAT registers in the tabs ending in "CATs".']]);
+      ? [['Continuous assessment marksheets for ' + tr.name + ' — ' + termName], ['Updated automatically, within a few minutes of marks being entered in the RVNP attendance app. Changes made here are overwritten: enter marks in the app.'], ['One tab per class and unit, in the RVNP marksheet layout.']]
+      : [['Attendance register for ' + tr.name + ' — ' + termName], ['Updated automatically, within a few minutes of a register being marked in the RVNP attendance app. Changes made here are overwritten.'], ['One tab per class and unit; CAT registers in the tabs ending in "CATs".']]);
     first.getRange(1, 1).setFontWeight('bold').setFontSize(14);
   }
   sheets[key] = ss.getId();

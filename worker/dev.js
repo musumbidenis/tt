@@ -4,6 +4,7 @@
  *   /__reset      empty database + sample classes, the test MIS sign-in (MIS / 2468)
  *   /__dump       every table laid out like the Google Sheet tabs (same column order)
  *   /__pin        set a PIN for any staff code (create=1 makes the account)
+ *   /__nudgeReset forget the "bridge poked recently" marker (the nudge rate limit)
  *   /__seedClass, /__addTrainee   extra sample students
  */
 import worker, { internals as I, setStaffPin, foldOldCheckins } from './worker.js';
@@ -120,6 +121,8 @@ export default {
       return new Response(JSON.stringify(r.results || []), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
     if (url.pathname === '/__fold') return new Response(String(await foldOldCheckins(env, true)), { headers: CORS });
+    // Forget "the Drive bridge was poked less than a minute ago", so a test need not wait a minute.
+    if (url.pathname === '/__nudgeReset') { I.resetNudge(); await I.run(env, "DELETE FROM meta WHERE key='drive_nudged_at'"); return ok(); }
     if (url.pathname === '/__meter') {
       if (p.get('reset')) for (const k of Object.keys(meter)) delete meter[k];
       return new Response(JSON.stringify(meter), { headers: { ...CORS, 'Content-Type': 'application/json' } });
