@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>RVNP Attendance Register</title>
-<meta name="description" content="Offline-first attendance register for RVNP ICT Department">
+<title>The Ark - RVNP ICT Dept</title>
+<meta name="description" content="RVNP ICT Department">
 <meta name="theme-color" content="#0b5d33">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -36,8 +36,8 @@
 <section id="signin" class="signin" hidden>
   <div class="signin-card">
     <img src="icons/rvnp-logo.png" alt="RVNP crest" width="88" height="88">
-    <h1>Attendance register</h1>
-    <p class="muted">ICT Department · Rift Valley National Polytechnic</p>
+    <h1>The Ark</h1>
+    <p class="muted">Rift Valley National Polytechnic - ICT Department</p>
     <form id="signinForm" autocomplete="on">
       <label>Staff code<input id="siCode" autocomplete="username" autocapitalize="characters" placeholder="ICT020" required></label>
       <label>PIN<input id="siPin" type="password" inputmode="numeric" autocomplete="current-password" required></label>
@@ -46,13 +46,13 @@
     </form>
     <form id="pinForm" hidden>
       <h2>Choose your own PIN</h2>
-      <p class="muted">4 to 8 digits. You'll use it to sign in on any phone.</p>
+      <p class="muted">4 to 8 digits. You'll use it to sign in on any device.</p>
       <label>New PIN<input id="newPin" type="password" inputmode="numeric" autocomplete="new-password" required></label>
       <label>Type it again<input id="newPin2" type="password" inputmode="numeric" autocomplete="new-password" required></label>
       <p id="pinMsg" class="err-text small" role="alert"></p>
       <button class="btn primary big">Save PIN</button>
     </form>
-    <p class="muted small">Signing in needs internet once. After that the register works with no network.</p>
+    <p class="muted small">Signing in needs internet once. After that, some aspects e.g Attendace registers work with no network.</p>
   </div>
 </section>
 
@@ -61,25 +61,22 @@
   <div class="brand">
     <span class="crest"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="40" height="40"></span>
     <div>
-      <strong>Attendance</strong>
+      <strong>The Ark</strong>
       <span id="trainerLabel">Not signed in</span>
     </div>
   </div>
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
-    <button id="syncBtn" class="btn small" title="Send waiting registers to the server">
-      <svg class="i sync-icon" aria-hidden="true"><use href="#i-sync"/></svg> Sync <span id="pendingCount" class="count">0</span>
-    </button>
   </div>
 </header>
 
 <nav class="tabs" role="tablist">
-  <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark</button>
-  <button data-tab="sessions" role="tab"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg>Registers</button>
-  <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Reports</button>
+  <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark Attendance</button>
+  <button data-tab="sessions" role="tab"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg>Attendance Register(s)</button>
+  <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Report(s)</button>
   <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE<span id="poeCount" class="dot" hidden></span></button>
   <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
-  <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Me</button>
+  <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Profile</button>
 </nav>
 </div>
 
@@ -90,7 +87,7 @@
     <div id="emptyRoster" class="card notice" hidden>
       <img class="crest-big" src="icons/rvnp-logo.png" alt="" width="72" height="72">
       <h2>No classes for you yet</h2>
-      <p>Your classes come from the trainer loading the MIS Officer uploads. Connect to the internet and tap <a href="#" data-goto="me">Me → Download class lists</a>. After that, marking works fully offline.</p>
+      <p>Your classes come from the trainer loading the MIS Officer uploads. Connect to the internet and tap <a href="#" data-goto="me">Profile → Download class lists</a>. After that, marking works fully offline.</p>
     </div>
 
     <form id="sessionForm" class="card session-form">
@@ -137,7 +134,7 @@
 
       <ul id="traineeList" class="trainee-list"></ul>
 
-      <label class="notes">Notes (topic covered, remarks)
+      <label class="notes">Notes e.g content covered, remarks)
         <textarea id="regNotes" rows="2" placeholder="Optional"></textarea>
       </label>
 
@@ -208,12 +205,11 @@
   <!-- MANAGE (HOD and MIS Officer) -->
   <section id="tab-manage" class="tab"><div id="manage"></div></section>
 
-  <!-- ME -->
+  <!-- Profile -->
   <section id="tab-me" class="tab">
     <div class="card profile-card">
       <div>
         <h2 id="meName"></h2>
-        <p id="meMeta" class="muted"></p>
       </div>
       <div class="row-actions">
         <button type="button" class="btn" id="changePin">Change PIN</button>
@@ -247,27 +243,17 @@
         <button type="button" class="btn" id="pullRoster">Download class lists</button>
         <button type="button" class="btn" id="studentLinkBtn">Student app link</button>
       </div>
-      <p id="sheetsStatus" class="muted small"></p>
     </div>
 
     <div class="card">
       <h2>Backup and transfer</h2>
-      <p class="muted">For long periods with no network: export a backup file, carry it to another device (flash disk, Bluetooth, WhatsApp) and import it there. Nothing is lost or duplicated.</p>
+      <p class="muted">For long periods with no network: export a backup file.</p>
       <div class="row-actions">
         <button class="btn" id="exportBackup">Export backup</button>
-        <label class="btn file-btn">Import backup<input type="file" id="importBackup" accept=".json,application/json"></label>
+        <label class="btn">Import backup<input type="file" id="importBackup" accept=".json,application/json"></label>
         <button class="btn danger" id="wipeData">Erase this device</button>
       </div>
-      <p id="dbInfo" class="muted small"></p>
     </div>
-
-    <details class="card advanced">
-      <summary>Advanced</summary>
-      <form id="serverForm">
-        <label>Server address (Apps Script web app URL)<input id="setServer" type="url" placeholder="Leave empty to use the department's server"></label>
-        <button class="btn">Save server address</button>
-      </form>
-    </details>
   </section>
 </main>
 
@@ -291,7 +277,7 @@
   <div id="lessonQrCode" class="qr-box"></div>
   <div class="qr-timer"><i id="lessonQrBar"></i></div>
   <p id="lessonQrLive" class="qr-live" aria-live="polite"></p>
-  <p class="qr-note">Scan with the check-in app or your phone camera. No internet needed. The code changes every 20 seconds, and check-ins appear here as soon as phones are online.</p>
+  <p class="qr-note">Scan with the check-in app. Internet is not a must; check-ins appear as soon as devices are online.</p>
 </dialog>
 
 <dialog id="studentLinkDialog" class="qr-dialog">
