@@ -1110,8 +1110,10 @@ async function refreshPending() {
   const unsentReqs = state.addreqs.filter((a) => !a.sentAt).length;
   const n = pending.length + unsentReqs;
   const el = $('#pendingCount');
-  el.textContent = n;
-  el.classList.toggle('zero', n === 0);
+  if (el) {
+    el.textContent = n;
+    el.classList.toggle('zero', n === 0);
+  }
   // Long-unsent registers matter most for QR lessons: students' scans are verified only once the lesson reaches the server.
   const oldest = pending.reduce((m, s) => (!m || s.updatedAt < m ? s.updatedAt : m), '');
   const days = oldest ? Math.floor((Date.now() - new Date(oldest).getTime()) / 864e5) : 0;
@@ -1119,11 +1121,18 @@ async function refreshPending() {
   const warn = $('#syncWarn');
   if (days >= 2) {
     warn.hidden = false;
-    warn.textContent = `${pending.length} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this phone — connect and tap Sync.`;
+    warn.textContent = `${pending.length} register(s) not sent for ${days} days${qr ? ` (${qr} with student QR check-ins waiting to be verified)` : ''}. They are safe on this phone and will be sent when the device is online.`;
   } else if (state.storage === 'not-protected' && n) {
     warn.hidden = false;
     warn.textContent = 'Install this app (browser menu → Add to Home screen) so the phone keeps unsent registers safely.';
   } else warn.hidden = true;
+}
+
+function showSyncStatus(text) {
+  const status = $('#sheetsStatus');
+  if (status) { status.textContent = text; return; }
+  const roster = $('#rosterInfo');
+  if (roster && state.activeTab === 'me') roster.textContent = text;
 }
 
 function toSheetSession(s) {
@@ -1159,7 +1168,7 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
   if (!navigator.onLine) { if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
   if (state.dirty) await saveCurrent();
   state.syncing = true;
-  $('#syncBtn').classList.add('syncing');
+  $('#syncBtn')?.classList.add('syncing');
   let sent = 0;
   const pushPending = async () => {
     for (const batch of chunk((await pendingSessions()).filter((s) => force || !heldBack(s)), 20)) {
@@ -1186,11 +1195,11 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
       toast(parts.join(' · ') || 'Everything is already sent', 'ok');
     }
   } catch (e) {
-    $('#sheetsStatus').textContent = `Sync stopped${sent ? ` after ${sent} register(s)` : ''}: ${e.message}`;
+    showSyncStatus(`Sync stopped${sent ? ` after ${sent} register(s)` : ''}: ${e.message}`);
     if (!silent) toast('Sync failed: ' + e.message, 'err');
   } finally {
     state.syncing = false;
-    $('#syncBtn').classList.remove('syncing');
+    $('#syncBtn')?.classList.remove('syncing');
     refreshPending();
     if (state.activeTab === 'sessions') renderSessions();
   }
@@ -1205,7 +1214,7 @@ function scheduleAutoSync() {
 async function pullRoster({ silent = false } = {}) {
   if (!state.auth || state.auth.mustChange) return;
   const btn = $('#pullRoster'); btn.disabled = true;
-  if (!silent) $('#sheetsStatus').textContent = 'Downloading class lists…';
+  if (!silent) showSyncStatus('Downloading class lists...');
   try {
     const log0 = await getLocal('syncLog');
     // Background checks send the version this phone has; the server then answers "unchanged" in a few bytes.
@@ -1240,7 +1249,7 @@ async function pullRoster({ silent = false } = {}) {
     renderSheetsStatus();
     if (!silent) toast(`Class lists saved: ${markClasses().length} of your classes, ${r.trainees} students — you can now mark offline`, 'ok');
   } catch (e) {
-    $('#sheetsStatus').textContent = 'Class list download failed: ' + e.message;
+    showSyncStatus('Class list download failed: ' + e.message);
     if (!silent) toast(e.message, 'err');
   } finally { btn.disabled = false; }
 }
@@ -1250,7 +1259,7 @@ async function renderSheetsStatus() {
   const parts = [];
   if (log.lastSheets) parts.push(`Registers last sent ${fmtTime(log.lastSheets)}`);
   if (log.lastRoster) parts.push(`class lists downloaded ${fmtTime(log.lastRoster)}`);
-  $('#sheetsStatus').textContent = parts.length ? parts.join(' · ') + '.' : 'Not synced yet.';
+  showSyncStatus(parts.length ? parts.join(' · ') + '.' : 'Not synced yet.');
 }
 
 /* Check for new class lists when they are more than 10 minutes old (an unchanged list costs almost nothing). */
@@ -1588,8 +1597,10 @@ async function wipeData() {
 }
 
 async function renderDbInfo() {
+  const el = $('#dbInfo');
+  if (!el) return;
   const info = await db.info();
-  $('#dbInfo').textContent = `Device ${state.deviceId} · ${info.doc_count} records stored · storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} · app v${APP_VERSION}`;
+  el.textContent = `Device ${state.deviceId} · ${info.doc_count} records stored · storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} · app v${APP_VERSION}`;
 }
 
 /* ---------------- tabs, roles, network, wiring ---------------- */
@@ -1637,7 +1648,8 @@ function renderIdentity() {
 function renderMe() {
   const s = me();
   $('#meName').textContent = s?.name || 'Not signed in';
-  $('#meMeta').textContent = s ? `Staff code ${s.code} · ${s.roles.map((r) => ROLE_NAMES[r]).join(', ') || 'No role yet — ask the MIS Officer'}` : '';
+  const meta = $('#meMeta');
+  if (meta) meta.textContent = s ? `Staff code ${s.code} · ${s.roles.map((r) => ROLE_NAMES[r]).join(', ') || 'No role yet — ask the MIS Officer'}` : '';
 }
 
 function fillSettingsForms() {
@@ -1645,7 +1657,8 @@ function fillSettingsForms() {
   $('#setLock').value = s.lockHours; $('#setDefault').value = s.defaultStatus;
   $('#setLate').value = s.latePct; $('#setExcused').value = s.excusedPct;
   $('#rThreshold').value = s.threshold;
-  $('#setServer').value = s.serverUrl || '';
+  const server = $('#setServer');
+  if (server) server.value = s.serverUrl || '';
 }
 
 function wire() {
@@ -1725,7 +1738,7 @@ function wire() {
     toast('Saved', 'ok');
     if (navigator.onLine && state.auth) api('mySettings', { latePct, excusedPct }).catch(() => {});
   });
-  $('#serverForm').addEventListener('submit', async (e) => { e.preventDefault(); await saveSettings({ serverUrl: $('#setServer').value.trim() }); toast('Server address saved', 'ok'); });
+  $('#serverForm')?.addEventListener('submit', async (e) => { e.preventDefault(); await saveSettings({ serverUrl: $('#setServer').value.trim() }); toast('Server address saved', 'ok'); });
   $('#studentLinkBtn').addEventListener('click', () => {
     if (!serverUrl()) { toast('No server address set', 'err'); return; }
     const url = studentPageUrl() + '#u=' + encodeURIComponent(serverUrl());
@@ -1744,7 +1757,7 @@ function wire() {
   $('#wipeData').addEventListener('click', wipeData);
 
   // Sync + network
-  $('#syncBtn').addEventListener('click', () => syncSheets());
+  $('#syncBtn')?.addEventListener('click', () => syncSheets());
   window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
   // Automatic sync: fast during a live lesson, once a minute otherwise, slower when the phone is left
