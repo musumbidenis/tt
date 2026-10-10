@@ -12,7 +12,7 @@ import worker, { internals as I, setStaffPin, foldOldCheckins } from './worker.j
 const SAMPLE = `INSERT INTO classes (code,name,level) VALUES ('ICT6A','Diploma in ICT L6 - Sept 2025 A','6'),('ICT5B','Certificate in ICT L5 - Jan 2026 B','5');
 INSERT INTO units (class_code,code,name) VALUES ('ICT6A','PROG-601','Object Oriented Programming (Java)'),('ICT6A','NET-602','Computer Networking'),('ICT5B','APP-501','Computer Applications'),('ICT5B','PROG-502','Fundamentals of Programming');
 INSERT INTO trainees (adm_no,name,class_code,status) VALUES ('RVNP/ICT/0101','Achieng Mary Otieno','ICT6A','active'),('RVNP/ICT/0102','Brian Kiprono Rotich','ICT6A','active'),('RVNP/ICT/0201','Ian Kipchumba Kirui','ICT5B','active'),('RVNP/ICT/0202','Joy Akinyi Ochieng','ICT5B','active');`;
-const TABLES = ['meta', 'staff', 'login_fails', 'terms', 'classes', 'units', 'loading', 'trainees', 'requests', 'sessions', 'checkins', 'devices', 'signoffs', 'audit', 'evidence', 'marks'];
+const TABLES = ['meta', 'staff', 'login_fails', 'terms', 'classes', 'units', 'loading', 'trainees', 'requests', 'sessions', 'checkins', 'devices', 'signoffs', 'audit', 'evidence', 'marks', 'push_subs'];
 const CORS = { 'Access-Control-Allow-Origin': '*' };
 const yn = (v) => (v ? 'Yes' : 'No');
 const blank = (v) => (v === null || v === undefined ? '' : v);

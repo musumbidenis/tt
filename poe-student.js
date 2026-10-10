@@ -1,12 +1,13 @@
 /* Student app — POE evidence: scan pages like a document scanner, keep the PDF on the phone, and send it
- * to the college Drive when there is internet. Statuses (with your trainer, approved, returned) come back.
+ * to the college Drive when there is internet. Statuses (with your trainer, approved, returned) come back
+ * when the app opens, when it comes back into view, after an upload, and when a notification arrives.
  * Uses student.js (st, sdb, api, toast, esc, $) and scanner.js. */
 'use strict';
 
 const POE = (() => {
   const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
   const FILTERS = [['document', 'Document'], ['grey', 'Grey'], ['colour', 'Colour']];
-  const ps = { units: [], unit: '', picked: new Set(), drafts: {}, server: [], syncing: false, crop: null, target: null };
+  const ps = { units: [], unit: '', picked: new Set(), drafts: {}, server: [], syncing: false, crop: null, target: null, notify: null };
   const $$ = (q, el = document) => [...el.querySelectorAll(q)];
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const draftId = (unit, item) => `ev:draft:${unit}:${item}`;
@@ -19,11 +20,14 @@ const POE = (() => {
   async function loadUnits() {
     const p = st.profile; if (!p) return;
     const cache = await getLocal('poeUnits');
-    if (cache.classCode === p.classCode) { ps.units = cache.units || []; ps.ready = cache.driveReady; }
+    if (cache.classCode === p.classCode) { ps.units = cache.units || []; ps.ready = cache.driveReady; ps.pushReady = cache.pushReady; }
     if (navigator.onLine && st.sheetsUrl) {
       try {
         const r = await api('GET', { action: 'units', class: p.classCode });
-        if (r.ok) { ps.units = r.units; ps.ready = r.driveReady; await updateLocal('poeUnits', (d) => { d.classCode = p.classCode; d.units = r.units; d.driveReady = r.driveReady; }); }
+        if (r.ok) {
+          ps.units = r.units; ps.ready = r.driveReady; ps.pushReady = r.pushReady;
+          await updateLocal('poeUnits', (d) => { d.classCode = p.classCode; d.units = r.units; d.driveReady = r.driveReady; d.pushReady = r.pushReady; });
+        }
       } catch { /* offline: the cached list */ }
     }
   }
@@ -61,6 +65,7 @@ const POE = (() => {
       });
     }
     await renderList(docs);
+    await renderNotify();
   }
   function docCard(item, d) {
     const pages = d?.pages || [], f = d?.filter || 'document';
@@ -248,6 +253,83 @@ const POE = (() => {
     finally { ps.syncing = false; render(); }
   }
 
+  /* ---------- "Notify me about my evidence" ----------
+   * Standard browser notifications: the phone subscribes with the college's public key (config.js) and
+   * the server pokes it when a trainer decides on something. Permission is only ever asked for when the
+   * student taps the switch, never when the app opens. */
+  const vapidKey = () => window.ATTENDANCE_CONFIG?.vapidPublicKey || '';
+  const pushCan = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && !!vapidKey();
+  const onIphone = () => /iP(hone|od|ad)/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+  const installed = () => window.navigator.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+  const keyBytes = (s) => {
+    const x = s.replace(/-/g, '+').replace(/_/g, '/');
+    return Uint8Array.from(atob(x + '='.repeat((4 - (x.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  };
+  async function subscription() {
+    if (!pushCan()) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? await reg.pushManager.getSubscription() : null;
+  }
+  /** What the service worker needs when a notification wakes it: it cannot read this app's database. */
+  async function rememberIdentity(on) {
+    try {
+      const c = await caches.open('rvnp-push');
+      if (!on) { await c.delete('./__push-identity'); return; }
+      await c.put('./__push-identity', new Response(JSON.stringify({ serverUrl: st.sheetsUrl, deviceId: st.deviceId, admNo: st.profile.admNo }),
+        { headers: { 'Content-Type': 'application/json' } }));
+    } catch { /* storage blocked: notifications simply will not have the details */ }
+  }
+  async function renderNotify() {
+    const row = $('#poeNotify'), box = $('#poeNotifyOn'), hint = $('#poeNotifyHint');
+    if (!row) return;
+    // An iPhone can only do this once the app is on the Home Screen; other browsers that cannot, say nothing.
+    if (!pushCan()) {
+      const why = onIphone() && !installed() && vapidKey()
+        ? 'To be told about your evidence on an iPhone, first add this app to your Home Screen (tap Share, then “Add to Home Screen”) and open it from there.' : '';
+      row.hidden = !why;
+      if (why) { box.closest('label').hidden = true; hint.textContent = why; }
+      return;
+    }
+    box.closest('label').hidden = false;
+    row.hidden = false;
+    const sub = await subscription();
+    box.checked = !!sub && Notification.permission === 'granted';
+    if (box.checked) await rememberIdentity(true);   // keeps the server address and the phone's details in step
+    hint.textContent = box.checked ? 'Your phone will tell you when your trainer approves your work or sends it back.'
+      : Notification.permission === 'denied' ? 'Notifications are switched off for this app in your phone settings. Turn them on there first.'
+      : 'Your phone tells you when your trainer approves your work or sends it back.';
+  }
+  async function toggleNotify(on) {
+    const box = $('#poeNotifyOn');
+    box.disabled = true;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (!on) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await api('POST', null, { action: 'pushUnsubscribe', deviceId: st.deviceId, admNo: st.profile.admNo, endpoint: sub.endpoint }).catch(() => {});
+          await sub.unsubscribe();
+        }
+        await rememberIdentity(false);
+        toast('Notifications off');
+        return;
+      }
+      const ask = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+      if (ask !== 'granted') { toast(ask === 'denied' ? 'Your phone is blocking notifications for this app' : 'Not switched on', 'err'); return; }
+      const sub = await reg.pushManager.getSubscription()
+        || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidKey()) });
+      const r = await api('POST', null, { action: 'pushSubscribe', deviceId: st.deviceId, admNo: st.profile.admNo, endpoint: sub.endpoint });
+      if (!r.ok) throw new Error(r.error);
+      await rememberIdentity(true);
+      toast('Done — your phone will tell you about your evidence', 'ok');
+    } catch (e) {
+      toast((on ? 'Could not switch that on: ' : 'Could not switch that off: ') + e.message, 'err');
+    } finally {
+      box.disabled = false;
+      await renderNotify();
+    }
+  }
+
   /* ---------- wiring ---------- */
   function wire() {
     $('#viewTabs').addEventListener('click', (e) => {
@@ -306,8 +388,20 @@ const POE = (() => {
       const r = e.target.closest('[data-redo]');
       if (r) { const [u, it] = r.dataset.redo.split('|'); ps.unit = u; ps.picked = new Set([it]); render(); $('#poeCard').scrollIntoView({ behavior: 'smooth' }); }
     });
+    $('#poeNotifyOn').addEventListener('change', (e) => toggleNotify(e.target.checked));
+    // No timer: statuses are fetched when the app opens, when it comes back into view, after an upload,
+    // when the internet comes back, and when a notification arrives. Nothing is asked for in between.
     window.addEventListener('online', () => sync());
-    setInterval(() => sync(), 3 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
+    navigator.serviceWorker?.addEventListener('message', (e) => {
+      if (e.data?.type === 'evidence-changed') sync();
+      if (e.data?.type === 'show-evidence') showEvidence();
+    });
+  }
+  /** Brings the Evidence view to the front (after a tap on a notification). */
+  function showEvidence() {
+    const btn = document.querySelector('#viewTabs [data-view=poe]');
+    if (btn && !$('#viewTabs').hidden) btn.click();
   }
 
   async function init() {
@@ -315,6 +409,7 @@ const POE = (() => {
     wire();
     await loadUnits();
     await render();
+    sync();   // on opening the app: send anything waiting and bring the statuses up to date
   }
-  return { init, render, sync, state: ps };
+  return { init, render, sync, showEvidence, state: ps };
 })();

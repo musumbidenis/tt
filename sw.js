@@ -1,6 +1,12 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.5.0';
+const CACHE = 'rvnp-attendance-v4.6.0';
+/* What this worker needs in order to answer a notification: the server address, this phone's ID and
+ * the student's admission number. The student app writes it here when notifications are switched on,
+ * because a service worker woken by a notification cannot read the app's own database. */
+const PUSH_CACHE = 'rvnp-push';
+const PUSH_KEY = './__push-identity';
+const KEEP = [CACHE, PUSH_CACHE];
 const ASSETS = [
   './',
   './index.html',
@@ -41,7 +47,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => !KEEP.includes(k)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -73,5 +79,63 @@ self.addEventListener('fetch', (event) => {
       }
       return Response.error();
     }
+  })());
+});
+
+/* ---------------- notifications for students ----------------
+ * A push carries no message at all (a "tickle"), so nothing private is ever sent and the server has
+ * nothing to encrypt. It only wakes this worker, which asks the server what is new and shows it. */
+async function pushIdentity() {
+  try {
+    const res = await (await caches.open(PUSH_CACHE)).match(PUSH_KEY);
+    return res ? await res.json() : null;
+  } catch { return null; }
+}
+
+/** Plain wording for what came back from the server. */
+function noticeText(list) {
+  if (list.length > 1) {
+    const yes = list.filter((n) => n.status === 'approved').length, no = list.length - yes;
+    return { title: `${list.length} updates on your evidence`,
+      body: [yes ? `${yes} approved` : '', no ? `${no} sent back to fix` : ''].filter(Boolean).join(' · ') };
+  }
+  const n = list[0], what = `${n.unitName} — ${n.item}`;
+  if (n.status === 'approved') return { title: 'Your evidence was approved', body: `${what} is approved.${n.decidedName ? ' Checked by ' + n.decidedName + '.' : ''}` };
+  return { title: 'Your evidence was sent back', body: n.comment ? `${what}: “${n.comment}”` : `${what} needs a fix — open the app to see why.` };
+}
+
+async function showNotices() {
+  const id = await pushIdentity();
+  let list = null;
+  if (id && id.serverUrl && id.admNo && id.deviceId) {
+    try {
+      const res = await fetch(id.serverUrl, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'notices', deviceId: id.deviceId, admNo: id.admNo }) });
+      const out = await res.json();
+      if (out && out.ok) list = out.notices || [];
+    } catch { /* no network at this moment: a short message is shown instead */ }
+  }
+  // If the app is open, let it refresh its Evidence list without the student doing anything.
+  for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) c.postMessage({ type: 'evidence-changed' });
+  if (list && !list.length) return;   // nothing the student has not already seen in the app
+  const t = list && list.length ? noticeText(list) : { title: 'Your evidence was looked at', body: 'Open the app to see what your trainer said.' };
+  await self.registration.showNotification(t.title, {
+    body: t.body, tag: 'rvnp-evidence', renotify: true, lang: 'en',
+    icon: './icons/icon-192.png', badge: './icons/icon-192.png',
+    data: { url: './student.html#poe' },
+  });
+}
+
+self.addEventListener('push', (event) => { event.waitUntil(showNotices()); });
+
+// Tapping the notification opens the student app on Evidence (or brings the open one to the front).
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || './student.html#poe', self.location.href).href;
+  event.waitUntil((async () => {
+    for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+      if (c.url.includes('student.html')) { c.postMessage({ type: 'show-evidence' }); await c.focus(); return; }
+    }
+    await self.clients.openWindow(url);
   })());
 });

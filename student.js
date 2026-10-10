@@ -372,6 +372,8 @@ async function consumeHash() {
   history.replaceState(null, '', location.pathname + location.search); // a reload must not record twice
   const u = /#u=([^&]+)/.exec(h);
   if (u) { await saveSheetsUrl(decodeURIComponent(u[1])); if (!st.profile) await openSetup(); return; }
+  // Opened from a notification about evidence (student.html#poe), not from a scanned QR.
+  if (/^#poe$/i.test(h)) { st.openPoe = true; POE.showEvidence(); return; }
   await handleScanned(h);
 }
 
@@ -420,7 +422,7 @@ async function init() {
   if (!st.profile && $('#setupCard').hidden) await openSetup();
   await render();
   sync();
-  POE.init().catch((e) => console.error('Evidence', e));
+  POE.init().then(() => { if (st.openPoe) POE.showEvidence(); }).catch((e) => console.error('Evidence', e));
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
     const hadController = !!navigator.serviceWorker.controller;

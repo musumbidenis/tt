@@ -668,6 +668,9 @@ body.student[data-view="poe"] .view-checkin, body.student:not([data-view="poe"])
 .poe-doc .row-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 #poeSave { margin-top: .25rem; }
 .poe-list li { align-items: flex-start; }
+/* "Notify me about my evidence" under the Save button in the student app */
+.notify-row { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--line); }
+.notify-row p { margin: .25rem 0 0 1.75rem; }
 .poe-acts { display: flex; flex-direction: column; align-items: flex-end; gap: .1rem; flex-shrink: 0; }
 .poe-acts .linkish { padding: .2rem 0; font-size: .875rem; }
 #poeListCard { padding-bottom: 0; overflow: hidden; }

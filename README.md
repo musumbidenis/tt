@@ -85,6 +85,8 @@ Each trainer's folder gets **Attendance register - <term>** and **Marksheets - <
 
 **Updating the bridge later**: paste the new `DriveBridge.gs`, Save, then **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The address stays the same.
 
+There is one more optional set-up, also about 5 minutes: letting students' phones tell them when their evidence is approved or returned. It is described with the rest of POE, under [Notifications for students](#notifications-for-students-once-about-5-minutes).
+
 > **Coming from an older bridge (before 1.2.0)?** Paste the new `DriveBridge.gs`, Save, deploy a new version as above, and then **run `setup()` once** (choose **setup** in the editor and click **Run**). That is what swaps the old 10-minute trigger for the hourly one; without it, both would run. `setup()` keeps the SECRET it already made, so nothing in Cloudflare needs changing. **Triggers** (the clock icon) should then show one hourly `sync` and nothing else.
 
 ## 2. MIS Officer: start of each term
@@ -199,6 +201,49 @@ With Google Drive connected, each trainer's folder also gets **Marksheets - <ter
 
 **The MIS Officer** sees the approved ones under **POE → To receive**, and marks them received once filed. The **By student** toggle (MIS Officer and HOD) shows one class at a time: each student with every unit and item — approved, with the trainer, returned or not sent — and any mark opens that file. Uploading and previewing need internet; the files themselves never pass through the database.
 
+### Telling students when their evidence is decided
+
+A student can ask their phone to tell them. In **Evidence (POE)**, under the Save button, there is **Notify me about my evidence**. Tapping it asks the phone for permission (nothing is ever asked when the app simply opens); from then on, when a trainer approves their work or sends it back, their phone shows a short message with the unit, the item and the trainer's note. Tapping it opens the app on Evidence.
+
+**On Android** (Chrome, Edge, Samsung Internet) it works straight away — adding the app to the Home Screen is recommended but not required.
+
+**On an iPhone** it only works once the app is on the Home Screen: open the student link in **Safari**, tap **Share**, choose **Add to Home Screen**, then open the app from the Home Screen and turn the switch on there. (This is Apple's rule, from iOS 16.4 onwards.) Until then the app says so instead of showing the switch.
+
+If nothing is set up on the server (see below), the switch is not offered at all. Everything else in the app works exactly as before — notifications are an extra, never something the app depends on.
+
+### Notifications for students (once, about 5 minutes)
+
+This uses the phone browser's own notifications. There is nothing to pay for, no account to open, and no other company involved: the messages go from Cloudflare to the phone through the browser maker's own service (Google's for Chrome, Apple's for Safari, Mozilla's for Firefox), which every phone already uses.
+
+1. **Make the pair of keys**, once, on any computer with Node.js:
+
+   ```
+   npx web-push generate-vapid-keys
+   ```
+
+   It prints a **Public Key** and a **Private Key**. Keep the window open.
+2. **The public key** is not secret. Put it in [`config.js`](config.js) as `vapidPublicKey`, commit and push:
+
+   ```js
+   window.ATTENDANCE_CONFIG = {
+     serverUrl: 'https://rvnp-attendance.<your-subdomain>.workers.dev/',
+     sheetsUrl: '...',
+     vapidPublicKey: 'BOZ_WOrT…',   // the Public Key, exactly as printed
+   };
+   ```
+
+   Remember to bump `CACHE` in [`sw.js`](sw.js) and `APP_VERSION` in [`app.js`](app.js) as with any app change, so phones pick it up.
+3. **The private key is a secret.** In Cloudflare open the Worker → **Settings → Variables and Secrets → Add**, twice:
+   - Type **Secret**, name `VAPID_PRIVATE_KEY`, value: the **Private Key** as printed.
+   - Type **Secret**, name `VAPID_SUBJECT`, value: a contact address the browser makers can use if something goes wrong, for example `mailto:ict@rvnp.ac.ke`.
+
+   Then add one plain variable so the Worker can work out the full key: Type **Text**, name `VAPID_PUBLIC_KEY`, value: the same **Public Key** as in `config.js`. Click **Deploy**.
+
+   (If you would rather keep one secret than three values: put the whole key as JSON in `VAPID_PRIVATE_KEY` — `{"kty":"EC","crv":"P-256","d":"…","x":"…","y":"…"}` — and `VAPID_PUBLIC_KEY` is then not needed.)
+4. Open the Worker's address with `?action=ping`: it should now say `"push":true`. Students then see the switch in the student app.
+
+Never commit the private key, and never put it in `config.js`. If it is ever exposed, make a new pair and repeat steps 2 and 3: every student simply turns the switch on again.
+
 ## In the database
 
 You can look at, search or download any table from the dashboard: **D1 → rvnp-attendance → Explore Data** (or **Console** for SQL).
@@ -214,6 +259,7 @@ You can look at, search or download any table from the dashboard: **D1 → rvnp-
 | `sessions` | One row per register with its counts, `term_id` and `week`; `kind` is lesson, cat or extra, `slots` is 2 for a double; `data` holds every student's mark. |
 | `signoffs` | Term registers submitted to the HOD, and the decisions. |
 | `checkins` / `devices` | Student QR check-ins and which phone belongs to whom. Delete a `devices` row to let a student set up a new phone. |
+| `push_subs` | Which phones asked to be told about their evidence. Only an address from the browser — no names, no messages. A phone that unsubscribes is removed by itself. |
 | `audit` | Who changed what in Manage. |
 
 D1 keeps its own history: **D1 → rvnp-attendance → Time Travel** can put the whole database back to any minute in the last 7 days.

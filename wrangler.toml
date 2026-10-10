@@ -1,6 +1,8 @@
 # Cloudflare deploys the database Worker from this file on every push to GitHub (Workers Builds).
 # Only worker/worker.js is deployed; the website itself stays on GitHub Pages.
-# Secrets (ADMIN_PIN, BRIDGE_SECRET) are kept in the Cloudflare dashboard and are not touched by a deploy.
+# Secrets (ADMIN_PIN, BRIDGE_SECRET, VAPID_PRIVATE_KEY, VAPID_SUBJECT) and the plain variable
+# VAPID_PUBLIC_KEY are kept in the Cloudflare dashboard and are not touched by a deploy
+# (that is what keep_vars below is for). See the README.
 name = "rvnp-attendance"
 main = "worker/worker.js"
 compatibility_date = "2025-09-01"

@@ -17,7 +17,7 @@
  */
 
 export const VERSION = '5.5.0';
-const SCHEMA_VERSION = '5';
+const SCHEMA_VERSION = '6';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -47,17 +47,20 @@ CREATE INDEX IF NOT EXISTS devices_adm ON devices (adm_no);
 CREATE TABLE IF NOT EXISTS signoffs (id TEXT PRIMARY KEY, term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, lecturer_comment TEXT, submitted_at TEXT, status TEXT, hod_code TEXT, hod_name TEXT, hod_comment TEXT, decided_at TEXT);
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, staff_code TEXT, name TEXT, action TEXT, details TEXT);
 CREATE INDEX IF NOT EXISTS sessions_synced ON sessions (synced_at);
-CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, name TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, item TEXT, version INTEGER, file_id TEXT, file_name TEXT, bytes INTEGER, pages INTEGER, submitted_at TEXT, status TEXT, decided_by TEXT, decided_name TEXT, decided_at TEXT, comment TEXT, received_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, name TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, item TEXT, version INTEGER, file_id TEXT, file_name TEXT, bytes INTEGER, pages INTEGER, submitted_at TEXT, status TEXT, decided_by TEXT, decided_name TEXT, decided_at TEXT, comment TEXT, received_at TEXT, updated_at TEXT, seen_at TEXT);
 CREATE INDEX IF NOT EXISTS evidence_adm ON evidence (adm_no, unit_code, item);
 CREATE INDEX IF NOT EXISTS evidence_cu ON evidence (class_code, unit_code);
 CREATE INDEX IF NOT EXISTS evidence_upd ON evidence (updated_at);
 CREATE INDEX IF NOT EXISTS evidence_status ON evidence (status, submitted_at);
 CREATE INDEX IF NOT EXISTS evidence_sub ON evidence (submitted_at);
 CREATE TABLE IF NOT EXISTS marks (term_id TEXT, class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, cat1 REAL, cat2 REAL, cat3 REAL, prac1 REAL, prac2 REAL, prac3 REAL, updated_at TEXT, updated_by TEXT, synced_at TEXT, PRIMARY KEY (term_id, class_code, unit_code, adm_no));
-CREATE INDEX IF NOT EXISTS marks_synced ON marks (synced_at);`;
+CREATE INDEX IF NOT EXISTS marks_synced ON marks (synced_at);
+CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, device_id TEXT, created_at TEXT, last_ok_at TEXT, fail_count INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
-  'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT'];
+  'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT',
+  'ALTER TABLE evidence ADD COLUMN seen_at TEXT'];
 
 /* ---------- small helpers ---------- */
 const nowIso = () => new Date().toISOString();
@@ -171,7 +174,7 @@ export default {
         if (p.action === 'classes') return reply(await publicClasses(env));
         if (p.action === 'classlist') return reply(await classList(env, p.class));
         if (p.action === 'units') return reply(await classUnits(env, p.class));
-        if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso() });
+        if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso(), push: !!env.VAPID_PRIVATE_KEY });
         return reply({ ok: false, error: 'Unknown action' });
       }
       const b = JSON.parse((await request.text()) || '{}');
@@ -229,7 +232,7 @@ const ACTIONS = {
   importSheet: { role: ['MIS'], fn: (env, b, me) => importSheet(env, b, me) },
   poeList: { fn: (env, b, me) => poeList(env, b, me) },
   poeView: { fn: (env, b, me) => poeView(env, b, me) },
-  poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => poeDecide(env, b, me) },
+  poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me, pre, ctx) => poeDecide(env, b, me, ctx) },
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
   poeClass: { role: ['MIS', 'HOD'], fn: (env, b) => poeClass(env, b) },
@@ -1240,6 +1243,79 @@ async function nudgeDrive(env) {
   return 'sent';
 }
 
+/* ====================== free notifications for students (Web Push with VAPID) ======================
+ * Standard browser push: no Firebase, no other service, nothing to pay for. The public key sits in
+ * config.js and the private key is the Worker secret VAPID_PRIVATE_KEY (README -> "Notifications").
+ * A push carries NO message ("a tickle"), so the Worker never has to encrypt anything: the phone's
+ * service worker is woken, asks for `notices`, and shows what it finds. Signing the token is the slow
+ * part, so each push service's token is reused for 12 hours. */
+const PUSH_MAX = 8;        // phones poked per change (a student normally has one)
+const MAX_SUBS = 4;        // kept per student, newest first
+const PUSH_GIVE_UP = 10;   // failures in a row before an address is dropped
+const bytesB64u = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64uBytes = (s) => { const x = String(s || '').replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(x + '='.repeat((4 - (x.length % 4)) % 4)), (c) => c.charCodeAt(0)); };
+
+let vapidKey = null;
+/** The signing key, from VAPID_PRIVATE_KEY: either the whole JWK, or just `d` with VAPID_PUBLIC_KEY beside it. */
+async function vapidKeys(env) {
+  if (vapidKey) return vapidKey;
+  const raw = String(env.VAPID_PRIVATE_KEY || '').trim();
+  if (!raw) fail('Notifications are not set up on the server yet (the Worker has no VAPID_PRIVATE_KEY).');
+  let jwk;
+  if (raw.startsWith('{')) jwk = JSON.parse(raw);
+  else {
+    const pub = b64uBytes(env.VAPID_PUBLIC_KEY || '');
+    if (pub.length !== 65 || pub[0] !== 4) fail('Notifications: with a plain private key, add VAPID_PUBLIC_KEY to the Worker as well.');
+    jwk = { d: raw.replace(/=+$/, ''), x: bytesB64u(pub.slice(1, 33)), y: bytesB64u(pub.slice(33)) };
+  }
+  if (!jwk.d || !jwk.x || !jwk.y) fail('Notifications: VAPID_PRIVATE_KEY is not a P-256 key (see the README).');
+  const key = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', d: jwk.d, x: jwk.x, y: jwk.y, ext: true },
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  return (vapidKey = { key, pub: bytesB64u(new Uint8Array([4, ...b64uBytes(jwk.x), ...b64uBytes(jwk.y)])) });
+}
+const vapidTokens = new Map();   // push service origin -> { token, until }
+async function vapidAuth(env, origin) {
+  const { key, pub } = await vapidKeys(env);
+  const have = vapidTokens.get(origin);
+  if (have && have.until > Date.now()) return { token: have.token, pub };
+  const head = b64u(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  const claim = b64u(JSON.stringify({ aud: origin, exp: Math.floor(Date.now() / 1000) + 23 * 3600, sub: String(env.VAPID_SUBJECT || 'mailto:ict@rvnp.ac.ke') }));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(head + '.' + claim));
+  const token = `${head}.${claim}.${bytesB64u(new Uint8Array(sig))}`;
+  vapidTokens.set(origin, { token, until: Date.now() + 12 * 3600e3 });
+  return { token, pub };
+}
+
+/** Wakes one student's phones. Addresses the browser has thrown away (404 / 410) are deleted. */
+async function pushToStudent(env, admNo) {
+  const subs = await all(env, 'SELECT endpoint FROM push_subs WHERE adm_no=? ORDER BY last_ok_at DESC LIMIT ?', admNo, PUSH_MAX);
+  if (!subs.length) return 0;
+  const now = nowIso(), gone = [], good = [], bad = [];
+  for (const s of subs) {
+    try {
+      const { token, pub } = await vapidAuth(env, new URL(s.endpoint).origin);
+      const res = await fetch(s.endpoint, { method: 'POST', headers: { Authorization: `vapid t=${token}, k=${pub}`, TTL: '86400', Urgency: 'normal' } });
+      if (res.status === 404 || res.status === 410) gone.push(s.endpoint);          // unsubscribed or expired
+      else if (res.ok) good.push(s.endpoint);
+      else { bad.push(s.endpoint); console.error(`push: ${new URL(s.endpoint).host} answered ${res.status}`); }
+    } catch (e) { bad.push(s.endpoint); console.error('push', e); }
+  }
+  await many(env,
+    good.length && [`UPDATE push_subs SET last_ok_at=?, fail_count=0 WHERE endpoint IN ${IN}`, now, JSON.stringify(good)],
+    bad.length && [`UPDATE push_subs SET fail_count=COALESCE(fail_count,0)+1 WHERE endpoint IN ${IN}`, JSON.stringify(bad)],
+    gone.length && [`DELETE FROM push_subs WHERE endpoint IN ${IN}`, JSON.stringify(gone)],
+    bad.length && ['DELETE FROM push_subs WHERE fail_count >= ?', PUSH_GIVE_UP]);
+  return good.length;
+}
+/** Sends after the reply has gone out, and never lets a push get in the way of the real work.
+ *  Other events can use this too: call it wherever a student should hear about something. */
+function pushLater(ctx, env, admNo) {
+  if (!ctx?.waitUntil || !env.VAPID_PRIVATE_KEY || !admNo) return;
+  ctx.waitUntil(pushToStudent(env, admNo).catch((e) => console.error('push', e)));
+}
+const noticeOut = (r) => ({ kind: 'evidence', id: r.id, item: r.item, unitCode: r.unit_code, unitName: r.unit_name || r.unit_code,
+  version: r.version, status: r.status, comment: r.comment || '', decidedName: r.decided_name || '', decidedAt: r.decided_at || '' });
+
 /* ---------- the student phone: units, upload tickets, my evidence ---------- */
 async function studentOf(env, b) {
   const [tRows, dRows] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim()], ['SELECT * FROM devices WHERE device_id=?', String(b.deviceId || '')]);
@@ -1254,7 +1330,7 @@ async function classUnits(env, cls) {
   const [loading, url] = await many(env, [`SELECT class_code, unit_code, unit_name FROM loading WHERE term_id=${ACTIVE_TERM}`], ["SELECT value FROM meta WHERE key='drive_url'"]);
   const seen = new Set(), units = [];
   for (const u of unitsForClass(loading, cls)) if (!seen.has(u.unit_code)) { seen.add(u.unit_code); units.push({ code: u.unit_code, name: u.unit_name || u.unit_code }); }
-  return { ok: true, classCode: cls, units, items: ITEMS, driveReady: !!url[0] };
+  return { ok: true, classCode: cls, units, items: ITEMS, driveReady: !!url[0], pushReady: !!env.VAPID_PRIVATE_KEY };
 }
 const evidenceOut = (r) => ({ id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
   version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.status,
@@ -1290,6 +1366,38 @@ const STUDENT_ACTIONS = {
   async poeMine(env, b) {
     const t = await studentOf(env, b);
     return { ok: true, evidence: (await all(env, 'SELECT * FROM evidence WHERE adm_no=? ORDER BY submitted_at DESC', t.adm_no)).map(evidenceOut) };
+  },
+  /** The student turned notifications on. The address comes from the browser and is only an address:
+   *  nothing private is kept, and only this student's registered phone can add or remove one. */
+  async pushSubscribe(env, b) {
+    const t = await studentOf(env, b);
+    const endpoint = String(b.endpoint || '').trim();
+    // Real push services are always https; http is allowed only for localhost, which is the test harness.
+    if (!/^https:\/\/\S{10,900}$/.test(endpoint) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(endpoint)) {
+      fail('That notification address does not look right');
+    }
+    const now = nowIso();
+    await many(env,
+      ['INSERT INTO push_subs (endpoint,adm_no,device_id,created_at,last_ok_at,fail_count) VALUES (?,?,?,?,?,0) ON CONFLICT(endpoint) DO UPDATE SET adm_no=excluded.adm_no, device_id=excluded.device_id, fail_count=0',
+        endpoint, t.adm_no, String(b.deviceId || ''), now, now],
+      // Only the newest few are kept, so changing phone or browser does not leave old addresses behind.
+      ['DELETE FROM push_subs WHERE adm_no=? AND endpoint NOT IN (SELECT endpoint FROM push_subs WHERE adm_no=? ORDER BY created_at DESC LIMIT ?)', t.adm_no, t.adm_no, MAX_SUBS]);
+    return { ok: true, on: true };
+  },
+  async pushUnsubscribe(env, b) {
+    const t = await studentOf(env, b);
+    await run(env, 'DELETE FROM push_subs WHERE endpoint=? AND adm_no=?', String(b.endpoint || ''), t.adm_no);
+    return { ok: true, on: false };
+  },
+  /** What to tell this student, and nothing they have already been told. `seen` marks notices read,
+   *  so the same decision is never shown twice. More kinds can be added to the list later (each one
+   *  carries its own `kind`), for example a warning when attendance falls below the minimum. */
+  async notices(env, b) {
+    const t = await studentOf(env, b);
+    const seen = (b.seen || []).map(String).filter(Boolean).slice(0, 50);
+    if (seen.length) await run(env, `UPDATE evidence SET seen_at=? WHERE adm_no=? AND seen_at IS NULL AND id IN ${IN}`, nowIso(), t.adm_no, JSON.stringify(seen));
+    const rows = await all(env, "SELECT * FROM evidence WHERE adm_no=? AND status IN ('approved','returned') AND seen_at IS NULL ORDER BY decided_at DESC LIMIT 20", t.adm_no);
+    return { ok: true, notices: rows.map(noticeOut) };
   },
 };
 
@@ -1337,14 +1445,16 @@ async function poeView(env, b, me) {
   if (!url) fail('The Google Drive link is not set up yet');
   return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
 }
-async function poeDecide(env, b, me) {
+async function poeDecide(env, b, me, ctx) {
   const r = await evidenceFor(env, b.id, me, true);
   if (!['approved', 'returned'].includes(b.decision)) fail('Choose approve or return');
   const comment = String(b.comment || '').trim().slice(0, 500);
   if (b.decision === 'returned' && !comment) fail('Say what needs fixing when returning evidence');
   const now = nowIso();
-  await run(env, 'UPDATE evidence SET status=?, decided_by=?, decided_name=?, decided_at=?, comment=?, updated_at=? WHERE id=?', b.decision, me.code, me.name, now, comment, now, r.id);
+  // seen_at goes back to empty: a fresh decision is something the student has not been told yet.
+  await run(env, 'UPDATE evidence SET status=?, decided_by=?, decided_name=?, decided_at=?, comment=?, updated_at=?, seen_at=NULL WHERE id=?', b.decision, me.code, me.name, now, comment, now, r.id);
   await audit(env, me, 'evidence', `${r.adm_no} ${r.unit_code} ${r.item} v${r.version} ${b.decision}`);
+  pushLater(ctx, env, r.adm_no);
   return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', r.id)) };
 }
 async function poeReceive(env, b, me) {
@@ -1415,6 +1525,6 @@ async function driveStatus(env) {
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */
-export const internals = { all, one, run, many, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf, nudgeDrive,
-  resetCaches() { schemaReady = false; secretCache = null; keys.clear(); nudgedAt = 0; },
+export const internals = { all, one, run, many, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf, nudgeDrive, pushToStudent,
+  resetCaches() { schemaReady = false; secretCache = null; keys.clear(); vapidKey = null; vapidTokens.clear(); nudgedAt = 0; },
   resetNudge() { nudgedAt = 0; } };
