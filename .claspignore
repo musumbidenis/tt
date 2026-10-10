@@ -1,0 +1,9 @@
+# What clasp may send to the Drive bridge Apps Script project. Paths are relative to rootDir
+# (apps-script), and clasp replaces the whole project with whatever is left after these rules —
+# so this is a deliberate allow-list, not a block-list.
+#
+# Code.gs must stay out of it: that is the old Google Sheet version of the system, a different
+# Apps Script project (bound to the Sheet), kept only so its data can be brought across.
+**/**
+!appsscript.json
+!DriveBridge.gs

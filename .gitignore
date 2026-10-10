@@ -4,3 +4,9 @@ __pycache__/
 loadtest/seed.json
 loadtest/cpu-copy.sqlite
 loadtest/__pycache__/
+
+# clasp (sending the Drive bridge to Apps Script). .clasp.json names one Google project and
+# .clasprc.json holds a sign-in token, so neither belongs in the repository.
+.clasp.json
+.clasprc.json
+.clasp-inspect/

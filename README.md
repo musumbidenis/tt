@@ -68,7 +68,7 @@ The Apps Script version is kept only so its data can be moved across: the 12-wee
 This puts a Google Sheet of each trainer's attendance in their Drive folder, and stores the students' POE evidence in Drive. Do it with the **school Google Workspace account** that owns the folders.
 
 1. In that account's Drive, have one **Trainers** folder with a folder per trainer inside it (named after them, for example `Musumbi Denis` or `ICT020 Musumbi`), and a **POE** folder. Open each and copy its ID: the part of the address after `/folders/`.
-2. Open **https://script.google.com → New project**. Name it `RVNP Drive bridge`. Delete what is in `Code.gs`, paste in everything from [`apps-script/DriveBridge.gs`](apps-script/DriveBridge.gs) and **Save**.
+2. Open **https://script.google.com → New project**. Name it `RVNP Drive bridge`. Delete what is in `Code.gs`, paste in everything from [`apps-script/DriveBridge.gs`](apps-script/DriveBridge.gs) and **Save**. (From the second time onwards there is no pasting: see [Updating the bridge later](#updating-the-bridge-later).)
 3. **Project Settings** (the cog) → **Script Properties → Add script property**, three times:
    - `WORKER_URL`: the Worker's address from step 7 above
    - `TRAINERS_FOLDER_ID`: the Trainers folder ID
@@ -83,7 +83,41 @@ Each trainer's folder gets **Attendance register - <term>** and **Marksheets - <
 
 **When the sheets are updated.** The bridge no longer asks the database every 10 minutes. The database tells it whenever something changes — a register marked, marks entered, evidence approved, a class list or the loading uploaded — and the bridge updates the sheets about two minutes later. A burst of changes still makes one update, and an **hourly** run catches anything a missed message would have left behind. So nothing happens at night or at the weekend, and a register reaches Drive within a few minutes instead of up to ten.
 
-**Updating the bridge later**: paste the new `DriveBridge.gs`, Save, then **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The address stays the same.
+#### Updating the bridge later
+
+**From this computer, with `clasp`** (no copying and pasting). Once per computer:
+
+1. Switch the Apps Script API on for the account, once: **https://script.google.com/home/usersettings → Google Apps Script API: On**.
+2. Point clasp at the project — give it the script id, or just the address of the editor:
+
+   ```
+   bash apps-script/clasp-init.sh https://script.google.com/home/projects/…/edit
+   npx clasp login
+   ```
+
+   `clasp login` opens a browser; sign in with the **school Workspace account** that owns the folders. The sign-in is kept in your home folder, never in the repository.
+
+Then, whenever `apps-script/DriveBridge.gs` changes:
+
+```
+npx clasp status            # what will be sent: appsscript.json and DriveBridge.gs, nothing else
+npx clasp push -f           # replace the project's files with these
+npx clasp deployments       # the web app's deployment id, the long AKfycb… one
+npx clasp deploy -i <deployment id> -d "Drive bridge 1.2.0"
+```
+
+`push` replaces the whole project, so anything typed into the editor and not in git is lost — if in doubt, look first:
+
+```
+mkdir -p .clasp-inspect && echo '{"scriptId":"<the id>","rootDir":"."}' > .clasp-inspect/.clasp.json
+npx clasp pull -P .clasp-inspect     # the live project, kept out of the way
+```
+
+`push` only changes the code. The address stays the same, and the running web app keeps serving the **old** version until `clasp deploy -i` points its deployment at a new one. A change to the triggers still needs **setup** run once by hand: open the editor (`npx clasp open-script`), choose **setup** and click **Run**.
+
+[`apps-script/appsscript.json`](apps-script/appsscript.json) travels with the code: it is where the web app's own settings live (**Execute as: Me**, **Who has access: Anyone**), along with the timezone. [`.claspignore`](.claspignore) makes sure only `DriveBridge.gs` and that manifest are ever sent, so the old Google Sheet script in the same folder is never pushed into the bridge's project by mistake.
+
+**By hand instead**, if clasp is not set up: paste the new `DriveBridge.gs` into the editor, Save, then **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The address stays the same.
 
 There is one more optional set-up, also about 5 minutes: letting students' phones tell them when their evidence is approved or returned. It is described with the rest of POE, under [Notifications for students](#notifications-for-students-once-about-5-minutes).
 
