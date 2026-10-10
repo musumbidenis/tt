@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.3.0';
+export const VERSION = '5.3.1';
 const SCHEMA_VERSION = '4';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -227,6 +227,7 @@ const ACTIONS = {
   poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => poeDecide(env, b, me) },
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
+  poeClass: { role: ['MIS', 'HOD'], fn: (env, b) => poeClass(env, b) },
 };
 
 /* ---------- staff sign-in ---------- */
@@ -1296,6 +1297,18 @@ async function poeReceive(env, b, me) {
   await run(env, `UPDATE evidence SET received_at=?, updated_at=? WHERE status='approved' AND received_at IS NULL AND id IN ${IN}`, now, now, JSON.stringify(ids));
   await audit(env, me, 'evidence received', `${ids.length} file(s)`);
   return { ok: true };
+}
+/** POE by student: the classes taught this term, and for one class its students and units. */
+async function poeClass(env, b) {
+  const loading = await all(env, `SELECT class_code, unit_code, unit_name FROM loading WHERE term_id=${ACTIVE_TERM}`);
+  const classes = [...new Set(loading.flatMap((u) => classParts(u.class_code)))].sort();
+  const cls = String(b.classCode || '');
+  if (!cls) return { ok: true, classes };
+  const seen = new Set(), units = [];
+  for (const u of unitsForClass(loading, cls)) if (!seen.has(u.unit_code)) { seen.add(u.unit_code); units.push({ code: u.unit_code, name: u.unit_name || u.unit_code }); }
+  const students = (await all(env, `SELECT adm_no, name FROM trainees WHERE class_code=? AND COALESCE(status,'') NOT IN ${GONE} ORDER BY name`, cls))
+    .map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no }));
+  return { ok: true, classes, classCode: cls, units, students };
 }
 async function driveStatus(env) {
   const r = await getMeta(env, 'drive_report');

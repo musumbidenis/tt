@@ -718,3 +718,27 @@ body.student[data-view="poe"] .view-checkin, body.student:not([data-view="poe"])
 .poe-decide .row-actions { justify-content: flex-end; }
 .drive-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 1rem; }
 .drive-list select { width: auto; max-width: 100%; margin: 0; }
+/* POE by student */
+.poe-mode { margin: .25rem 0 .75rem; }
+.poe-sum { margin: 0 .25rem .5rem; }
+.poe-stu { padding: 0; overflow: hidden; margin-bottom: .5rem; }
+.poe-stu > summary { display: flex; align-items: center; justify-content: space-between; gap: .5rem .75rem; flex-wrap: wrap; padding: .7rem 1rem; cursor: pointer; list-style: none; }
+.poe-stu > summary::-webkit-details-marker { display: none; }
+.poe-stu > summary::after { content: '▾'; color: var(--muted); margin-left: auto; transition: transform .15s; }
+.poe-stu[open] > summary::after { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .poe-stu > summary::after { transition: none; } }
+.poe-tally { display: flex; gap: .3rem; flex-wrap: wrap; }
+.poe-stu .table-wrap { border-top: 1px solid var(--line); overflow-x: auto; }
+.poe-matrix { border-collapse: collapse; width: 100%; font-size: .875rem; }
+.poe-matrix th, .poe-matrix td { padding: .35rem .4rem; border-bottom: 1px solid var(--line); text-align: center; }
+.poe-matrix thead th { font: 600 .75rem var(--display); color: var(--muted); background: var(--sunk); }
+.poe-matrix tbody th { text-align: left; font-weight: 600; min-width: 9rem; padding-left: 1rem; }
+.poe-matrix tr:last-child > * { border-bottom: 0; }
+.pm.none { color: var(--line-strong); }
+.pm-btn { appearance: none; min-width: 36px; min-height: 32px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); font: 700 .9375rem var(--display); cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+.pm-btn small { font: 600 .625rem var(--text); opacity: .8; }
+.pm-btn.approved { background: var(--p-soft); border-color: var(--p); color: var(--p); }
+.pm-btn.approved.received { background: var(--p); color: #fff; }
+@media (prefers-color-scheme: dark) { .pm-btn.approved.received { color: #08110c; } }
+.pm-btn.submitted { background: var(--l-soft); border-color: var(--l); color: var(--l); }
+.pm-btn.returned { background: var(--a-soft); border-color: var(--a); color: var(--a); }

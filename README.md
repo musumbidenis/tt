@@ -183,7 +183,7 @@ Syncing is automatic on both sides. During a live lesson, the trainer's phone ch
 
 **Trainers** open the **POE** tab (the dot shows how many are waiting). Each submission opens inside the app with its pages; **Approve**, or **Return to student** with a note. After each decision the next one waiting opens. The HOD sees the whole department.
 
-**The MIS Officer** sees the approved ones under **POE → To receive**, and marks them received once filed. Uploading and previewing need internet; the files themselves never pass through the database.
+**The MIS Officer** sees the approved ones under **POE → To receive**, and marks them received once filed. The **By student** toggle (MIS Officer and HOD) shows one class at a time: each student with every unit and item — approved, with the trainer, returned or not sent — and any mark opens that file. Uploading and previewing need internet; the files themselves never pass through the database.
 
 ## In the database
 

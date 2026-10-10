@@ -7,10 +7,11 @@
 const PoeStaff = (() => {
   const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
   const STATUS = { submitted: ['pending', 'To review'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
-  const ps = { list: [], status: '', cls: '', unit: '', q: '', loaded: false, sheetUrl: '', indexUrl: '', driveReady: true, open: null, files: new Map(), picked: new Set(), seq: 0 };
+  const ps = { list: [], status: '', cls: '', unit: '', q: '', loaded: false, sheetUrl: '', indexUrl: '', driveReady: true, open: null, files: new Map(), picked: new Set(), seq: 0, mode: 'unit', classes: [], roster: new Map(), sCls: '', sFilter: '', order: [] };
   const box = () => $('#poe');
   const misOnly = () => hasRole('MIS') && !hasRole('TRAINER') && !hasRole('HOD');
   const canDecide = () => hasRole('TRAINER') || hasRole('HOD');
+  const byStudentAllowed = () => hasRole('MIS') || hasRole('HOD');
 
   async function load() {
     const res = await api('poeList', {});
@@ -45,7 +46,11 @@ const PoeStaff = (() => {
       && (!ps.cls || e.classCode === ps.cls) && (!ps.unit || e.unitCode === ps.unit)
       && (!q || e.name.toLowerCase().includes(q) || e.admNo.toLowerCase().includes(q)));
   }
+  const modeToggle = () => (byStudentAllowed() ? `<div class="view-tabs poe-mode" role="group" aria-label="View">
+      <button type="button" data-mode="unit" aria-pressed="${ps.mode === 'unit'}">By unit</button>
+      <button type="button" data-mode="student" aria-pressed="${ps.mode === 'student'}">By student</button></div>` : '');
   function draw() {
+    if (ps.mode === 'student' && byStudentAllowed()) return drawStudents();
     const all = ps.list, counts = { submitted: 0, approved: 0, returned: 0, received: 0 };
     for (const e of all) { counts[e.status] = (counts[e.status] || 0) + 1; if (e.status === 'approved' && e.receivedAt) counts.received++; }
     if (misOnly()) counts.approved -= counts.received;
@@ -63,6 +68,7 @@ const PoeStaff = (() => {
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+        ${modeToggle()}
         <p class="muted small">${misOnly() ? 'Submissions the trainers approved arrive here. Mark them received once you have filed them.'
           : 'Students send CAT and practical evidence from the student app. Open one to see it, then approve it or return it with a note.'}</p>
         ${ps.driveReady ? '' : '<p class="warn-text small">The Google Drive bridge has not reported in yet, so students cannot upload. The MIS Officer sets it up once (see the README).</p>'}
@@ -96,6 +102,84 @@ const PoeStaff = (() => {
       </button></li>`;
   }
 
+  /* ---------- by student: every unit and item of one student, what is in and what is missing ---------- */
+  async function loadClass(cls) {
+    const res = await api('poeClass', cls ? { classCode: cls } : {});
+    if (!res.ok) throw new Error(res.error || 'Could not load the class');
+    ps.classes = res.classes || [];
+    if (cls) ps.roster.set(cls, { students: res.students, units: res.units });
+  }
+  const latestOf = (adm) => {
+    const out = new Map();
+    for (const e of ps.list) {
+      if (lower(e.admNo) !== lower(adm)) continue;
+      const k = e.unitCode + '|' + e.item, had = out.get(k);
+      if (!had || e.version > had.version) out.set(k, e);
+    }
+    return out;
+  };
+  async function drawStudents() {
+    const seq = ps.seq;
+    try {
+      if (!ps.classes.length) await loadClass('');
+      if (!ps.sCls) ps.sCls = ps.classes[0] || '';
+      if (ps.sCls && !ps.roster.has(ps.sCls)) {
+        const holder = box().querySelector('#poeStudents');
+        if (holder) holder.innerHTML = '<p class="muted">Loading the class…</p>';
+        else box().innerHTML = '<div class="card"><p class="muted">Loading the class…</p></div>';
+        await loadClass(ps.sCls);
+      }
+    } catch (e) { box().innerHTML = `<div class="card notice"><h2>Could not load the class</h2><p>${esc(e.message)}</p></div>`; return; }
+    if (seq !== ps.seq) return;
+    const r = ps.roster.get(ps.sCls) || { students: [], units: [] };
+    const q = ps.q.trim().toLowerCase();
+    const rows = r.students.map((st) => {
+      const got = latestOf(st.admNo);
+      const units = [...r.units];
+      for (const e of got.values()) if (!units.some((u) => u.code === e.unitCode)) units.push({ code: e.unitCode, name: e.unitName }); // moved from another class
+      const c = { approved: 0, submitted: 0, returned: 0 };
+      for (const e of got.values()) c[e.status]++;
+      return { st, got, units, c, sent: got.size };
+    });
+    const show = rows.filter((x) => (!q || x.st.name.toLowerCase().includes(q) || x.st.admNo.toLowerCase().includes(q))
+      && (ps.sFilter === '' || (ps.sFilter === 'none' ? !x.sent : x.c[ps.sFilter] > 0)));
+    const total = { none: rows.filter((x) => !x.sent).length, submitted: rows.filter((x) => x.c.submitted).length, returned: rows.filter((x) => x.c.returned).length, approved: rows.filter((x) => x.c.approved).length };
+    const chips = [['', 'Everyone'], ['submitted', 'With trainer'], ['returned', 'Returned'], ['approved', 'Has approved'], ['none', 'Nothing sent']]
+      .map(([k, l]) => `<button type="button" class="chipbtn${ps.sFilter === k ? ' on' : ''}" data-sfilter="${k}">${l}${k && total[k] ? ` <span class="n">${total[k]}</span>` : ''}</button>`).join('');
+    box().innerHTML = `
+      <div class="card poe-head">
+        <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+        ${modeToggle()}
+        <p class="muted small">Each student's units and items as the student sees them: ✓ approved, • with the trainer, ↺ returned, – not sent. Tap a mark to open the file.</p>
+        <div class="chips poe-chips" role="group" aria-label="Show">${chips}</div>
+        <div class="poe-filters">
+          <select id="poeSClass" aria-label="Class">${ps.classes.map((c) => `<option${c === ps.sCls ? ' selected' : ''}>${esc(c)}</option>`).join('') || '<option value="">No classes this term</option>'}</select>
+          <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
+        </div>
+      </div>
+      <div id="poeStudents">
+      <p class="muted small poe-sum">${esc(ps.sCls)} · ${r.students.length} students · ${r.units.length} units · ${rows.reduce((n, x) => n + x.sent, 0)} items sent</p>
+      ${show.length ? show.map(studentHtml).join('') : `<div class="card notice"><h2>Nobody here</h2><p class="muted">${r.students.length ? 'Try another filter.' : 'This class has no students on its list.'}</p></div>`}
+      </div>`;
+  }
+  function studentHtml({ st, got, units, c }) {
+    const used = ITEMS.filter((it) => [...got.values()].some((e) => e.item === it));
+    const cols = used.length ? ITEMS.filter((it) => ITEMS.indexOf(it) <= Math.max(...used.map((u) => ITEMS.indexOf(u))) || it === 'CAT1' || it === 'PRAC1') : ['CAT1', 'CAT2', 'PRAC1'];
+    const mark = (e) => {
+      if (!e) return '<td class="pm none">–</td>';
+      const sym = e.status === 'approved' ? '✓' : e.status === 'returned' ? '↺' : '•';
+      return `<td class="pm"><button type="button" class="pm-btn ${e.status}${e.receivedAt ? ' received' : ''}" data-open="${esc(e.id)}" data-adm="${esc(st.admNo)}"
+        aria-label="${esc(e.unitName)} ${e.item} ${STATUS[e.status]?.[1] || e.status}">${sym}${e.version > 1 ? `<small>v${e.version}</small>` : ''}</button></td>`;
+    };
+    const tally = [c.approved && `<span class="pill synced">✓ ${c.approved}</span>`, c.submitted && `<span class="pill pending">• ${c.submitted}</span>`,
+      c.returned && `<span class="pill rejected">↺ ${c.returned}</span>`].filter(Boolean).join('') || '<span class="pill locked">Nothing sent</span>';
+    return `<details class="card poe-stu" data-adm="${esc(st.admNo)}"${ps.openStu === st.admNo ? ' open' : ''}>
+      <summary><span class="poe-who"><b>${esc(st.name)}</b><span class="muted small">${esc(st.admNo)}</span></span><span class="poe-tally">${tally}</span></summary>
+      <div class="table-wrap"><table class="poe-matrix"><thead><tr><th>Unit</th>${cols.map((it) => `<th>${it}</th>`).join('')}</tr></thead>
+      <tbody>${units.map((u) => `<tr><th scope="row">${esc(u.name)}</th>${cols.map((it) => mark(got.get(u.code + '|' + it))).join('')}</tr>`).join('')}</tbody></table></div>
+    </details>`;
+  }
+
   /* ---------- preview ---------- */
   async function fetchFile(id) {
     if (ps.files.has(id)) return ps.files.get(id);
@@ -111,10 +195,13 @@ const PoeStaff = (() => {
     if (ps.files.size > 12) ps.files.delete(ps.files.keys().next().value);
     return file;
   }
-  async function openViewer(id) {
+  async function openViewer(id, order) {
     const e = ps.list.find((x) => x.id === id); if (!e) return;
     ps.open = id;
-    const order = filtered().map((x) => x.id), i = order.indexOf(id);
+    if (order) ps.order = order;
+    else if (!ps.order.includes(id)) ps.order = filtered().map((x) => x.id);
+    order = ps.order;
+    const i = order.indexOf(id);
     const decided = e.status !== 'submitted';
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view-head">
@@ -176,9 +263,9 @@ const PoeStaff = (() => {
       toast(decision === 'approved' ? 'Approved' : 'Returned to the student', 'ok');
       badge();
       // Straight on to the next one waiting, so a class can be reviewed in one go.
-      const next = filtered().find((x) => x.status === 'submitted' && x.id !== ps.open);
+      const next = ps.mode === 'unit' && filtered().find((x) => x.status === 'submitted' && x.id !== ps.open);
       draw();
-      if (next && ps.status === 'submitted') openViewer(next.id); else $('#poeDialog').close();
+      if (next && ps.status === 'submitted') openViewer(next.id, filtered().map((x) => x.id)); else $('#poeDialog').close();
     } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
   }
   async function receive(btn) {
@@ -201,18 +288,28 @@ const PoeStaff = (() => {
       if (!e.target.closest('#poe, #poeDialog')) return;
       const t = e.target;
       const s = t.closest('[data-status]'); if (s && t.closest('#poe')) { ps.status = s.dataset.status; ps.picked.clear(); draw(); return; }
-      const o = t.closest('[data-open]'); if (o) { openViewer(o.dataset.open); return; }
+      const m = t.closest('[data-mode]'); if (m && t.closest('#poe')) { ps.mode = m.dataset.mode; ps.q = ''; ps.seq++; draw(); return; }
+      const sf = t.closest('[data-sfilter]'); if (sf) { ps.sFilter = sf.dataset.sfilter; draw(); return; }
+      const o = t.closest('[data-open]');
+      if (o && o.dataset.adm) {
+        // By student: previous / next go through that student's files, unit by unit.
+        ps.openStu = o.dataset.adm;
+        const ids = [...o.closest('.poe-stu').querySelectorAll('[data-open]')].map((b) => b.dataset.open);
+        openViewer(o.dataset.open, ids); return;
+      }
+      if (o) { openViewer(o.dataset.open, filtered().map((x) => x.id)); return; }
       const n = t.closest('[data-nav]'); if (n && n.dataset.nav) { openViewer(n.dataset.nav); return; }
       const d = t.closest('[data-decide]'); if (d) { decide(d.dataset.decide, d); return; }
       const a = t.closest('[data-act]');
       if (a?.dataset.act === 'close') $('#poeDialog').close();
-      if (a?.dataset.act === 'reload') { ps.files.clear(); render(); }
+      if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; render(); }
       if (a?.dataset.act === 'receive') receive(a);
     });
     document.addEventListener('change', (e) => {
       const t = e.target;
       if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; draw(); }
       if (t.id === 'poeUnitF') { ps.unit = t.value; draw(); }
+      if (t.id === 'poeSClass') { ps.sCls = t.value; ps.openStu = ''; ps.seq++; draw(); }
       if (t.dataset?.pick) { if (t.checked) ps.picked.add(t.dataset.pick); else ps.picked.delete(t.dataset.pick); draw(); }
       if (t.id === 'poeAll') { for (const x of filtered()) if (x.status === 'approved' && !x.receivedAt) { if (t.checked) ps.picked.add(x.id); else ps.picked.delete(x.id); } draw(); }
     });
@@ -222,13 +319,17 @@ const PoeStaff = (() => {
       clearTimeout(ps.qt); ps.qt = setTimeout(() => { const pos = e.target.selectionStart; draw(); const s = $('#poeSearch'); s.focus(); s.setSelectionRange(pos, pos); }, 200);
     });
     $('#poeDialog').addEventListener('close', () => { ps.open = null; });
+    document.addEventListener('toggle', (e) => {
+      const d = e.target;
+      if (d.matches?.('details.poe-stu')) { if (d.open) ps.openStu = d.dataset.adm; else if (ps.openStu === d.dataset.adm) ps.openStu = ''; }
+    }, true);
   }
   /** After sign-in: count what is waiting, for the tab's dot (one small request). */
   async function refreshBadge() {
-    if (!me() || !navigator.onLine || Date.now() - (ps.badgeAt || 0) < 15 * 60e3) return;
+    if (!me() || state.auth?.mustChange || !navigator.onLine || Date.now() - (ps.badgeAt || 0) < 15 * 60e3) return;
     ps.badgeAt = Date.now();
     try { await load(); } catch { /* shown when the tab opens */ }
   }
-  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0 }); ps.files.clear(); ps.picked.clear(); badge(); }
+  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '' }); ps.roster.clear(); ps.files.clear(); ps.picked.clear(); badge(); }
   return { render, wire, refreshBadge, reset, state: ps };
 })();
