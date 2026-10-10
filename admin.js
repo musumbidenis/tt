@@ -439,19 +439,28 @@ const Admin = (() => {
       }
       const opts = (sel) => `<option value="">Choose their folder…</option>${(r.folders || []).sort((a, b) => a.name.localeCompare(b.name)).map((f) => `<option value="${esc(f.id)}"${f.id === sel ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}`;
       const staff = new Map((cache.staff || []).map((x) => [lower(x.code), x]));
+      // Students upload to this address. The school-only form (/a/macros/<domain>/) asks students to sign in, so uploads fail.
+      const schoolOnly = /\/a\/macros\//.test(r.url || '');
+      const noFolders = !(r.folders || []).length;
       fill('m-drive', `<p class="muted">Connected · last update ${esc(fmtShort(r.at))} · ${r.matched} trainer folder${r.matched === 1 ? '' : 's'} found${r.indexUrl ? ` · <a href="${esc(r.indexUrl)}" target="_blank" rel="noopener">POE evidence index</a>` : ''}</p>
-        ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> Their sheet is made once you choose their folder (or name a folder after them in the Trainers folder).</p>
+        ${schoolOnly ? `<p class="err-text small">The bridge address is the school-only form, so students who are not signed in to the school account cannot send evidence. In Apps Script, deploy a new version of the web app with <b>Who has access: Anyone</b>, then run sync() once.</p>` : ''}
+        ${noFolders ? '<p class="warn-text small">The Trainers folder in Drive has no folders inside it yet. Create one folder per trainer inside it, or paste each trainer\'s folder link below.</p>' : ''}
+        ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> Choose their folder, or paste its link. Their sheet is made after that.</p>
         <ul class="mlist drive-list">${r.unmatched.map((u) => `<li data-code="${esc(u.code)}"><span><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span></span>
-          <select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select></li>`).join('')}</ul>` : '<p>Every trainer with units has a folder and a sheet.</p>'}
+          <span class="drive-pick">${(r.folders || []).length ? `<select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select>` : ''}
+          <input type="text" data-drivelink placeholder="or paste folder link" aria-label="Folder link for ${esc(u.name)}"></span></li>`).join('')}</ul>` : '<p>Every trainer with units has a folder and a sheet.</p>'}
         <p class="muted small">Sheets refresh about every 10 minutes from the registers that have reached the server.</p>`);
     } catch (e) { fill('m-drive', `<p class="err-text">${esc(e.message)}</p>`); }
   }
-  async function setDriveFolder(sel) {
-    const code = sel.closest('li').dataset.code;
-    sel.disabled = true;
-    try { need(await api('updateStaff', { code, driveFolder: sel.value })); toast('Saved — their sheet is made on the next Drive update (about 10 minutes)', 'ok'); }
+  async function setDriveFolder(input) {
+    const code = input.closest('li').dataset.code;
+    const value = input.dataset.drivelink !== undefined ? input.value.trim() : input.value;
+    if (!value) return;
+    if (input.dataset.drivelink !== undefined && !/[-\w]{20,}/.test(value)) { toast('That does not look like a Drive folder link', 'err'); return; }
+    input.disabled = true;
+    try { need(await api('updateStaff', { code, driveFolder: value })); toast('Saved — their sheet is made on the next Drive update (about 10 minutes)', 'ok'); }
     catch (e) { toast(e.message, 'err'); }
-    finally { sel.disabled = false; }
+    finally { input.disabled = false; }
   }
 
   /* ---------- badge on the Manage tab ---------- */
@@ -513,6 +522,7 @@ const Admin = (() => {
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');
     if (t.matches('.import .streams input, .import .misCode')) { const card = t.closest('.import'); const imp = readImportCard(card); imp.diff = null; card.outerHTML = importCard(imp, Number(card.dataset.i)); }
     if (t.matches('[data-drivefolder]')) setDriveFolder(t);
+    if (t.matches('[data-drivelink]') && t.value.trim()) setDriveFolder(t);
     if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
     if (t.matches('.staff .rolechip input')) { const li = t.closest('li'); staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved'); }
   });
