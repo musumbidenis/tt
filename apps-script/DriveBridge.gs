@@ -21,7 +21,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.1.0';
+var BRIDGE_VERSION = '1.1.1';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -288,7 +288,7 @@ function writeRegister_(ss, u) {
   if (fresh) {
     sh.setColumnWidth(1, 32); sh.setColumnWidth(2, 150); sh.setColumnWidth(3, 230);
     sh.setColumnWidths(4, CELLS, 22); sh.setColumnWidths(W - 2, 2, 70); sh.setColumnWidth(W, 90);
-    sh.setFrozenRows(8); sh.setFrozenColumns(3);
+    sh.setFrozenRows(8);   // columns are not frozen: the heading rows are merged across them, which Sheets refuses
   }
   var cells = sh.getRange(9, 4, n, CELLS), rules = [];
   [['P', '#e0f2e7', '#10773c'], ['L', '#fcefd8', '#a35f00'], ['A', '#fbe4e5', '#c42830'], ['E', '#e2eaf5', '#33598a']].forEach(function (x) {
