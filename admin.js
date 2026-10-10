@@ -138,6 +138,7 @@ const Admin = (() => {
           <label>Duration (as printed on registers)<input id="tDur" placeholder="Sep - Dec 2026" value="${esc(t?.duration || '')}"></label>
           <label>First teaching day<input id="tStart" type="date" required value="${esc(t?.startDate || '')}"></label>
         </div>
+        <label>Assessment series (printed on marksheets)<input id="tSeries" placeholder="Nov/Dec 2026" value="${esc(t?.series || '')}"></label>
         <label>Break weeks (no teaching), any day in each week<span id="tBreaks" class="breaks">${(t?.breaks || []).map((b) => `<input type="date" value="${esc(b)}">`).join('')}<input type="date"></span></label>
         <fieldset class="catweeks"><legend>CAT weeks: trainers can take CAT registers in these weeks</legend>
           ${Array.from({ length: 12 }, (_, i) => `<label class="kchip"><input type="checkbox" value="${i + 1}" ${(t?.catWeeks || []).includes(i + 1) ? 'checked' : ''}><span>Week ${i + 1}</span></label>`).join('')}</fieldset>
@@ -152,7 +153,7 @@ const Admin = (() => {
     try {
       const breaks = $$('#tBreaks input').map((i) => i.value).filter(Boolean);
       const catWeeks = $$('.catweeks input:checked').map((i) => Number(i.value));
-      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks }));
+      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks, series: $('#tSeries').value.trim() }));
       const last = res.weeks.length;
       toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week ${last} starts ${fmtShort(res.weeks[last - 1])}${res.term.catWeeks?.length ? ` · CAT weeks ${res.term.catWeeks.join(', ')}` : ''}`, 'ok');
       await pullRoster({ silent: true });
@@ -218,6 +219,9 @@ const Admin = (() => {
     return `<p class="muted">Upload the class registers from the MIS system (PDF, or the same register saved as Excel). New students are added; nobody is removed without your say.</p>
       <label class="btn file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Choose class register files<input type="file" id="classFiles" accept=".pdf,.xlsx,.xlsm,.csv" multiple></label>
       <div id="classImports">${classImports.map(importCard).join('')}</div>
+      <div class="regcodes"><p class="small"><b>CDACC registration codes</b> for the marksheets: upload any Excel or CSV with admission numbers and registration codes (a filled marksheet works). Trainers can enter marks before this.</p>
+        <label class="btn small file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Upload registration codes<input type="file" id="regFiles" accept=".xlsx,.xlsm,.csv" multiple></label>
+        <span id="regResult" class="small"></span></div>
       ${groups.size ? `<ul class="mlist">${[...groups.entries()].sort().map(([g, codes]) => `<li><button type="button" class="mrow" data-group="${esc(g)}">
         <span><b>${esc(g)}</b><small>${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</small></span>
         <span class="pill synced">${codes.reduce((a, c) => a + count(c), 0)} students</span></button></li>`).join('')}</ul>` : ''}
@@ -428,6 +432,29 @@ const Admin = (() => {
     }
   }
 
+  /* ---------- MIS: CDACC registration codes ---------- */
+  const REG = /^[A-Z0-9]{4,12}(\/[A-Z0-9]{1,8}){4}$/i;   // 0320134P/CSC/6/2025/130
+  async function readRegCodes(files) {
+    const out = $('#regResult'); out.textContent = 'Reading…';
+    try {
+      const pairs = new Map();
+      for (const f of files) {
+        let rows = [];
+        if (/\.csv$/i.test(f.name)) rows = (await f.text()).split(/\r?\n/).map((l) => l.split(/[,;\t]/).map((x) => x.replace(/^"|"$/g, '').trim()));
+        else { const wb = await Xlsx.open(await f.arrayBuffer()); for (const n of wb.names) rows.push(...(await wb.rows(n)).filter(Boolean)); }
+        for (const r of rows) {
+          const cells = (r || []).map((x) => String(x ?? '').trim());
+          const adm = cells.find((x) => Imports.isAdm(x) && !REG.test(x)), reg = cells.find((x) => REG.test(x));
+          if (adm && reg) pairs.set(adm.toUpperCase(), reg.toUpperCase());
+        }
+      }
+      if (!pairs.size) throw new Error('No rows with both an admission number and a registration code (like 0320134P/CSC/6/2025/130) were found');
+      const res = need(await api('importRegCodes', { rows: [...pairs].map(([admNo, regCode]) => ({ admNo, regCode })) }));
+      out.innerHTML = `<b class="ok-text">${res.updated} registration code${res.updated === 1 ? '' : 's'} saved.</b>${res.unknown.length ? ` ${res.unknown.length} admission number(s) are not on any class list: ${res.unknown.slice(0, 5).map(esc).join(', ')}${res.unknown.length > 5 ? '…' : ''}` : ''}`;
+      pullRoster({ silent: true });
+    } catch (e) { out.innerHTML = `<span class="err-text">${esc(e.message)}</span>`; }
+  }
+
   /* ---------- MIS: the Google Drive bridge (attendance sheets per trainer, POE files) ---------- */
   async function loadDrive() {
     try {
@@ -536,6 +563,7 @@ const Admin = (() => {
     const t = e.target;
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
+    if (t.id === 'regFiles' && t.files.length) { readRegCodes([...t.files]); t.value = ''; }
     if (t.id === 'sheetExport' && t.files[0]) { importSheetFile(t.files[0]); t.value = ''; }
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');
     if (t.matches('.import .streams input, .import .misCode')) { const card = t.closest('.import'); const imp = readImportCard(card); imp.diff = null; card.outerHTML = importCard(imp, Number(card.dataset.i)); }

@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.3.1';
-const SCHEMA_VERSION = '4';
+export const VERSION = '5.4.0';
+const SCHEMA_VERSION = '5';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -52,10 +52,12 @@ CREATE INDEX IF NOT EXISTS evidence_adm ON evidence (adm_no, unit_code, item);
 CREATE INDEX IF NOT EXISTS evidence_cu ON evidence (class_code, unit_code);
 CREATE INDEX IF NOT EXISTS evidence_upd ON evidence (updated_at);
 CREATE INDEX IF NOT EXISTS evidence_status ON evidence (status, submitted_at);
-CREATE INDEX IF NOT EXISTS evidence_sub ON evidence (submitted_at);`;
+CREATE INDEX IF NOT EXISTS evidence_sub ON evidence (submitted_at);
+CREATE TABLE IF NOT EXISTS marks (term_id TEXT, class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, cat1 REAL, cat2 REAL, cat3 REAL, prac1 REAL, prac2 REAL, prac3 REAL, updated_at TEXT, updated_by TEXT, synced_at TEXT, PRIMARY KEY (term_id, class_code, unit_code, adm_no));
+CREATE INDEX IF NOT EXISTS marks_synced ON marks (synced_at);`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
-  'ALTER TABLE staff ADD COLUMN drive_folder TEXT'];
+  'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT'];
 
 /* ---------- small helpers ---------- */
 const nowIso = () => new Date().toISOString();
@@ -132,7 +134,7 @@ const markChanged = (env) => many(env, changedStmt());
 const bumpRoster = (env) => setMeta(env, 'roster_v', nowIso() + '#' + Math.random().toString(36).slice(2, 6));
 const catWeeksOf = (v) => [...new Set(String(v || '').split(/[\s,;]+/).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= TERM_WEEKS))].sort((a, b) => a - b);
 const termOut = (r) => (r ? { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean),
-  catWeeks: catWeeksOf(r.cat_weeks) } : null);
+  catWeeks: catWeeksOf(r.cat_weeks), series: r.series || '' } : null);
 async function audit(env, me, action, details) {
   await run(env, 'INSERT INTO audit (at,staff_code,name,action,details) VALUES (?,?,?,?,?)', nowIso(), me.code, me.name, action, String(details || '').slice(0, 2000));
 }
@@ -228,6 +230,9 @@ const ACTIONS = {
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
   poeClass: { role: ['MIS', 'HOD'], fn: (env, b) => poeClass(env, b) },
+  marksPull: { fn: (env, b, me) => marksPull(env, b, me) },
+  marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
+  importRegCodes: { role: ['MIS'], fn: (env, b, me) => importRegCodes(env, b, me) },
 };
 
 /* ---------- staff sign-in ---------- */
@@ -347,9 +352,9 @@ async function saveTerm(env, b, me) {
   const breaks = (b.breaks || []).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x)).map(mondayOf);
   await run(env, "UPDATE terms SET status='closed' WHERE status='active' AND id<>?", id);
   const cats = catWeeksOf((b.catWeeks || []).join(','));
-  await run(env, `INSERT INTO terms (id,name,duration,start_date,weeks,breaks,status,updated_at,cat_weeks) VALUES (?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at, cat_weeks=excluded.cat_weeks`,
-  id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso(), cats.join(', '));
+  await run(env, `INSERT INTO terms (id,name,duration,start_date,weeks,breaks,status,updated_at,cat_weeks,series) VALUES (?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at, cat_weeks=excluded.cat_weeks, series=excluded.series`,
+  id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso(), cats.join(', '), String(b.series || '').trim().slice(0, 60));
   await audit(env, me, b.close ? 'close term' : 'save term', `${id} ${b.name} from ${b.startDate}${breaks.length ? ' breaks ' + breaks.join(' ') : ''}${cats.length ? ' CAT weeks ' + cats.join(' ') : ''}`);
   await bumpRoster(env);
   const term = await activeTerm(env);
@@ -418,15 +423,15 @@ async function readRoster(env, b, me, pre) {
   if (!(me.roles.includes('HOD') || me.roles.includes('MIS'))) {
     for (const u of loading) if (lower(u.trainer_code) === lower(me.code)) classParts(u.class_code).forEach((c) => mine.add(c));
   }
-  const trainees = mine.size ? await all(env, `SELECT adm_no, name, class_code, status FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]))
-    : await all(env, 'SELECT adm_no, name, class_code, status FROM trainees');
+  const trainees = mine.size ? await all(env, `SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]))
+    : await all(env, 'SELECT adm_no, name, class_code, status, reg_code FROM trainees');
   const staff = {};
   for (const r of staffRows) staff[r.code] = { name: r.name, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
   return {
     ok: true, version, me, term, weeks: teachingWeeks(term),
     classes: classRows.map((r) => ({ code: r.code, name: r.name || r.code, level: r.level || levelOf(r.code), misClass: r.mis_class || '' })),
     units,
-    trainees: trainees.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code, active: active(r) })),
+    trainees: trainees.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code, active: active(r), regCode: r.reg_code || '' })),
     pending: reqs.filter((r) => r.status === 'pending').map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, requestedBy: r.requested_name, reason: r.reason })),
     rejected: reqs.filter((r) => r.status === 'rejected').map((r) => ({ admNo: r.adm_no, classCode: r.class_code })),
     aliases: reqs.filter((r) => r.status === 'merged' && r.merged_into).map((r) => ({ from: r.adm_no, to: r.merged_into, classCode: r.class_code })),
@@ -1123,13 +1128,14 @@ async function bridgeFeed(env, q) {
   let keys;
   if (!since) keys = loading.map(unitKey);
   else {
-    const [sess, tr, rq, so, st, ld, tm] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM sessions WHERE synced_at > ?', since],
+    const [sess, tr, rq, so, st, ld, tm, mk] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM sessions WHERE synced_at > ?', since],
       ['SELECT DISTINCT class_code FROM trainees WHERE updated_at > ? OR added_at > ?', since, since],
       ['SELECT DISTINCT class_code FROM requests WHERE requested_at > ? OR decided_at > ?', since, since],
       ['SELECT DISTINCT class_code, unit_code FROM signoffs WHERE submitted_at > ? OR decided_at > ?', since, since],
-      ['SELECT code FROM staff WHERE updated_at > ?', since], ['SELECT 1 AS x FROM loading WHERE updated_at > ? LIMIT 1', since], ['SELECT 1 AS x FROM terms WHERE updated_at > ? LIMIT 1', since]);
+      ['SELECT code FROM staff WHERE updated_at > ?', since], ['SELECT 1 AS x FROM loading WHERE updated_at > ? LIMIT 1', since], ['SELECT 1 AS x FROM terms WHERE updated_at > ? LIMIT 1', since],
+      ['SELECT DISTINCT class_code, unit_code FROM marks WHERE synced_at > ?', since]);
     const all = ld.length || tm.length;
-    const want = new Set([...sess, ...so].map(unitKey));
+    const want = new Set([...sess, ...so, ...mk].map(unitKey));
     const classes = new Set([...tr, ...rq].map((r) => r.class_code)), staffSet = new Set(st.map((r) => lower(r.code)));
     keys = loading.filter((u) => all || want.has(unitKey(u)) || classParts(u.class_code).some((c) => classes.has(c)) || staffSet.has(lower(u.trainer_code))).map(unitKey);
   }
@@ -1150,10 +1156,11 @@ async function bridgeFeed(env, q) {
     ['SELECT id, data FROM sessions WHERE class_code=? AND unit_code=?', u.class_code, u.unit_code],
     ["SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN (SELECT id FROM sessions WHERE class_code=? AND unit_code=?)", u.class_code, u.unit_code],
   ]);
-  const res = await many(env, ...stmts, [`SELECT adm_no, name, class_code, status FROM trainees WHERE class_code IN ${IN}`, JSON.stringify(classSet)],
+  const res = await many(env, ...stmts, [`SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify(classSet)],
     [`SELECT adm_no, name, class_code, status, merged_into FROM requests WHERE class_code IN ${IN} AND status IN ('pending','rejected','merged')`, JSON.stringify(units.map((u) => u.class_code))],
-    [`SELECT * FROM signoffs WHERE term_id=?`, term.id], [`SELECT code, late_pct, excused_pct FROM staff`], [`SELECT code, mis_class FROM classes WHERE code IN ${IN}`, JSON.stringify(units.map((u) => u.class_code))]);
-  const [trainees, reqs, signoffs, staffPct, classes] = res.slice(units.length * 2);
+    [`SELECT * FROM signoffs WHERE term_id=?`, term.id], [`SELECT code, late_pct, excused_pct FROM staff`], [`SELECT code, name, mis_class FROM classes WHERE code IN ${IN}`, JSON.stringify(classSet.concat(units.map((u) => u.class_code)))],
+    [`SELECT * FROM marks WHERE term_id=? AND class_code IN ${IN}`, term.id, JSON.stringify(units.map((u) => u.class_code))]);
+  const [trainees, reqs, signoffs, staffPct, classes, markRows] = res.slice(units.length * 2);
   const weeks = teachingWeeks(term);
   const from = weeks[0], to = (() => { const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); return e.toISOString().slice(0, 10); })();
   units.forEach((u, i) => {
@@ -1180,9 +1187,22 @@ async function bridgeFeed(env, q) {
       rows: buildRegister({ weeks, lessons, roster, alias, rejected, h, latePct: pct.late_pct ?? 50, excPct: pct.excused_pct ?? 100 }),
       lecturerComment: so?.lecturer_comment || '', hodComment: so?.hod_comment || '', signoff: so?.status || '',
       cats: all.filter((l) => l.kind !== 'lesson').sort((a, c) => a.date.localeCompare(c.date)).map((l) => ({ title: l.title || (l.kind === 'cat' ? 'CAT' : 'Extra'), date: l.date, kind: l.kind, marks: l.marks })),
+      marksheet: marksheetOf(u, roster, trainees, markRows, classes, term),
     });
   });
   return out;
+}
+
+/** The marksheet for one class-unit, students in admission number order (as the register). */
+function marksheetOf(u, roster, trainees, markRows, classes, term) {
+  const mine = markRows.filter((m) => m.class_code === u.class_code && m.unit_code === u.unit_code);
+  const byAdm = new Map(mine.map((m) => [lower(m.adm_no), m])), reg = new Map(trainees.map((t) => [lower(t.adm_no), t.reg_code || '']));
+  const cls = classes.find((c) => c.code === u.class_code) || classes.find((c) => classParts(u.class_code).includes(c.code)) || {};
+  const rows = [...roster].sort((a, c) => String(a.admNo).localeCompare(String(c.admNo))).map((t) => {
+    const m = byAdm.get(lower(t.admNo)) || {};
+    return { admNo: t.admNo, name: t.name, regCode: reg.get(lower(t.admNo)) || '', cat: ['cat1', 'cat2', 'cat3'].map((c) => m[c] ?? ''), prac: ['prac1', 'prac2', 'prac3'].map((c) => m[c] ?? '') };
+  });
+  return { courseCode: cls.mis_class || u.class_code, courseName: cls.name && cls.name !== cls.code ? cls.name : (cls.mis_class || u.class_code), series: term.series || '', entered: mine.length, rows };
 }
 
 /* ---------- the student phone: units, upload tickets, my evidence ---------- */
@@ -1298,6 +1318,50 @@ async function poeReceive(env, b, me) {
   await audit(env, me, 'evidence received', `${ids.length} file(s)`);
   return { ok: true };
 }
+/* ---------- marks (continuous assessment): entered in the app, offline too; the Drive sheet mirrors them ---------- */
+const MARK_COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
+const markOf = (v) => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) fail('Marks are percentages from 0 to 100'); return Math.round(n * 10) / 10; };
+const marksOut = (r) => ({ admNo: r.adm_no, ...Object.fromEntries(MARK_COLS.map((c) => [c, r[c] ?? null])), updatedAt: r.updated_at, updatedBy: r.updated_by || '' });
+async function marksAccess(env, me, cls, unit, write) {
+  if (!cls || !unit) fail('Choose the class and unit');
+  if (me.roles.includes('HOD') || (!write && me.roles.includes('MIS'))) return;
+  const { pairs } = await myUnitPairs(env, me);
+  if (!pairs.has(cls + '|' + unit)) fail('Only the trainer of this unit (or the HOD) can enter its marks');
+}
+async function marksPull(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  await marksAccess(env, me, cls, unit, false);
+  const rows = await all(env, `SELECT * FROM marks WHERE term_id=${ACTIVE_TERM} AND class_code=? AND unit_code=?`, cls, unit);
+  return { ok: true, classCode: cls, unitCode: unit, rows: rows.map(marksOut) };
+}
+/** Each student's row is kept whole; the newer edit wins, so two phones of the same trainer do not undo each other. */
+async function marksPush(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('The MIS Officer has not set up the term yet');
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  await marksAccess(env, me, cls, unit, true);
+  const now = nowIso();
+  const rows = (b.rows || []).slice(0, 400).filter((r) => r && r.admNo).map((r) => [term.id, cls, unit, String(r.admNo).trim(), ...MARK_COLS.map((c) => markOf(r[c])),
+    String(r.updatedAt || now) > now ? now : String(r.updatedAt || now), me.code, now]);
+  const sql = `INSERT INTO marks (term_id,class_code,unit_code,adm_no,${MARK_COLS.join(',')},updated_at,updated_by,synced_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(term_id,class_code,unit_code,adm_no) DO UPDATE SET ${MARK_COLS.map((c) => `${c}=excluded.${c}`).join(', ')}, updated_at=excluded.updated_at, updated_by=excluded.updated_by, synced_at=excluded.synced_at
+    WHERE excluded.updated_at >= marks.updated_at`;
+  for (let i = 0; i < rows.length; i += 50) await many(env, ...rows.slice(i, i + 50).map((r) => [sql, ...r]));
+  if (rows.length) await audit(env, me, 'marks', `${cls} ${unit}: ${rows.length} student(s)`);
+  return marksPull(env, b, me);
+}
+/** CDACC registration numbers, from any sheet with admission numbers and registration codes (a marksheet works). */
+async function importRegCodes(env, b, me) {
+  const pairs = (b.rows || []).map((r) => [String(r.admNo || '').trim(), String(r.regCode || '').trim()]).filter(([a, c]) => a && c).slice(0, 5000);
+  if (!pairs.length) fail('No admission numbers with registration codes were found in that file');
+  const known = new Set((await all(env, `SELECT adm_no FROM trainees WHERE adm_no IN ${IN}`, JSON.stringify(pairs.map((p) => p[0])))).map((r) => lower(r.adm_no)));
+  const use = pairs.filter(([a]) => known.has(lower(a))), now = nowIso();
+  for (let i = 0; i < use.length; i += 50) await many(env, ...use.slice(i, i + 50).map(([a, c]) => ['UPDATE trainees SET reg_code=?, updated_at=? WHERE adm_no=?', c, now, a]));
+  await audit(env, me, 'registration codes', `${use.length} of ${pairs.length}`);
+  if (use.length) await bumpRoster(env);
+  return { ok: true, updated: use.length, unknown: pairs.filter(([a]) => !known.has(lower(a))).map(([a]) => a).slice(0, 50), total: pairs.length };
+}
+
 /** POE by student: the classes taught this term, and for one class its students and units. */
 async function poeClass(env, b) {
   const loading = await all(env, `SELECT class_code, unit_code, unit_name FROM loading WHERE term_id=${ACTIVE_TERM}`);

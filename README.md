@@ -77,7 +77,7 @@ This puts a Google Sheet of each trainer's attendance in their Drive folder, and
    If **Anyone** is not offered, the school's Workspace administrator has to allow sharing outside the school domain for Drive and Apps Script in the Admin console. Students upload without signing in to Google, so the web app must be open; every upload and preview still needs a ticket signed by the database.
 7. Within 10 minutes the sheets appear and **Manage → Google Drive** shows *Connected*, with any trainer whose folder was not found by name. Pick their folder there.
 
-Each trainer's sheet is called **Attendance register - <term>**: one tab per class and unit in the class register layout (WK1–WK12, hours and %), plus a CATs tab when CATs were taken. It is rewritten from the database, so edits made in the sheet are replaced on the next update. Evidence is stored as **POE / Class / Adm No - Name / Unit - CAT1 - v1.pdf**, and the sheet **POE - Evidence index** in the POE folder lists every file with its status.
+Each trainer's folder gets **Attendance register - <term>** and **Marksheets - <term>**. The attendance sheet has one tab per class and unit in the class register layout (WK1–WK12, hours and %), plus a CATs tab when CATs were taken. It is rewritten from the database, so edits made in the sheet are replaced on the next update. Evidence is stored as **POE / Class / Adm No - Name / Unit - CAT1 - v1.pdf**, and the sheet **POE - Evidence index** in the POE folder lists every file with its status.
 
 **Updating the bridge later**: paste the new `DriveBridge.gs`, Save, then **Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy**. The address stays the same.
 
@@ -176,6 +176,14 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 3. Whenever each phone gets internet, it syncs. The server verifies every check-in against your phone's record of which codes it showed, and when. A forged, old or other-lesson code is refused, even if it arrives months later.
 
 Syncing is automatic on both sides. During a live lesson, the trainer's phone checks every few seconds with a tiny "anything new?" question. A student's scan shows up within about 3–5 seconds of them being online.
+
+## Marks (continuous assessment marksheets)
+
+**Trainers** open **Reports → Marks**, choose the class and unit, and type each student's **CAT 1–3** and **PRAC 1–3** as percentages (0–100). Enter moves down the column. Every mark is saved on the phone straight away, also with no internet, and sent to the server when there is. **AVG** is the sum of the three divided by 3 (a CAT not done counts as 0). **Export Excel marksheet** gives RVNP's *Continuous Assessment Marks Sheet per Unit of Competency*: crest, Course Code and Name, Unit Code and Title, Assessment Series, the table and the Prepared / Received / Approved block.
+
+**The MIS Officer** sets the **Assessment series** in **Manage → Term** (for example *Nov/Dec 2026*), and uploads the CDACC **registration codes** under **Manage → Class lists → Upload registration codes**: any Excel or CSV with admission numbers and registration codes, a filled marksheet included. Marks can be entered before the codes are in; they are matched by admission number.
+
+With Google Drive connected, each trainer's folder also gets **Marksheets - <term>**: one tab per class and unit in the same layout, refreshed from the app every 10 minutes. Enter marks in the app; edits in the sheet are replaced.
 
 ## POE evidence (students send, trainers approve)
 

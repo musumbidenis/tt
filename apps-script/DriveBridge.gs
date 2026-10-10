@@ -21,7 +21,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.0.2';
+var BRIDGE_VERSION = '1.1.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -146,6 +146,7 @@ function sync() {
         var ss = trainerSheet_(tr, folder, u.termName, sheets);
         writeRegister_(ss, u);
         if (u.cats && u.cats.length) writeCats_(ss, u);
+        if (u.marksheet) writeMarksheet_(trainerSheet_(tr, folder, u.termName, sheets, 'marks'), u);
       });
       p.setProperty('SHEETS', JSON.stringify(sheets));
       if (feed.next === null || feed.next === undefined) { p.setProperty('CURSOR', startNow); p.deleteProperty('PENDING'); break; }
@@ -215,10 +216,11 @@ function resolveFolder_(tr, folders) {
 }
 
 /* ---------- the trainer's attendance sheet ---------- */
-function trainerSheet_(tr, folder, termName, sheets) {
-  var key = tr.code + '|' + termName, id = sheets[key];
+function trainerSheet_(tr, folder, termName, sheets, kind) {
+  var marks = kind === 'marks';
+  var key = (marks ? 'M|' : '') + tr.code + '|' + termName, id = sheets[key];
   if (id) { try { return SpreadsheetApp.openById(id); } catch (e) { /* deleted: make a new one */ } }
-  var name = 'Attendance register - ' + termName;
+  var name = (marks ? 'Marksheets - ' : 'Attendance register - ') + termName;
   var it = folder.getFilesByName(name);
   var ss = it.hasNext() ? SpreadsheetApp.openById(it.next().getId()) : null;
   if (!ss) {
@@ -226,7 +228,9 @@ function trainerSheet_(tr, folder, termName, sheets) {
     DriveApp.getFileById(ss.getId()).moveTo(folder);
     var first = ss.getSheets()[0];
     first.setName('About');
-    first.getRange(1, 1, 3, 1).setValues([['Attendance register for ' + tr.name + ' — ' + termName], ['Updated automatically from the RVNP attendance app every 10 minutes. Changes made here are overwritten.'], ['One tab per class and unit; CAT registers in the tabs ending in "CATs".']]);
+    first.getRange(1, 1, 3, 1).setValues(marks
+      ? [['Continuous assessment marksheets for ' + tr.name + ' — ' + termName], ['Updated automatically from the marks entered in the RVNP attendance app (every 10 minutes). Changes made here are overwritten: enter marks in the app.'], ['One tab per class and unit, in the RVNP marksheet layout.']]
+      : [['Attendance register for ' + tr.name + ' — ' + termName], ['Updated automatically from the RVNP attendance app every 10 minutes. Changes made here are overwritten.'], ['One tab per class and unit; CAT registers in the tabs ending in "CATs".']]);
     first.getRange(1, 1).setFontWeight('bold').setFontSize(14);
   }
   sheets[key] = ss.getId();
@@ -304,6 +308,51 @@ function writeCats_(ss, u) {
   sh.getRange(1, 1, 2, head.length).setFontWeight('bold');
   sh.getRange(2, 1, v.length - 1, head.length).setBorder(true, true, true, true, true, true).setHorizontalAlignment('center').setWrap(true);
   sh.setFrozenRows(2);
+}
+
+/** The continuous assessment marks sheet per unit of competency, in the RVNP layout. AVG = sum ÷ 3. */
+function writeMarksheet_(ss, u) {
+  var m = u.marksheet, name = tabName_(u), sh = ss.getSheetByName(name), fresh = !sh;
+  if (!sh) sh = ss.insertSheet(name);
+  var W = 12, n = Math.max(1, m.rows.length), first = 11, last = first + n - 1, foot = last + 2, end = foot + 4;
+  var v = [];
+  for (var i = 0; i < end; i++) { var r = []; for (var j = 0; j < W; j++) r.push(''); v.push(r); }
+  v[0][0] = 'THE RIFT VALLEY NATIONAL POLYTECHNIC'; v[1][0] = 'ICT DEPARTMENT'; v[2][0] = 'CONTINUOUS ASSESSMENT MARKS SHEET PER UNIT OF COMPETENCY';
+  v[4][0] = 'Course Code:'; v[4][2] = m.courseCode; v[4][4] = 'Course Name:'; v[4][6] = m.courseName;
+  v[5][0] = 'Unit Code:'; v[5][2] = u.unitCode; v[5][4] = 'Unit Title:'; v[5][6] = u.unitName;
+  v[6][0] = 'Assessment Series:'; v[6][2] = m.series;
+  v[8][0] = 'S/N'; v[8][1] = 'Candidate’s Reg Code'; v[8][2] = 'Center Admission No.'; v[8][3] = 'Candidate’s Name'; v[8][4] = 'Oral/Theory Marks (100%)'; v[8][8] = 'Practical Marks (100%)';
+  ['CAT 1', 'CAT 2', 'CAT 3', 'AVG', 'PRAC 1', 'PRAC 2', 'PRAC 3', 'AVG'].forEach(function (t, k) { v[9][4 + k] = t; });
+  m.rows.forEach(function (s, i) {
+    var row = v[first - 1 + i], rn = first + i;
+    row[0] = i + 1; row[1] = s.regCode || ''; row[2] = s.admNo; row[3] = s.name;
+    for (var k = 0; k < 3; k++) { row[4 + k] = s.cat[k] === null ? '' : s.cat[k]; row[8 + k] = s.prac[k] === null ? '' : s.prac[k]; }
+    row[7] = '=IF(COUNT(E' + rn + ':G' + rn + ')=0,"",SUM(E' + rn + ':G' + rn + ')/3)';
+    row[11] = '=IF(COUNT(I' + rn + ':K' + rn + ')=0,"",SUM(I' + rn + ':K' + rn + ')/3)';
+  });
+  v[foot - 1][0] = 'Prepared by: ..............................'; v[foot - 1][4] = 'Signature: ..................'; v[foot - 1][9] = 'Date: ............';
+  v[foot][0] = 'Received by: ..............................'; v[foot][4] = 'Signature: ..................'; v[foot][9] = 'Date: ............';
+  v[foot + 1][0] = 'Approved by: ..............................'; v[foot + 1][4] = 'Signature: ..................'; v[foot + 1][9] = 'Date: ............';
+  sh.clear();
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart();
+  if (sh.getMaxRows() < end) sh.insertRowsAfter(sh.getMaxRows(), end - sh.getMaxRows());
+  sh.getRange(1, 1, end, W).setValues(v);
+  ['A1:L1', 'A2:L2', 'A3:L3', 'A5:B5', 'C5:D5', 'E5:F5', 'G5:L5', 'A6:B6', 'C6:D6', 'E6:F6', 'G6:L6', 'A7:B7', 'C7:D7',
+    'A9:A10', 'B9:B10', 'C9:C10', 'D9:D10', 'E9:H9', 'I9:L9'].forEach(function (a) { sh.getRange(a).merge(); });
+  sh.getRange('A1:L3').setHorizontalAlignment('center').setFontWeight('bold');
+  sh.getRange('A1').setFontSize(13); sh.getRange('A3').setFontColor('#1f6fbf');
+  sh.getRange('A5:A7').setFontWeight('bold'); sh.getRange('E5:E6').setFontWeight('bold');
+  sh.getRange('A9:L10').setFontWeight('bold').setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
+  sh.getRange('E10:H10').setBackground('#d9d9d9'); sh.getRange('I10:L10').setBackground('#fbe4d5');
+  sh.getRange(9, 1, 2 + n, W).setBorder(true, true, true, true, true, true);
+  sh.getRange(first, 1, n, 1).setHorizontalAlignment('center');
+  sh.getRange(first, 5, n, 8).setHorizontalAlignment('center');
+  sh.getRange(first, 8, n, 1).setNumberFormat('0'); sh.getRange(first, 12, n, 1).setNumberFormat('0');
+  sh.getRange(foot, 1, 3, W).setFontWeight('bold');
+  if (fresh) {
+    sh.setColumnWidth(1, 40); sh.setColumnWidths(2, 2, 190); sh.setColumnWidth(4, 210); sh.setColumnWidths(5, 8, 62);
+    sh.setFrozenRows(10);
+  }
 }
 
 /* ---------- POE evidence index in the POE folder ---------- */

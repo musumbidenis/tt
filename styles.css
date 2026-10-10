@@ -746,3 +746,35 @@ body.student[data-view="poe"] .view-checkin, body.student:not([data-view="poe"])
 .drive-pick { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: flex-end; }
 .drive-pick input[type=text] { width: 16rem; max-width: 100%; margin: 0; }
 .ok-text { color: var(--p); }
+
+/* ---------- Reports → Marks ---------- */
+.report-mode { max-width: 360px; }
+#marksCard { display: none; }
+#tab-reports.marks-mode #marksCard { display: block; }
+#tab-reports.marks-mode > :not(#reportMode):not(.report-filters):not(#marksCard) { display: none !important; }
+#tab-reports.marks-mode .report-filters label:last-child { display: none; }
+.marks-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.marks-head h2 { margin: 0; }
+.marks-head p { margin: .2rem 0 0; }
+.save-state.ok { background: var(--p-soft); color: var(--p); }
+.save-state.pending { background: var(--l-soft); color: var(--l); }
+.marks-wrap { overflow-x: auto; margin: .75rem -1rem 0; border-top: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+.marks-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 640px; font-variant-numeric: tabular-nums; }
+.marks-table th, .marks-table td { border-bottom: 1px solid var(--line); padding: 0; text-align: center; }
+.marks-table thead th { font: 600 .75rem var(--display); color: var(--muted); background: var(--sunk); padding: .35rem .25rem; }
+.marks-table thead th.prac { background: color-mix(in srgb, var(--l-soft) 70%, var(--sunk)); }
+.marks-table .mt-name { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; min-width: 9.5rem; max-width: 13rem; border-right: 1px solid var(--line); }
+.marks-table thead .mt-name { background: var(--sunk); padding-left: 1rem; z-index: 2; }
+.marks-table tbody .mt-name { display: flex; gap: .5rem; align-items: center; padding: .4rem .5rem .4rem 1rem; }
+.marks-table .mt-name b { display: block; font-weight: 600; font-size: .9rem; line-height: 1.2; }
+.marks-table .mt-name small { display: block; color: var(--muted); font-size: .75rem; }
+.mt-n { color: var(--muted); font-size: .75rem; min-width: 1.4em; text-align: right; }
+.marks-table input.mk { width: 3.6rem; height: 40px; margin: 3px; padding: 0 .25rem; text-align: center; font: 600 1rem var(--text); border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.marks-table input.mk:focus { outline: 2px solid var(--focus); outline-offset: 0; border-color: var(--focus); }
+.marks-table input.mk[readonly] { border-color: transparent; background: none; }
+.marks-table input.mk.bad { border-color: var(--a); background: var(--a-soft); }
+.marks-table td.avg { font: 700 .95rem var(--display); color: var(--ink-2); min-width: 3rem; background: var(--sunk); }
+.marks-table tr.dirty .mt-name { box-shadow: inset 3px 0 0 var(--l); }
+.marks-table tr.gone .mt-name b { color: var(--muted); }
+.marks-actions { margin-top: .75rem; }
+.regcodes { margin: .75rem 0; padding: .75rem; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); } .regcodes p { margin: 0 0 .5rem; }

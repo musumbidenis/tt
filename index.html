@@ -164,11 +164,16 @@
 
   <!-- REPORTS -->
   <section id="tab-reports" class="tab">
+    <div id="reportMode" class="view-tabs report-mode" role="group" aria-label="Show">
+      <button type="button" data-rmode="attendance" aria-pressed="true">Attendance</button>
+      <button type="button" data-rmode="marks" aria-pressed="false">Marks</button>
+    </div>
     <div class="card filters report-filters">
       <label>Class<select id="rClass"></select></label>
       <label>Unit<select id="rUnit"></select></label>
       <label>Minimum %<input type="number" id="rThreshold" min="0" max="100" step="1"></label>
     </div>
+    <div id="marksCard" class="card marks-card"></div>
     <p id="reportSource" class="muted small report-source"></p>
     <div id="reportSummary" class="report-summary"></div>
     <div id="reportControls" class="report-controls" hidden>
@@ -330,5 +335,6 @@
 <script src="app.js"></script>
 <script src="admin.js"></script>
 <script src="poe-staff.js"></script>
+<script src="marks.js"></script>
 </body>
 </html>

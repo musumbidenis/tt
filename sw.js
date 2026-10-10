@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.4.5';
+const CACHE = 'rvnp-attendance-v4.5.0';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,8 @@ const ASSETS = [
   './app.js',
   './admin.js',
   './poe-staff.js',
+  './marks.js',
+  './templates/marksheet.xlsx',
   './report.js',
   './xlsx.js',
   './imports.js',

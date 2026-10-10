@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.4.5';
+const APP_VERSION = '4.5.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -183,7 +183,7 @@ function normaliseRoster(input) {
     _id: 'class:' + c.code, type: 'class', code: c.code, name: c.name || c.code, level: c.level || '', misClass: c.misClass || '' }));
   const known = new Set(classes.map((c) => c.code));
   const trainees = (input.trainees || []).filter((t) => t.admNo && t.classCode).map((t) => ({
-    _id: 'trainee:' + t.admNo, type: 'trainee', admNo: t.admNo, name: t.name || t.admNo, classCode: t.classCode, active: t.active !== false }));
+    _id: 'trainee:' + t.admNo, type: 'trainee', admNo: t.admNo, name: t.name || t.admNo, classCode: t.classCode, active: t.active !== false, regCode: t.regCode || '' }));
   const units = (input.units || []).filter((u) => u.classCode && u.code).map((u) => ({
     _id: `unit:${u.classCode}:${u.code}`, type: 'unit', classCode: u.classCode, code: u.code, name: u.name || u.code,
     trainerCode: u.trainerCode || '', trainerName: u.trainerName || '', lessonsPerWeek: Number(u.lessonsPerWeek) || 2, hoursPerWeek: Number(u.hoursPerWeek) || 3 }));
@@ -487,7 +487,7 @@ function rosterFor(classCode) {
   const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === classCode).map((r) => lower(r.admNo)));
   const out = new Map();
   for (const code of classParts(classCode)) {
-    for (const t of activeTraineesFor(code)) if (!out.has(lower(t.admNo))) out.set(lower(t.admNo), { admNo: t.admNo, name: t.name, pending: false });
+    for (const t of activeTraineesFor(code)) if (!out.has(lower(t.admNo))) out.set(lower(t.admNo), { admNo: t.admNo, name: t.name, pending: false, regCode: t.regCode || '' });
   }
   const pend = [...state.meta.pending.filter((p) => p.classCode === classCode),
     ...state.addreqs.filter((a) => a.classCode === classCode && !a.done)];
@@ -830,6 +830,7 @@ async function reportSource(classCode, unitCode) {
 }
 
 async function renderReport() {
+  if (state.reportMode === 'marks') return Marks.render();
   const classCode = $('#rClass').value, unitCode = $('#rUnit').value;
   const body = $('#reportBody');
   $('#signoffCard').hidden = true;
@@ -1168,6 +1169,7 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
   };
   try {
     await pushPending();
+    await Marks.syncAll({ quiet: true }).catch(() => {});
     const reqs = await pushRequests();
     const qrUpdated = pull ? await pullCheckins() : 0; // uploads alone skip fetching; the live pulse handles that
     if (qrUpdated) await pushPending();
@@ -1637,6 +1639,7 @@ function fillSettingsForms() {
 function wire() {
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   PoeStaff.wire();
+  Marks.wire();
   document.addEventListener('click', (e) => { const g = e.target.closest('[data-goto]'); if (g) { e.preventDefault(); switchTab(g.dataset.goto); } });
 
   // Sign-in
