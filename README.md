@@ -159,8 +159,8 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 
 1. Open https://musumbidenis.github.io/tt/ in Chrome **while online**, then choose **⋮ → Add to Home screen**. Sign in with your staff code and the PIN from the MIS Officer, then choose your own PIN. Your classes download straight away. From then on, the phone works with or without network.
 2. **Mark**:
-   - pick your class and unit (only those in your loading), and the **week** (it starts on the current week);
-   - a timetable for that week appears: Monday to Friday, six slots a day (7.30–9.00, 9.00–10.30, 10.30–12.00, 13.00–14.30, 14.30–16.00, 16.00–17.30). Tap the slot where the class was. For a **double**, tap the next slot too. Registers already taken show in their slots; tap one to open it again;
+   - pick your class and unit (only those in your loading), and the **week** (it starts on the current week, written like *Week 5 (Oct 5 - Oct 9)*);
+   - a timetable for that week appears: the five days run down the side and the six lessons (7.30–9.00, 9.00–10.30, 10.30–12.00, then lunch, then 13.00–14.30, 14.30–16.00, 16.00–17.30) run across the top. Tap the slot where the class was. For a **double**, tap the next slot too. Registers already taken show in their slots; tap one to open it again;
    - tap **Open register**, then **P / A / L / E** for each student. Every tap is saved on the phone instantly, even offline.
 
    A unit can have up to **3 lessons a week**, matching the register's 3 cells per week; a double counts as two and fills two cells. Future days and dates outside the term's teaching weeks can't be chosen.
@@ -229,15 +229,15 @@ With Google Drive connected, each trainer's folder also gets **Marksheets - <ter
 
 ## POE evidence (students send, trainers approve)
 
-**Students** open **Evidence (POE)** in the student app, choose the unit and tick one or more items (CAT1–CAT4, PRAC1–PRAC3). For each item they photograph the pages; the app finds the page edges (drag the corners if needed), straightens the page and makes it look like a scan (**Document**, **Grey** or **Colour**). Pages can be reordered or deleted, or an existing PDF chosen instead. **Save and send** keeps the PDF on the phone first (and **Save a copy** puts it in the phone's downloads), then sends it to Drive when there is internet. The list shows *With your trainer*, *Approved* or *Returned* with the trainer's note; **Scan again** sends a new version (v2, v3…).
+**Students** open **Evidence (POE)** in the student app, choose the unit and tick one or more items (CAT1–CAT4, PRAC1–PRAC3). For each item they photograph the pages; the app finds the page edges (drag the corners if needed), straightens the page and makes it look like a clean scan. Pages can be reordered or deleted, or an existing PDF chosen instead. **Save and send** keeps the PDF on the device first (and **Save a copy** puts it in the device's downloads), then sends it to Drive when there is internet. The **Submissions** tab lists their check-ins and their evidence with the current status: *With your trainer*, *Approved* or *Returned* (with the trainer's note); **Scan again** sends a new version (v2, v3…).
 
 **Trainers** open the **POE** tab (the dot shows how many are waiting). Each submission opens inside the app with its pages; **Approve**, or **Return to student** with a note. After each decision the next one waiting opens. The HOD sees the whole department.
 
-**The MIS Officer** sees the approved ones under **POE → To receive**, and marks them received once filed. The **By student** toggle (MIS Officer and HOD) shows one class at a time: each student with every unit and item — approved, with the trainer, returned or not sent — and any mark opens that file. Uploading and previewing need internet; the files themselves never pass through the database.
+**The MIS Officer** sees the approved ones under **POE → To receive**, and marks them received once filed. The **By student** toggle (MIS Officer and HOD) shows one class at a time as a table you can search and filter, ten students to a page: how many items each has sent, approved, with the trainer and returned. Tap a student to open their units and items, and tap any mark to open that file. **Export Excel** and **Save as PDF** under the table give the whole filtered list, not just the page on screen. Uploading and previewing need internet; the files themselves never pass through the database.
 
 ### Telling students when their evidence is decided
 
-A student can ask their phone to tell them. In **Evidence (POE)**, under the Save button, there is **Notify me about my evidence**. Tapping it asks the phone for permission (nothing is ever asked when the app simply opens); from then on, when a trainer approves their work or sends it back, their phone shows a short message with the unit, the item and the trainer's note. Tapping it opens the app on Evidence.
+A student can ask their phone to tell them. In **Evidence (POE)**, under the Save button, there is **Notify me about my evidence**. Tapping it asks the phone for permission (nothing is ever asked when the app simply opens); from then on, when a trainer approves their work or sends it back, their phone shows a short message with the unit, the item and the trainer's note. Tapping it opens the app on Submissions.
 
 **On Android** (Chrome, Edge, Samsung Internet) it works straight away — adding the app to the Home Screen is recommended but not required.
 
@@ -356,3 +356,12 @@ Anything you have typed into a box is never taken, so a PIN or an admission numb
 **Close** puts the page back exactly as a trainer or student sees it; your notes are kept, and `?notes=1` picks them up again. **Clear** forgets them.
 
 This is for the people building the app. [`design-notes.js`](design-notes.js) is loaded **only** when `?notes=1` is in the address, so trainers and students never download it, and it is not part of what the app keeps for offline use — so the first time on a given phone it needs internet.
+
+
+## Screens and tables
+
+- **Wide screens** (a computer or a tablet held sideways) show the trainer app's tabs as a side bar on the left; phones keep the bar along the bottom.
+- **The Registers tab is gone.** A register taken earlier is reopened from the timetable on the Mark tab (choose its class, unit and week, then tap its slot). Registers are sent automatically; if one has been waiting for two days, a warning appears at the top of the app.
+- **Long tables are shown ten rows at a time** (or 25 or 50, chosen under the table): the term register, the POE students table, the department overview and the class list. Exports always contain every row.
+- **Manage → Department overview, Class lists and Staff** start folded away; tap the heading to open one. The app remembers which you opened until you leave the page.
+- There is no CSV export any more (Excel and PDF are the formats), and **Print QR ID cards** is visible but switched off. To bring it back, delete the word `disabled` on the `printQR` button in index.html; the code is still there.

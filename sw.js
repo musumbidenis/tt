@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.6.1';
+const CACHE = 'rvnp-attendance-v4.7.0';
 /* What this worker needs in order to answer a notification: the server address, this phone's ID and
  * the student's admission number. The student app writes it here when notifications are switched on,
  * because a service worker woken by a notification cannot read the app's own database. */
@@ -18,6 +18,7 @@ const ASSETS = [
   './templates/marksheet.xlsx',
   './report.js',
   './xlsx.js',
+  './tables.js',
   './imports.js',
   './templates/class-register.xlsx',
   './vendor/jszip.min.js',
