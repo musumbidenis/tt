@@ -391,3 +391,11 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Tables start at 30 rows a page.**
 - **POE preview** opens faster: files are kept on the device once opened, and the next submission is fetched while you read the current one.
 - **Student app**: renamed *Student-POE*; shows the student's **QR ID** (the trainer's **Scan ID cards** is switched back on); **My POE submissions**, **My scanned check-in(s)** and **My attendance** fold away and sort, and *My attendance* keeps a copy of every lesson the trainers marked; a submission needs **at least 2 pages**, and **Keep and take the next page** goes straight to the camera.
+
+## Changes in 4.12
+
+- The staff list shows each person's staff code in place of a serial number.
+- In a CAT week, **Lesson** is switched off: the CAT register (or extra CAT attendance) is taken instead.
+- The lunch column looks the same for every kind of register; for a lesson its cells cannot be chosen.
+- The student profile shows the college crest with *ICT Department*, and the QR caption reads *Student QR ID: Trainer can scan it to mark attendance*.
+- 4.12.2: the page footer has been removed.

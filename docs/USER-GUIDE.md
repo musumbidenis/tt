@@ -95,7 +95,7 @@ A **red dot** on a tab shows how many things are waiting for you (evidence to re
 
 On a **phone** the tabs run along the bottom of the screen. On a **computer or a tablet held sideways** they become a side bar on the left.
 
-The header shows **The Ark**, your name and your roles (for example *ICT MUSUMBI .D - HOD, MIS Officer, Trainer*), and whether the device is **Online** or **Offline**. The footer at the bottom of every screen shows the copyright.
+The header shows **The Ark**, your name and your roles (for example *ICT MUSUMBI .D - HOD, MIS Officer, Trainer*), and whether the device is **Online** or **Offline**.
 
 ### 2.2 Tables
 
