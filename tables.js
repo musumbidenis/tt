@@ -11,7 +11,7 @@
 const Tables = (() => {
   const SIZES = [10, 25, 30, 50, 100];
   const st = new Map(), redraw = new Map(), start = new Map([['marks', 30], ['register', 30], ['signoffs', 30]]);
-  const get = (key) => { if (!st.has(key)) st.set(key, { page: 1, size: start.get(key) || SIZES[0] }); return st.get(key); };
+  const get = (key) => { if (!st.has(key)) st.set(key, { page: 1, size: start.get(key) || 30 }); return st.get(key); };
   /** How many rows a table starts with (before the person chooses another number). */
   const defaults = (key, size) => { start.set(key, size); };
 
@@ -22,7 +22,7 @@ const Tables = (() => {
   }
   function bar(key, list) {
     const s = get(key), n = list.length;
-    if (n <= Math.min(SIZES[0], s.size)) return '';
+    if (n <= Math.min(SIZES[0], s.size) || (s.page === 1 && n <= s.size && s.size === 30)) return '';
     const pages = Math.ceil(n / s.size), from = (s.page - 1) * s.size + 1, to = Math.min(n, s.page * s.size);
     return `<nav class="pager" data-pager="${key}" aria-label="Pages">
       <span class="pg-info">${from}–${to} of ${n}</span>

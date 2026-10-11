@@ -1,12 +1,12 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.10.0';
+const CACHE = 'rvnp-attendance-v4.11.0';
 /* What this worker needs in order to answer a notification: the server address, this phone's ID and
  * the student's admission number. The student app writes it here when notifications are switched on,
  * because a service worker woken by a notification cannot read the app's own database. */
 const PUSH_CACHE = 'rvnp-push';
 const PUSH_KEY = './__push-identity';
-const KEEP = [CACHE, PUSH_CACHE];
+const KEEP = [CACHE, PUSH_CACHE, 'rvnp-poe-files'];   // POE files a trainer has opened, kept across updates
 const ASSETS = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const ASSETS = [
   './app.js',
   './admin.js',
   './poe-staff.js',
+  './alerts.js',
   './marks.js',
   './templates/marksheet.xlsx',
   './report.js',

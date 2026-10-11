@@ -204,20 +204,50 @@ const PoeStaff = (() => {
   }
 
   /* ---------- preview ---------- */
-  async function fetchFile(id) {
-    if (ps.files.has(id)) return ps.files.get(id);
-    const v = await api('poeView', { id });
-    if (!v.ok) throw new Error(v.error);
-    const res = await fetch(v.driveUrl + (v.driveUrl.includes('?') ? '&' : '?') + 'action=file&ticket=' + encodeURIComponent(v.ticket), { redirect: 'follow' });
-    const out = await res.json();
-    if (!out.ok) throw new Error(out.error || 'The Drive did not send the file');
-    const bin = atob(out.data), bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const file = { bytes, mime: out.mime || 'application/pdf', name: out.name };
-    ps.files.set(id, file);
-    if (ps.files.size > 12) ps.files.delete(ps.files.keys().next().value);
-    return file;
+  /* Files are kept on this device after the first look (an evidence file never changes: a new version gets a
+   * new id), and the next submission in the list is fetched while the trainer reads this one. */
+  const FILE_CACHE = 'rvnp-poe-files';
+  const fileKey = (id) => `./__poe-file/${encodeURIComponent(id)}`;
+  async function cachedFile(id) {
+    try {
+      const hit = await (await caches.open(FILE_CACHE)).match(fileKey(id));
+      if (!hit) return null;
+      return { bytes: new Uint8Array(await hit.arrayBuffer()), mime: hit.headers.get('Content-Type') || 'application/pdf', name: decodeURIComponent(hit.headers.get('X-Name') || '') };
+    } catch { return null; }
   }
+  async function keepFile(id, file) {
+    try {
+      const c = await caches.open(FILE_CACHE);
+      await c.put(fileKey(id), new Response(file.bytes, { headers: { 'Content-Type': file.mime, 'X-Name': encodeURIComponent(file.name || '') } }));
+      const keys = await c.keys();
+      for (const k of keys.slice(0, Math.max(0, keys.length - 60))) await c.delete(k);   // the 60 most recent
+    } catch { /* storage full or private mode: it is fetched again next time */ }
+  }
+  const fetching = new Map();
+  function fetchFile(id) {
+    if (ps.files.has(id)) return Promise.resolve(ps.files.get(id));
+    if (fetching.has(id)) return fetching.get(id);
+    const job = (async () => {
+      let file = await cachedFile(id);
+      if (!file) {
+        const v = await api('poeView', { id });
+        if (!v.ok) throw new Error(v.error);
+        const res = await fetch(v.driveUrl + (v.driveUrl.includes('?') ? '&' : '?') + 'action=file&ticket=' + encodeURIComponent(v.ticket), { redirect: 'follow' });
+        const out = await res.json();
+        if (!out.ok) throw new Error(out.error || 'The Drive did not send the file');
+        const bin = atob(out.data), bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        file = { bytes, mime: out.mime || 'application/pdf', name: out.name };
+        keepFile(id, file);
+      }
+      ps.files.set(id, file);
+      if (ps.files.size > 12) ps.files.delete(ps.files.keys().next().value);
+      return file;
+    })().finally(() => fetching.delete(id));
+    fetching.set(id, job);
+    return job;
+  }
+  const prefetch = (ids) => { for (const x of ids) if (x && navigator.onLine) fetchFile(x).catch(() => {}); };
   async function openViewer(id, order) {
     const e = ps.list.find((x) => x.id === id); if (!e) return;
     ps.open = id;
@@ -228,11 +258,12 @@ const PoeStaff = (() => {
     const decided = e.status !== 'submitted';
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view-head">
-        <div><h2>${esc(e.name)} <span class="item-tag">${esc(e.item)}</span></h2>
-          <p class="muted small">${esc(e.admNo)} · ${esc(e.classCode)} · ${esc(e.unitName)} · v${e.version} · sent ${esc(fmtTime(e.submittedAt))}</p></div>
+        <div><h2>${esc(e.name)} <span class="item-tag small-tag">${esc(e.item)}</span></h2>
+          <p class="muted small">${esc(e.admNo)} - ${esc(e.unitName)} v${e.version}</p></div>
         <button type="button" class="btn small ghost" data-act="close">Close</button>
       </div>
-      ${decided ? `<p class="poe-decided ${e.status}">${e.status === 'approved' ? 'Approved' : 'Returned'} by ${esc(e.decidedName)} · ${esc(fmtTime(e.decidedAt))}${e.comment ? ` — “${esc(e.comment)}”` : ''}${e.receivedAt ? ` · received by the MIS Officer ${esc(fmtTime(e.receivedAt))}` : ''}</p>` : ''}
+      ${decided ? `<p class="poe-decided ${e.status}">${e.status === 'approved' ? `Approved by ${esc(e.decidedName)}${e.receivedAt ? ' and received by the MIS Officer' : ''}.` : `Returned by ${esc(e.decidedName)}.`}</p>
+        ${e.comment ? `<p class="small"><b>Comment(s):</b> ${esc(e.comment)}</p>` : ''}` : ''}
       <div id="poePages" class="poe-pages-view" aria-live="polite"><p class="muted">Opening ${esc(e.fileName)}…</p></div>
       <div class="poe-view-actions">
         <span class="poe-nav"><button type="button" class="btn small" data-nav="${order[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous submission">‹ Previous</button>
@@ -245,8 +276,10 @@ const PoeStaff = (() => {
         <div class="row-actions"><button type="button" class="btn danger" data-decide="returned">Return to student</button><button type="button" class="btn primary" data-decide="approved">${e.status === 'approved' ? 'Approved ✓' : 'Approve'}</button></div>
       </div>` : ''}`;
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
+    Imports.pdfLib().catch(() => {});            // the PDF reader loads while the file is on its way
     try {
       const file = await fetchFile(id);
+      prefetch([order[i + 1], order[i - 1]]);
       if (ps.open !== id) return;
       await showPdf(file);
     } catch (err) {

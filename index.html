@@ -29,6 +29,7 @@
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/></symbol>
   <symbol id="i-rows" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 20h14"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></symbol>
 </svg>
 
@@ -74,6 +75,7 @@
   <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark Attendance</button>
   <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Report(s)</button>
   <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE<span id="poeCount" class="dot" hidden></span></button>
+  <button data-tab="alerts" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg>Absences<span id="alertCount" class="dot" hidden></span></button>
   <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
   <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Profile</button>
 </nav>
@@ -128,7 +130,7 @@
           <button type="button" class="btn ghost" id="addStudentBtn"><svg class="i" aria-hidden="true"><use href="#i-add"/></svg>Add student</button>
         </span>
         <span class="qr-actions">
-          <button type="button" class="btn" id="scanBtn" disabled title="Not available right now"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan ID cards</button>
+          <button type="button" class="btn" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan ID cards</button>
           <button type="button" class="btn primary" id="lessonQrBtn"><svg class="i" aria-hidden="true"><use href="#i-qr"/></svg>Show lesson QR</button>
         </span>
       </div>
@@ -191,6 +193,9 @@
 
   <!-- POE: students' evidence -->
   <section id="tab-poe" class="tab"><div id="poe"></div></section>
+
+  <!-- ABSENCES (HOD and MIS Officer): students who have missed more lessons than the limit -->
+  <section id="tab-alerts" class="tab"><div id="alerts"></div></section>
 
   <!-- MANAGE (HOD and MIS Officer) -->
   <section id="tab-manage" class="tab"><div id="manage"></div></section>
@@ -313,6 +318,7 @@
 <script src="app.js"></script>
 <script src="admin.js"></script>
 <script src="poe-staff.js"></script>
+<script src="alerts.js"></script>
 <script src="marks.js"></script>
 <!-- Design notes: for pointing at parts of this screen and saying what should change.
      Nothing is loaded unless the address ends in ?notes=1 (see design-notes.js). -->

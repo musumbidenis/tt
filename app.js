@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.10.0';
+const APP_VERSION = '4.11.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -27,6 +27,7 @@ const MAX_LESSONS_PER_WEEK = 3; // the register has 3 lesson cells per week
 const SLOTS = [['7.30', '9.00'], ['9.00', '10.30'], ['10.30', '12.00'], ['13.00', '14.30'], ['14.30', '16.00'], ['16.00', '17.30']];
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const LUNCH_AFTER = 3; // a double is two slots in the same morning or afternoon
+const LUNCH_SLOT = 7, LUNCH_TIME = ['12.00', '13.00']; // lunch can hold a CAT or extra attendance, never a lesson
 const KIND_LABEL = { lesson: 'Lesson', cat: 'CAT', extra: 'Extra CAT attendance' };
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
@@ -65,6 +66,7 @@ const slotNo = (period) => { const m = /^L(\d)$/.exec(period || ''); return m ? 
 /** "Lesson 2 · 9.00–10.30", or for a double "Lessons 1–2 · 7.30–10.30". */
 function slotLabel(period, slots = 1) {
   const n = slotNo(period);
+  if (n === LUNCH_SLOT) return `Lunch · ${LUNCH_TIME[0]}–${LUNCH_TIME[1]}`;
   if (!n || !SLOTS[n - 1]) return periodLabel(period);
   const end = SLOTS[Math.min(SLOTS.length, n + (slots === 2 ? 1 : 0)) - 1][1];
   return (slots === 2 ? `Lessons ${n}–${n + 1}` : `Lesson ${n}`) + ` · ${SLOTS[n - 1][0]}–${end}`;
@@ -405,6 +407,8 @@ async function renderTimetable() {
       if (free) { state.pick = { monday, date, slot: r.slot, slots: r.slots, classCode, unitCode }; break; }
     }
   }
+  const lessonMode = chosenKind() === 'lesson';
+  if (lessonMode && state.pick?.slot === LUNCH_SLOT) state.pick = null;   // lunch is never a lesson
   // The chosen slot belongs to one class, unit and week; a background refresh of the lists keeps it.
   const p = state.pick;
   const sel = p && p.monday === monday && (!p.classCode || (p.classCode === classCode && p.unitCode === unitCode)) ? p : null;
@@ -423,17 +427,21 @@ async function renderTimetable() {
     return `<button type="button" class="tt-cell${picked ? ' picked' : ''}${picked && n > sel.slot ? ' cont' : ''}${future ? ' future' : ''}" data-date="${d.date}" data-slot="${n}" ${future ? 'disabled' : ''}
       aria-pressed="${picked}">${other ? `<span class="other">${esc(other.map((o) => o.classCode.split(' ').pop() + ' ' + o.unitCode).join(', '))}</span>` : ''}</button>`;
   };
+  // Lunch: a thin break for lessons; for a CAT or extra attendance it is a slot that can be chosen.
+  const lunchCell = (d) => (mineHere[`${d.date}|${LUNCH_SLOT}`] || !lessonMode ? cellFor(d, LUNCH_SLOT).replace('class="tt-cell', 'class="tt-cell lunch') : '<div class="tt-lunch-cell" aria-hidden="true"></div>');
   let html = '<div class="tt-corner"></div>';
   SLOTS.forEach(([a, b], i) => {
-    if (i === LUNCH_AFTER) html += `<div class="tt-lunch" title="Lunch ${SLOTS[LUNCH_AFTER - 1][1]}–${a}"><span>Lunch</span></div>`;
+    if (i === LUNCH_AFTER) html += `<div class="tt-lunch" title="Lunch ${LUNCH_TIME[0]}–${LUNCH_TIME[1]}${lessonMode ? '' : ': can be chosen for this'}"><span>Lunch</span></div>`;
     html += `<div class="tt-time"><b>${a.replace('.', ':')} - ${b.replace('.', ':')}</b></div>`;
   });
   for (const d of days) {
     html += `<div class="tt-day${d.date === today ? ' today' : ''}"><b>${d.name}</b><span>${esc(fmtShort(d.date))}</span></div>`;
     SLOTS.forEach((_, i) => {
+      if (i === LUNCH_AFTER) html += lunchCell(d);
       html += cellFor(d, i + 1);
     });
   }
+  box.classList.toggle('lunch-open', !lessonMode);
   box.innerHTML = html;
   // The button says exactly what will open.
   const btn = $('#openBtn');
@@ -444,7 +452,7 @@ async function renderTimetable() {
     const dayIdx = days.findIndex((d) => d.date === sel.date);
     const dayName = new Date(sel.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long' });
     $('#repeatBox').hidden = chosenKind() !== 'lesson';
-    $('#repeatText').textContent = `Repeat every ${dayName} at ${SLOTS[sel.slot - 1][0].replace('.', ':')}`;
+    $('#repeatText').textContent = `Repeat every ${dayName} at ${(sel.slot === LUNCH_SLOT ? LUNCH_TIME : SLOTS[sel.slot - 1])[0].replace('.', ':')}`;
     $('#repeatOn').checked = repeats.some((r) => r.day === dayIdx && r.slot === sel.slot && r.slots === sel.slots);
   } else {
     $('#fDate').value = ''; $('#fPeriod').value = '';
@@ -456,6 +464,11 @@ async function renderTimetable() {
 }
 function pickSlot(date, slot) {
   const monday = TermReport.mondayOf(date), p = state.pick;
+  // Lunch is one slot on its own: never half of a double.
+  if (p && (slot === LUNCH_SLOT || p.slot === LUNCH_SLOT) && !(p.date === date && slot === p.slot)) {
+    state.pick = { monday, date, slot, slots: 1, classCode: $('#fClass').value, unitCode: $('#fUnit').value };
+    return renderTimetable();
+  }
   if (p && p.monday === monday && p.date === date && p.classCode === $('#fClass').value && p.unitCode === $('#fUnit').value) {
     if (slot === p.slot && p.slots === 1) { state.pick = null; state.autoOff = `${monday}|${$('#fClass').value}|${$('#fUnit').value}`; return renderTimetable(); }           // tap again: clear
     const sameHalf = (a, b) => (a <= LUNCH_AFTER) === (b <= LUNCH_AFTER);
@@ -474,6 +487,7 @@ async function openFromForm(e) {
   if (!date || !classCode || !unitCode || !period) { toast('Choose a class, unit and a slot on the timetable first', 'err'); return; }
   if (kind === 'extra' && !title) { toast('Give this attendance a title, e.g. "CAT 1 make-up"', 'err'); $('#fTitle').focus(); return; }
   if (date > todayISO()) { toast('That day has not come yet', 'err'); return; }
+  if (kind === 'lesson' && slotNo(period) === LUNCH_SLOT) { toast('Lunch can hold a CAT or extra attendance, not a lesson', 'err'); return; }
   if (state.dirty) await saveCurrent();
   const id = sessionId(date, classCode, unitCode, period, kind);
   let doc;
@@ -907,7 +921,8 @@ async function renderReport() {
   const r = TermReport.build({
     weeks: src.server?.weeks?.length ? src.server.weeks : state.meta.weeks, lessons: src.lessons,
     roster: rosterFor(classCode), aliases, rejected,
-    lessonHours: (unit.hoursPerWeek || 3) / (unit.lessonsPerWeek || 2), latePct: trainer.latePct, excusedPct: trainer.excusedPct, threshold,
+    lessonHours: src.server?.term?.lessonHours || (!state.reportTerm && state.meta.term?.lessonHours) || (unit.hoursPerWeek || 3) / (unit.lessonsPerWeek || 2),
+    latePct: trainer.latePct, excusedPct: trainer.excusedPct, threshold,
   });
   const cls = state.classes.find((c) => c.code === classCode) || { code: classCode };
   state.report = { r, unit, cls, classCode, unitCode, mine, signoff: src.server?.signoff || null, term: src.server?.term || state.meta.term };
@@ -933,7 +948,7 @@ async function renderReport() {
   $('#chipPending').textContent = `Pending (${pendingN})`;
   $('#chipPending').hidden = !pendingN;
   $$('.chipbtn').forEach((b) => b.classList.toggle('on', b.dataset.filter === state.reportFilter));
-  $('#legendHours').textContent = `Each lesson ${r.lessonHours} h · Late counts ${r.latePct}% · Excused ${r.excusedPct}%`;
+  $('#legendHours').textContent = `Late counts - ${r.latePct}%, Excused counts - ${r.excusedPct}%`;
   $('#reportLegend').hidden = false;
   drawReportBody();
   renderSignoff();
@@ -1416,9 +1431,9 @@ async function pullRoster({ silent = false } = {}) {
 async function renderSheetsStatus() {
   const log = await getLocal('syncLog');
   const parts = [];
-  if (log.lastSheets) parts.push(`Registers last sent ${fmtTime(log.lastSheets)}`);
-  if (log.lastRoster) parts.push(`class lists downloaded ${fmtTime(log.lastRoster)}`);
-  showSyncStatus(parts.length ? parts.join(' · ') + '.' : 'Not synced yet.');
+  if (log.lastSheets) parts.push(`Registers last sent ${fmtTime(log.lastSheets)}.`);
+  if (log.lastRoster) parts.push(`Class lists downloaded ${fmtTime(log.lastRoster)}.`);
+  showSyncStatus(parts.length ? parts.join('\n') : 'Not synced yet.');
 }
 
 /* Check for new class lists when they are more than 10 minutes old (an unchanged list costs almost nothing). */
@@ -1772,6 +1787,7 @@ function switchTab(name) {
   if (name === 'reports') renderReport();
   if (name === 'manage') window.Admin?.render();
   if (name === 'poe') PoeStaff.render();
+  if (name === 'alerts') window.Alerts?.render();
   if (name === 'me') { renderDbInfo(); renderMe(); }
 }
 
@@ -1780,12 +1796,14 @@ function applyRoles() {
   const marks = hasRole('TRAINER') || hasRole('HOD');
   $('.tabs button[data-tab="mark"]').hidden = !marks;
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
+  $('.tabs button[data-tab="alerts"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
   if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : 'reports');
   renderIdentity();
   renderClassSelects();
   window.Admin?.refreshBadge?.();
   if (me()) PoeStaff.refreshBadge();
+  if (me()) window.Alerts?.refreshBadge();
 }
 
 function updateNet() {

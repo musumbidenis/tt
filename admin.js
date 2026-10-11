@@ -160,7 +160,7 @@ const Admin = (() => {
     const t = state.meta.term;
     const weeks = state.meta.weeks || [];
     return `${t ? `<p class="term-now">Current term: <b>${esc(t.duration || t.name)}</b></p>
-      <ol class="weeks">${weeks.map((w, i) => `<li${(t.catWeeks || []).includes(i + 1) ? ' class="catwk"' : ''}><b>Week ${i + 1}</b> ${fmtShort(w)}${(t.catWeeks || []).includes(i + 1) ? ' · CAT' : ''}</li>`).join('')}</ol>` : '<p class="muted">No term is set up. Trainers can mark, but registers are not tied to weeks until you set the term.</p>'}
+      <ol class="weeks">${weeks.map((w, i) => `<li${(t.catWeeks || []).includes(i + 1) ? ' class="catwk"' : ''}><b>Week ${i + 1}</b> ${fmtShort(w)}${(t.catWeeks || []).includes(i + 1) ? ' - CAT(s)' : ''}</li>`).join('')}</ol>` : '<p class="muted">No term is set up. Trainers can mark, but registers are not tied to weeks until you set the term.</p>'}
       <details ${t ? '' : 'open'}><summary>${t ? 'Change the term or start a new one' : 'Set up the term'}</summary>
       <form id="termForm" class="termform">
         <div class="grid2">
@@ -171,7 +171,10 @@ const Admin = (() => {
           <label>Duration (as printed on registers)<input id="tDur" placeholder="Sep - Dec 2026" value="${esc(t?.duration || '')}"></label>
           <label>First teaching day<input id="tStart" type="date" required value="${esc(t?.startDate || '')}"></label>
         </div>
-        <label>Assessment series (printed on marksheets)<input id="tSeries" placeholder="Nov/Dec 2026" value="${esc(t?.series || '')}"></label>
+        <div class="grid2">
+          <label>Assessment series (printed on marksheets)<input id="tSeries" placeholder="Nov/Dec 2026" value="${esc(t?.series || '')}"></label>
+          <label>Hours per lesson (for the register's hours)<input id="tHours" type="number" min="0.5" max="8" step="0.25" placeholder="1.5" value="${t?.lessonHours ?? ''}"></label>
+        </div>
         <label>Break weeks (no teaching), any day in each week<span id="tBreaks" class="breaks">${(t?.breaks || []).map((b) => `<input type="date" value="${esc(b)}">`).join('')}<input type="date"></span></label>
         <fieldset class="catweeks"><legend>CAT weeks: trainers can take CAT registers in these weeks</legend>
           ${Array.from({ length: 12 }, (_, i) => `<label class="kchip"><input type="checkbox" value="${i + 1}" ${(t?.catWeeks || []).includes(i + 1) ? 'checked' : ''}><span>Week ${i + 1}</span></label>`).join('')}</fieldset>
@@ -186,7 +189,7 @@ const Admin = (() => {
     try {
       const breaks = $$('#tBreaks input').map((i) => i.value).filter(Boolean);
       const catWeeks = $$('.catweeks input:checked').map((i) => Number(i.value));
-      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks, series: $('#tSeries').value.trim() }));
+      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks, lessonHours: Number($('#tHours').value) || null, series: $('#tSeries').value.trim() }));
       const last = res.weeks.length;
       toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week ${last} starts ${fmtShort(res.weeks[last - 1])}${res.term.catWeeks?.length ? ` · CAT weeks ${res.term.catWeeks.join(', ')}` : ''}`, 'ok');
       await pullRoster({ silent: true });
@@ -452,7 +455,8 @@ const Admin = (() => {
   async function loadStaff() {
     if (!hasRole('MIS')) return;
     try {
-      cache.staff = need(await api('staff')).staff;
+      const res = need(await api('staff'));
+      cache.staff = res.staff; cache.defaultPin = res.defaultPin;
       drawStaff();
     } catch (e) { fill('m-staff', `<p class="err-text">${esc(e.message)}</p>`); }
   }
@@ -464,14 +468,19 @@ const Admin = (() => {
     try {
       const q = $('#staffSearch')?.value || '';
       cache.staff.sort(STAFF_SORT[staffSort] || STAFF_SORT.name);
-      const noPin = cache.staff.filter((s) => s.active && !s.hasPin).length;
-      fill('m-staff', `${noPin ? `<p class="warn-text">${noPin} staff member(s) can't sign in yet. Tap Issue PIN and give them the PIN privately.</p>` : ''}
+      const noPin = cache.staff.filter((s) => s.active && !s.hasPin).length, def = cache.defaultPin;
+      const firstPin = `<form id="defaultPinForm" class="default-pin"><div><b>First-time PIN</b>
+          <p class="muted small">${def ? `Set${def.at ? ' ' + esc(fmtShort(def.at)) : ''}${def.by ? ' by ' + esc(def.by) : ''}. Anyone without a PIN of their own signs in with it, then chooses their own.` : 'Not set. Staff without a PIN cannot sign in until you issue them one.'}</p></div>
+        <span class="dp-row"><input id="defaultPin" inputmode="numeric" maxlength="8" placeholder="4 to 8 digits" aria-label="First-time PIN" autocomplete="off">
+        <button class="btn small primary">${def ? 'Change' : 'Set'}</button>${def ? '<button type="button" class="btn small ghost" data-act="clearDefaultPin">Remove</button>' : ''}</span></form>`;
+      fill('m-staff', `${firstPin}${noPin && !def ? `<p class="warn-text">${noPin} staff member(s) can't sign in yet. Set a first-time PIN above, or tap Issue PIN and give them a PIN privately.</p>` : ''}
         ${fold('staff', `Show the staff (${cache.staff.length})`, `<div class="list-tools"><input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
         <select id="staffSort" aria-label="Sort staff"><option value="name">By name</option><option value="code">By staff code</option><option value="role">By role</option><option value="pin">No PIN yet first</option></select></div>
-        <ul class="mlist staff">${cache.staff.map((s) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
-          <span><b>${esc(s.name)}</b><small>${esc(s.code)}${s.responsibility ? ' · ' + esc(s.responsibility) : ''} · ${s.hasPin ? (s.mustChange ? 'PIN issued, not used yet' : 'signed in before') : 'no PIN yet'}</small></span>
+        <ul class="mlist staff">${cache.staff.map((s, i) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
+          <span class="sn">${i + 1}</span>
+          <span><b>${esc(s.name)}</b><small>${esc(s.code)}${s.responsibility ? ' · ' + esc(s.responsibility) : ''} · ${s.hasPin ? (s.mustChange ? 'PIN issued, not used yet' : 'signed in before') : def ? 'uses the first-time PIN' : 'no PIN yet'}</small></span>
           <span class="roles">${['TRAINER', 'HOD', 'MIS'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}</span>
-          <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : 'Issue PIN'}</button>
+          <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
           <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>`)}
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
@@ -595,6 +604,12 @@ const Admin = (() => {
     if (sortTh) { const k = sortTh.dataset.sort; ovSort = { key: k, dir: ovSort.key === k ? -ovSort.dir : 1 }; Tables.reset('overview'); drawOverview(); return; }
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
     const tb = t.closest('[data-act="testBridge"]'); if (tb) { testBridge(tb); return; }
+    if (t.closest('[data-act="clearDefaultPin"]')) {
+      if (confirm('Remove the first-time PIN? Staff without their own PIN will not be able to sign in.')) {
+        api('setDefaultPin', { pin: '' }).then((r) => { need(r); toast('First-time PIN removed', 'ok'); loadStaff(); }).catch((err) => toast(err.message, 'err'));
+      }
+      return;
+    }
     const dec = t.closest('[data-decide]'); if (dec) { decide(dec.closest('.req').dataset.id, dec.dataset.decide); return; }
     if (t.closest('#mergeGo')) {
       const id = t.closest('#mergeGo').dataset.id;
@@ -626,7 +641,14 @@ const Admin = (() => {
     const grp = t.closest('[data-group]'); if (grp) { showGroup(grp.dataset.group); return; }
     const st = t.closest('.students [data-status]'); if (st) { updateStudent(st.closest('li'), { status: st.dataset.status }); return; }
     const pin = t.closest('.staff [data-pin]');
-    if (pin) { const li = pin.closest('li'); if (confirm(`Issue a new PIN for ${li.querySelector('b').textContent}? Their old PIN stops working.`)) staffAction(li, { resetPin: true }); return; }
+    if (pin) {
+      const li = pin.closest('li'), who = li.querySelector('b').textContent;
+      // Only the MIS Officer resets PINs. With a first-time PIN set, a reset sends them back to it.
+      if (cache.defaultPin && confirm(`Send ${who} back to the first-time PIN? Their own PIN stops working and they choose a new one when they next sign in.\n\nCancel to issue them a one-off PIN instead.`)) {
+        staffAction(li, { resetPin: true, toDefault: true }, `${who} can now sign in with the first-time PIN`);
+      } else if (confirm(`Issue a one-off PIN for ${who}? Their old PIN stops working.`)) staffAction(li, { resetPin: true });
+      return;
+    }
     const act = t.closest('.staff [data-active]');
     if (act) { const li = act.closest('li'); staffAction(li, { active: act.dataset.active === '1' }, act.dataset.active === '1' ? 'Switched on' : 'Switched off — they are signed out everywhere'); return; }
   });
@@ -672,6 +694,12 @@ const Admin = (() => {
     if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click(); }
   });
   document.addEventListener('submit', (e) => {
+    if (e.target.id === 'defaultPinForm') {
+      e.preventDefault();
+      const pin = $('#defaultPin').value.trim();
+      if (!/^[0-9]{4,8}$/.test(pin)) { toast('Use 4 to 8 digits for the first-time PIN', 'err'); return; }
+      api('setDefaultPin', { pin }).then((r) => { need(r); toast('First-time PIN saved. Tell staff privately.', 'ok'); loadStaff(); }).catch((err) => toast(err.message, 'err'));
+    }
     if (e.target.id === 'termForm') saveTerm(e);
     if (e.target.id === 'addStaff') {
       e.preventDefault();
