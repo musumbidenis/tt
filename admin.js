@@ -9,6 +9,7 @@ const Admin = (() => {
   const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
   let cache = { signoffs: [], requests: [], overview: null, staff: [] };
   let loadingPreview = null;
+  let ovSort = { key: 'classCode', dir: 1 };
   const secOpen = new Set();   // which folded-away sections the person has opened, so a refresh keeps them as they were
   const fold = (key, label, inner) => `<details class="fold" data-sec="${key}"${secOpen.has(key) ? ' open' : ''}><summary>${label}</summary>${inner}</details>`;
   const classImports = [];
@@ -35,7 +36,6 @@ const Admin = (() => {
       parts.push(section('m-classes', 'Class lists', classesHtml()));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
-      if (!OLD_SERVER.test(serverUrl())) parts.push(section('m-move', 'Bring in data from the Google Sheet', moveHtml()));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'));
     box().innerHTML = parts.join('');
     const jobs = [];
@@ -53,17 +53,27 @@ const Admin = (() => {
   }
 
   /* ---------- HOD: registers to approve ---------- */
+  let soQuery = '';
   async function loadSignoffs() {
     try {
       cache.signoffs = need(await api('signoffs')).signoffs;
-      const waiting = cache.signoffs.filter((s) => s.status === 'submitted');
-      const done = cache.signoffs.filter((s) => s.status !== 'submitted');
-      const item = (s) => `<li><button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
-        <span><b>${esc(s.classCode)} · ${esc(s.unitCode)}</b><small>${esc(s.unitName)} · ${esc(s.trainerName)}</small></span>
-        <span class="pill ${s.status === 'approved' ? 'synced' : s.status === 'returned' ? 'rejected' : 'pending'}">${s.status === 'submitted' ? 'Submitted ' + fmtShort(s.submittedAt) : s.status === 'approved' ? 'Approved' : 'Returned'}</span></button></li>`;
-      fill('m-signoffs', (waiting.length ? `<ul class="mlist">${waiting.map(item).join('')}</ul>` : '<p class="muted">Nothing is waiting. Trainers submit their term registers from Reports.</p>')
-        + (done.length ? `<details class="mdone"><summary>Approved or returned (${done.length})</summary><ul class="mlist">${done.map(item).join('')}</ul></details>` : ''));
+      fill('m-signoffs', '<input type="search" id="soSearch" class="so-search" placeholder="Search by class, unit or trainer" aria-label="Search registers to approve"><div id="soList"></div>');
+      $('#soSearch').value = soQuery;
+      drawSignoffs();
     } catch (e) { fill('m-signoffs', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  function drawSignoffs() {
+    const box = $('#soList'); if (!box) return;
+    const q = soQuery.trim().toLowerCase();
+    const hit = (s) => !q || [s.classCode, s.unitCode, s.unitName, s.trainerName].some((x) => String(x || '').toLowerCase().includes(q));
+    const waiting = cache.signoffs.filter((s) => s.status === 'submitted' && hit(s));
+    const done = cache.signoffs.filter((s) => s.status !== 'submitted' && hit(s));
+    const item = (s) => `<li><button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
+      <span><b>${esc(s.classCode)} · ${esc(s.unitCode)}</b><small>${esc(s.unitName)} - ${esc(s.trainerName)}</small></span>
+      <span class="pill ${s.status === 'approved' ? 'synced' : s.status === 'returned' ? 'rejected' : 'pending'}">${s.status === 'submitted' ? 'Submitted ' + fmtShort(s.submittedAt) : s.status === 'approved' ? 'Approved' : 'Returned'}</span></button></li>`;
+    const none = q ? '<p class="muted">Nothing matches that search.</p>' : '<p class="muted">Nothing is waiting. Trainers submit their term registers from Reports.</p>';
+    box.innerHTML = (waiting.length ? `<ul class="mlist">${Tables.slice('signoffs', waiting).map(item).join('')}</ul>${Tables.bar('signoffs', waiting)}` : none)
+      + (done.length ? fold('signoffsDone', `Approved or returned (${done.length})`, `<ul class="mlist">${Tables.slice('signoffsDone', done).map(item).join('')}</ul>${Tables.bar('signoffsDone', done)}`) : '');
   }
 
   async function loadOverview() {
@@ -76,11 +86,18 @@ const Admin = (() => {
   function drawOverview() {
     const o = cache.overview; if (!o) return;
     if (!o.term) { fill('m-overview', '<p class="muted">The MIS Officer has not set up the term yet.</p>'); return; }
-    const rows = o.rows.sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
+    const { key, dir } = ovSort;
+    const val = (r) => (key === 'last' ? r.last || '' : key === 'pct' ? (r.pct === null ? -1 : r.pct) : key === 'signoff' ? r.signoff || '' : r[key]);
+    const rows = o.rows.sort((a, b) => {
+      const x = val(a), y = val(b);
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+      return (c || a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode)) * dir;
+    });
     const behind = rows.filter((r) => r.lessons < r.due - 1).length;
     const page = Tables.slice('overview', rows);
-    fill('m-overview', `<p class="muted">${esc(o.term.name)} · week ${o.week} of 12 · ${rows.length} class units${behind ? ` · <b class="warn-text">${behind} behind on registers</b>` : ''}</p>`
-      + fold('overview', `Show the class units (${rows.length})`, `<div class="table-wrap"><table class="report-table overview-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Marked</th><th class="num">Due</th><th>Last</th><th class="num">Att.</th><th>HOD</th></tr></thead>
+    const th = (k, label, cls = '') => `<th${cls ? ` class="${cls}"` : ''} data-sort="${k}" tabindex="0" aria-sort="${key === k ? (dir > 0 ? 'ascending' : 'descending') : 'none'}">${label}<span class="sort-ind">${key === k ? (dir > 0 ? ' ▲' : ' ▼') : ''}</span></th>`;
+    fill('m-overview', `<p class="muted">${esc(o.term.name)} - Week ${o.week} of 12${behind ? ` (<b class="warn-text">${behind} behind on registers</b>)` : ''}</p>`
+      + fold('overview', `Show the class units (${rows.length})`, `<div class="table-wrap"><table class="report-table overview-table"><thead><tr>${th('classCode', 'Class')}${th('unitCode', 'Unit')}${th('trainerName', 'Trainer')}${th('lessons', 'Marked', 'num')}${th('due', 'Due', 'num')}${th('last', 'Last')}${th('pct', 'Att.', 'num')}${th('signoff', 'HOD')}</tr></thead>
         <tbody>${page.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
           <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
           <td>${r.last ? fmtShort(r.last) : '–'}</td><td class="num">${r.pct === null ? '–' : r.pct + '%'}</td><td>${r.signoff ? esc(r.signoff) : ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('overview', rows)}`));
@@ -400,50 +417,6 @@ const Admin = (() => {
     } catch (e) { toast(e.message, 'err'); loadStaff(); }
   }
 
-  /* ---------- MIS: one-time move from the Google Sheet ---------- */
-  const MOVE_ORDER = ['Staff', 'Terms', 'Classes', 'Units', 'Loading', 'Trainees', 'Requests', 'Devices', 'CheckIns', 'SessionData', 'SignOffs', 'AuditLog'];
-  const MOVE_LABEL = { Staff: 'staff', Terms: 'terms', Classes: 'classes', Units: 'units', Loading: 'loading rows', Trainees: 'students', Requests: 'added students',
-    Devices: 'student devices', CheckIns: 'QR check-ins', SessionData: 'registers', SignOffs: 'sign-offs', AuditLog: 'history entries' };
-  function moveHtml() {
-    return `<details class="mdone"><summary>Only needed once, if you used the Google Sheet before</summary>
-      <ol class="steps small">
-        <li>Open the Google Sheet and paste the latest <code>apps-script/Code.gs</code> into Extensions › Apps Script, then save.</li>
-        <li>Back in the Sheet, reload it and choose <b>Attendance › Export everything for the new database</b>. Allow access when Google asks.</li>
-        <li>Download the export file it saved in your Google Drive, then choose it here.</li>
-      </ol>
-      <p class="muted small">Everything is copied: staff (their PINs keep working), terms, loading, class lists, registers, QR check-ins and sign-offs. Running it twice does no harm.</p>
-      <label class="btn">Choose the export file<input type="file" id="sheetExport" accept=".json,application/json" hidden></label>
-      <p id="moveStatus" class="muted small" aria-live="polite"></p></details>`;
-  }
-  async function importSheetFile(file) {
-    const status = $('#moveStatus');
-    let data;
-    try { data = JSON.parse(await file.text()); } catch { data = null; }
-    if (!data || data.format !== 'rvnp-sheet-export' || !data.tabs) { status.textContent = 'That is not an export file from the attendance Sheet.'; status.className = 'err-text small'; return; }
-    status.className = 'muted small';
-    const done = [];
-    try {
-      for (const tab of MOVE_ORDER) {
-        const rows = (data.tabs[tab] || []).filter((r) => Object.values(r).some((v) => String(v).trim() !== ''));
-        if (!rows.length) continue;
-        const size = tab === 'SessionData' ? 15 : 200;
-        let saved = 0;
-        for (let i = 0; i < rows.length; i += size) {
-          status.textContent = `Copying ${MOVE_LABEL[tab]}… ${Math.min(i + size, rows.length)} of ${rows.length}`;
-          saved += need(await api('importSheet', { tab, rows: rows.slice(i, i + size) })).saved || 0;
-        }
-        done.push(`${saved} ${MOVE_LABEL[tab]}`);
-      }
-      status.textContent = 'Copied: ' + (done.join(', ') || 'nothing (the export was empty)') + '.';
-      toast('Data from the Google Sheet is now in the new database', 'ok');
-      pullRoster({ silent: true });
-      loadRequests(); loadStaff();
-    } catch (e) {
-      status.textContent = `Stopped${done.length ? ' after ' + done.join(', ') : ''}: ${e.message}. Choose the file again to carry on.`;
-      status.className = 'err-text small';
-    }
-  }
-
   /* ---------- MIS: CDACC registration codes ---------- */
   const REG = /^[A-Z0-9]{4,12}(\/[A-Z0-9]{1,8}){4}$/i;   // 0320134P/CSC/6/2025/130
   async function readRegCodes(files) {
@@ -481,11 +454,11 @@ const Admin = (() => {
       // Students upload to this address. The school-only form (/a/macros/<domain>/) asks students to sign in, so uploads fail.
       const schoolOnly = /\/a\/macros\//.test(r.url || '');
       const noFolders = !(r.folders || []).length;
-      fill('m-drive', `<p class="muted">Connected · last update ${esc(fmtShort(r.at))} · ${r.matched} trainer folder${r.matched === 1 ? '' : 's'} found${r.indexUrl ? ` · <a href="${esc(r.indexUrl)}" target="_blank" rel="noopener">POE evidence index</a>` : ''}</p>
-        <div class="drive-test"><code class="drive-url">${esc(r.url || '')}</code> <button type="button" class="btn small" data-act="testBridge">Test connection</button> <span id="driveTest" class="muted small"></span></div>
+      fill('m-drive', `<p class="muted">Connected - last update ${esc(fmtShort(r.at))}</p>
+        <div class="drive-test"><button type="button" class="btn small" data-act="testBridge">Test connection</button> <span id="driveTest" class="muted small"></span></div>
         ${schoolOnly ? `<p class="err-text small">The bridge address is the school-only form, so students who are not signed in to the school account cannot send evidence. In Apps Script, deploy a new version of the web app with <b>Who has access: Anyone</b>, then run sync() once.</p>` : ''}
         ${noFolders ? '<p class="warn-text small">The Trainers folder in Drive has no folders inside it yet. Create one folder per trainer inside it, or paste each trainer\'s folder link below.</p>' : ''}
-        ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> Choose their folder, or paste its link. Their sheet is made after that.</p>
+        ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> A folder is made for each trainer in the loading the next time the Drive updates; you can also choose one yourself or paste its link.</p>
         <ul class="mlist drive-list">${r.unmatched.map((u) => `<li data-code="${esc(u.code)}"><span><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span></span>
           <span class="drive-pick">${(r.folders || []).length ? `<select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select>` : ''}
           <input type="text" data-drivelink placeholder="or paste folder link" aria-label="Folder link for ${esc(u.name)}"></span></li>`).join('')}</ul>` : '<p>Every trainer with units has a folder and a sheet.</p>'}
@@ -534,6 +507,8 @@ const Admin = (() => {
     const t = e.target;
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
+    const sortTh = t.closest('th[data-sort]');
+    if (sortTh) { const k = sortTh.dataset.sort; ovSort = { key: k, dir: ovSort.key === k ? -ovSort.dir : 1 }; Tables.reset('overview'); drawOverview(); return; }
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
     const tb = t.closest('[data-act="testBridge"]'); if (tb) { testBridge(tb); return; }
     const dec = t.closest('[data-decide]'); if (dec) { decide(dec.closest('.req').dataset.id, dec.dataset.decide); return; }
@@ -576,7 +551,6 @@ const Admin = (() => {
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
     if (t.id === 'regFiles' && t.files.length) { readRegCodes([...t.files]); t.value = ''; }
-    if (t.id === 'sheetExport' && t.files[0]) { importSheetFile(t.files[0]); t.value = ''; }
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');
     if (t.matches('.import .streams input, .import .misCode')) { const card = t.closest('.import'); const imp = readImportCard(card); imp.diff = null; card.outerHTML = importCard(imp, Number(card.dataset.i)); }
     if (t.matches('[data-drivefolder]')) setDriveFolder(t);
@@ -590,6 +564,7 @@ const Admin = (() => {
       const q = t.value.trim().toLowerCase();
       t.closest('.placement').querySelectorAll('.pl-list li').forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
     }
+    if (t.id === 'soSearch') { soQuery = t.value; Tables.reset('signoffs'); Tables.reset('signoffsDone'); drawSignoffs(); return; }
     if (t.id === 'grpSearch' || t.id === 'staffSearch') {
       const q = t.value.trim().toLowerCase();
       const list = t.id === 'grpSearch' ? $$('#adminDialog .students li') : $$('#m-staff .staff li');
@@ -601,6 +576,9 @@ const Admin = (() => {
     if (d.matches?.('details.fold[data-sec]')) { if (d.open) secOpen.add(d.dataset.sec); else secOpen.delete(d.dataset.sec); }
   }, true);
   Tables.on('overview', drawOverview);
+  Tables.on('signoffs', drawSignoffs);
+  Tables.on('signoffsDone', drawSignoffs);
+  Tables.defaults('signoffsDone', 30);
   Tables.on('classes', () => { const el = $('#m-classes'); if (el) replaceBody(el, classesHtml()); });
   document.addEventListener('keydown', (e) => {
     const row = e.target.closest?.('tr[data-group]');

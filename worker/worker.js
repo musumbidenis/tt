@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.5.0';
+export const VERSION = '5.6.0';
 const SCHEMA_VERSION = '6';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -229,7 +229,6 @@ const ACTIONS = {
   decideRequest: { role: ['MIS'], fn: (env, b, me) => decideRequest(env, b, me) },
   staff: { role: ['MIS'], fn: (env) => listStaff(env) },
   updateStaff: { role: ['MIS'], fn: (env, b, me) => updateStaff(env, b, me) },
-  importSheet: { role: ['MIS'], fn: (env, b, me) => importSheet(env, b, me) },
   poeList: { fn: (env, b, me) => poeList(env, b, me) },
   poeView: { fn: (env, b, me) => poeView(env, b, me) },
   poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me, pre, ctx) => poeDecide(env, b, me, ctx) },
@@ -244,7 +243,7 @@ const ACTIONS = {
 /* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeReceive', 'submitSignoff', 'decideSignoff',
-  'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'importSheet', 'addStudents', 'decideRequest',
+  'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
   'updateStudent', 'updateStaff', 'mySettings']);
 
 /* ---------- staff sign-in ---------- */
@@ -989,62 +988,6 @@ function acceptedCheckins(ids, rows) {
     count++;
   }
   return { ok: true, serverTime: nowIso(), count, checkins: out };
-}
-
-/* ---------- moving in from the Google Sheet ---------- */
-const yes = (v) => /^(yes|y|true|1)$/i.test(String(v ?? '').trim());
-const numOr = (v, d = null) => { const n = Number(String(v ?? '').replace(/\.$/, '')); return String(v ?? '').trim() === '' || !Number.isFinite(n) ? d : n; };
-const SHEET_MAP = {
-  Staff: (r) => ['staff', { code: r.StaffCode, name: r.Name, roles: r.Roles, responsibility: r.Responsibility, active: /^(no|n|false|0|inactive)$/i.test(r.Active || '') ? 0 : 1,
-    pin_hash: r.PinHash || null, pin_salt: r.PinSalt || null, pin_version: numOr(r.PinVersion, 0), must_change: yes(r.MustChange) ? 1 : 0, late_pct: numOr(r.LatePct), excused_pct: numOr(r.ExcusedPct), updated_at: r.UpdatedAt }, ['code']],
-  Terms: (r) => ['terms', { id: r.TermID, name: r.Name, duration: r.Duration, start_date: r.StartDate, weeks: TERM_WEEKS, breaks: r.Breaks, status: r.Status, updated_at: r.UpdatedAt, cat_weeks: r.CatWeeks || null }, ['id']],
-  Classes: (r) => ['classes', { code: r.ClassCode, name: r.ClassName, level: r.Level, mis_class: r.MisClass || null, population: numOr(r.Population) }, ['code']],
-  Units: (r) => ['units', { class_code: r.ClassCode, code: r.UnitCode, name: r.UnitName }, ['class_code', 'code']],
-  Loading: (r) => ['loading', { term_id: r.TermID, class_code: r.ClassCode, unit_code: r.UnitCode, unit_name: r.UnitName, trainer_code: r.TrainerCode, trainer_name: r.TrainerName,
-    lessons_per_week: numOr(r.LessonsPerWeek, 2), hours_per_week: numOr(r.HoursPerWeek, 3), population: numOr(r.Population), updated_at: r.UpdatedAt }, ['term_id', 'class_code', 'unit_code']],
-  Trainees: (r) => ['trainees', { adm_no: r.AdmNo, name: r.Name, class_code: r.ClassCode,
-    status: /^(no|n|false|0|inactive|left|discontinued|withdrawn)$/i.test(r.Active || '') ? 'withdrawn' : (r.Status || 'active'), mis_class: r.MisClass || null,
-    added_by: r.AddedBy, added_at: r.AddedAt, updated_by: r.UpdatedBy, updated_at: r.UpdatedAt, note: r.Note }, ['adm_no']],
-  Requests: (r) => ['requests', { id: r.RequestID, adm_no: r.AdmNo, name: r.Name, class_code: r.ClassCode, reason: r.Reason, requested_by: r.RequestedBy, requested_name: r.RequestedName,
-    requested_at: r.RequestedAt, status: r.Status, decided_by: r.DecidedBy, decided_at: r.DecidedAt, merged_into: r.MergedInto || null, note: r.Note }, ['id']],
-  SignOffs: (r) => ['signoffs', { id: r.SignOffID, term_id: r.TermID, class_code: r.ClassCode, unit_code: r.UnitCode, unit_name: r.UnitName, trainer_code: r.TrainerCode, trainer_name: r.TrainerName,
-    lecturer_comment: r.LecturerComment, submitted_at: r.SubmittedAt, status: r.Status, hod_code: r.HodCode, hod_name: r.HodName, hod_comment: r.HodComment, decided_at: r.DecidedAt }, ['id']],
-  CheckIns: (r) => ['checkins', { session_id: r.SessionID, adm_no: r.AdmNo, device_id: r.DeviceID, name: r.Name, w: r.Window, code: r.Code,
-    scanned_at: r.ScannedAt, updated_at: r.UpdatedAt, status: r.Status, reason: r.Reason }, CIKEY],
-  Devices: (r) => ['devices', { device_id: r.DeviceID, adm_no: r.AdmNo, name: r.Name, class_code: r.ClassCode, registered_at: r.RegisteredAt, last_seen: r.LastSeen }, ['device_id']],
-};
-
-/** MIS: copies one tab of the Google Sheet export into the database (the app sends it in parts). Existing rows are updated. */
-async function importSheet(env, b, me) {
-  const tab = String(b.tab || '');
-  const rows = (b.rows || []).slice(0, 1000);
-  if (tab === 'SessionData') {
-    const term = await activeTerm(env);
-    const list = rows.map((r) => { try { return JSON.parse(r.Json); } catch { return null; } }).filter((s) => s && s.sessionId);
-    const accepted = await acceptedMap(env, list.map((s) => s.sessionId));
-    const now = nowIso();
-    await upsertMany(env, 'sessions', SCOLS, list.map((s) => sessionRow(s, accepted[s.sessionId], term, now)), ['id']);
-    return { ok: true, tab, saved: list.length };
-  }
-  if (tab === 'AuditLog') {
-    await upsertMany(env, 'audit', ['at', 'staff_code', 'name', 'action', 'details'], rows.filter((r) => r.At).map((r) => ({ at: r.At, staff_code: r.StaffCode, name: r.Name, action: r.Action, details: r.Details })), null);
-    return { ok: true, tab, saved: rows.length };
-  }
-  const map = SHEET_MAP[tab];
-  if (!map) return { ok: true, tab, saved: 0, skipped: true };
-  let table, key;
-  const out = [];
-  for (const r of rows) {
-    const [t, row, k] = map(r);
-    table = t; key = k;
-    if (!k.every((c) => row[c] !== undefined && row[c] !== null && String(row[c]).trim() !== '')) continue;
-    if (t === 'staff' && lower(row.code) === lower(me.code)) continue; // keep the PIN you are signed in with
-    out.push(row);
-  }
-  if (out.length) await upsertMany(env, table, Object.keys(out[0]), out, key);
-  await audit(env, me, 'import from Sheet', `${tab}: ${out.length} rows`);
-  await bumpRoster(env);
-  return { ok: true, tab, saved: out.length };
 }
 
 /* ====================== Google Drive bridge and POE evidence ======================
