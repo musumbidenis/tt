@@ -87,7 +87,7 @@ const PoeStaff = (() => {
   }
   function groupHtml(key, list) {
     const [cls] = key.split('|'), e0 = list[0];
-    return `<section class="card poe-group"><div class="msec-head"><h2>${esc(e0.unitName)}</h2><span class="muted small">${esc(cls)} · ${list.length}</span></div>
+    return `<section class="card poe-group"><div class="msec-head"><h2>${esc(e0.unitName)}</h2></div>
       <ul class="mlist poe-rows">${list.sort((a, b) => a.name.localeCompare(b.name) || ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item)).map(rowHtml).join('')}</ul></section>`;
   }
   function rowHtml(e) {
@@ -97,7 +97,7 @@ const PoeStaff = (() => {
       ${pick ? `<input type="checkbox" class="poe-pick" data-pick="${esc(e.id)}" aria-label="Select ${esc(e.name)}"${ps.picked.has(e.id) ? ' checked' : ''}>` : ''}
       <button type="button" class="poe-open" data-open="${esc(e.id)}">
         <span class="poe-who"><b>${esc(e.name)}</b><span class="muted small">${esc(e.admNo)}</span></span>
-        <span class="poe-what"><span class="item-tag">${esc(e.item)}</span><span class="muted small">v${e.version} · ${esc(fmtTime(e.submittedAt))}</span></span>
+        <span class="poe-what"><span class="item-tag">${esc(e.item)}</span><span class="muted tiny">v${e.version} - ${esc(fmtTime(e.submittedAt))}</span></span>
         <span class="pill ${cls}">${label}</span>
       </button></li>`;
   }

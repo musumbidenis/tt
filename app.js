@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.7.0';
+const APP_VERSION = '4.8.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -357,6 +357,18 @@ async function renderTimetable() {
       else (elsewhere[key] = elsewhere[key] || []).push(doc);
     }
   }
+  // A slot marked "repeat every week" is already chosen when you reach a week without a register in it.
+  const rkey = `${classCode}|${unitCode}`;
+  const repeats = (state.settings.repeats || {})[rkey] || [];
+  if ((!state.pick || state.pick.monday !== monday || (state.pick.classCode && (state.pick.classCode !== classCode || state.pick.unitCode !== unitCode))) && repeats.length && state.autoOff !== `${monday}|${rkey}` && chosenKind() === 'lesson') {
+    const nowIso = todayISO();
+    for (const r of repeats) {
+      const date = addDays(monday, r.day);
+      if (date > nowIso) continue;
+      const free = Array.from({ length: r.slots }, (_, k) => r.slot + k).every((n) => !mineHere[`${date}|${n}`]);
+      if (free) { state.pick = { monday, date, slot: r.slot, slots: r.slots, classCode, unitCode }; break; }
+    }
+  }
   // The chosen slot belongs to one class, unit and week; a background refresh of the lists keeps it.
   const p = state.pick;
   const sel = p && p.monday === monday && (!p.classCode || (p.classCode === classCode && p.unitCode === unitCode)) ? p : null;
@@ -378,7 +390,7 @@ async function renderTimetable() {
   let html = '<div class="tt-corner"></div>';
   SLOTS.forEach(([a, b], i) => {
     if (i === LUNCH_AFTER) html += `<div class="tt-lunch" title="Lunch ${SLOTS[LUNCH_AFTER - 1][1]}–${a}"><span>Lunch</span></div>`;
-    html += `<div class="tt-time"><b>${a}</b><span>${b}</span></div>`;
+    html += `<div class="tt-time"><b>${a.replace('.', ':')} - ${b.replace('.', ':')}</b></div>`;
   });
   for (const d of days) {
     html += `<div class="tt-day${d.date === today ? ' today' : ''}"><b>${d.name}</b><span>${esc(fmtShort(d.date))}</span></div>`;
@@ -392,19 +404,24 @@ async function renderTimetable() {
   if (sel) {
     $('#fDate').value = sel.date; $('#fPeriod').value = 'L' + sel.slot; $('#fSlots').value = String(sel.slots);
     btn.disabled = false;
-    const dayName = new Date(sel.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short' });
-    btn.textContent = `Open ${sel.slots === 2 ? 'double ' : ''}${chosenKind() === 'lesson' ? 'register' : KIND_LABEL[chosenKind()]} · ${dayName} ${fmtShort(sel.date)} · ${slotLabel('L' + sel.slot, sel.slots).split(' · ')[1]}`;
+    btn.textContent = 'Open register';
+    const dayIdx = days.findIndex((d) => d.date === sel.date);
+    const dayName = new Date(sel.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long' });
+    $('#repeatBox').hidden = chosenKind() !== 'lesson';
+    $('#repeatText').textContent = `Repeat every ${dayName} at ${SLOTS[sel.slot - 1][0].replace('.', ':')}`;
+    $('#repeatOn').checked = repeats.some((r) => r.day === dayIdx && r.slot === sel.slot && r.slots === sel.slots);
   } else {
     $('#fDate').value = ''; $('#fPeriod').value = '';
     btn.disabled = true;
     btn.textContent = 'Tap a slot above (tap the next one too for a double)';
+    $('#repeatBox').hidden = true;
   }
   renderWeekHint();
 }
 function pickSlot(date, slot) {
   const monday = TermReport.mondayOf(date), p = state.pick;
   if (p && p.monday === monday && p.date === date && p.classCode === $('#fClass').value && p.unitCode === $('#fUnit').value) {
-    if (slot === p.slot && p.slots === 1) { state.pick = null; return renderTimetable(); }           // tap again: clear
+    if (slot === p.slot && p.slots === 1) { state.pick = null; state.autoOff = `${monday}|${$('#fClass').value}|${$('#fUnit').value}`; return renderTimetable(); }           // tap again: clear
     const sameHalf = (a, b) => (a <= LUNCH_AFTER) === (b <= LUNCH_AFTER);
     if (slot === p.slot + 1 && p.slots === 1 && sameHalf(slot, p.slot)) { p.slots = 2; return renderTimetable(); }   // next slot: double
     if (slot === p.slot - 1 && p.slots === 1 && sameHalf(slot, p.slot)) { p.slot = slot; p.slots = 2; return renderTimetable(); }
@@ -468,7 +485,7 @@ function setCurrent(doc, isNew = false) {
   state.current = doc;
   state.dirty = false;
   state.editReasonGiven = false;
-  $('#regSearch').value = '';
+  $('#regSearch').value = ''; Tables.reset('register');
   $('#regNotes').value = doc.notes || '';
   setSaveState(isNew ? 'Not saved yet' : 'Saved on this device', isNew ? '' : 'ok');
   renderRegister();
@@ -521,15 +538,19 @@ function renderRegister() {
   const s = state.current;
   if (!s) { $('#register').hidden = true; return; }
   $('#register').hidden = false;
-  $('#regTitle').textContent = `${s.classCode} · ${s.unitCode}`;
-  const wk = s.week ? `Week ${s.week}, ` : '';
-  $('#regSub').textContent = `${s.unitName} — ${wk}${fmtDate(s.date)}, ${sessionLabel(s)}${isLocked(s) ? ' · locked' : ''}`;
+  $('#regTitle').textContent = s.classCode;
+  const wk = s.week ? `Week ${s.week} ` : '';
+  const day = fmtDate(s.date).replace(/, (?=[0-9]{4}$)/, ' ');
+  $('#regSub').textContent = `${s.unitName} — ${wk}(${day})${isLocked(s) ? ' · locked' : ''}`;
   $('#register').dataset.kind = kindOf(s);
   const q = $('#regSearch').value.trim().toLowerCase();
-  const rows = rosterForCurrent().filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
+  const all = rosterForCurrent().map((t, i) => ({ ...t, sn: i + 1 })).filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
+  const rows = Tables.slice('register', all);
+  $('#registerPager').innerHTML = Tables.bar('register', all);
   $('#traineeList').innerHTML = rows.length ? rows.map((t) => {
     const st = s.marks?.[t.admNo] || '';
     return `<li class="trow${t.unlisted ? ' unlisted' : ''}" data-adm="${esc(t.admNo)}">
+      <span class="sn">${t.sn}</span>
       <div class="tinfo"><span class="tname">${esc(t.name)}${qrTag(s, t.admNo)}${t.pending ? ' <span class="ptag" title="Waiting for the MIS Officer to approve">Pending</span>' : ''}</span><span class="tadm">${esc(t.admNo)}</span></div>
       <div class="seg" role="group" aria-label="Status for ${esc(t.name)}">
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
@@ -1668,7 +1689,18 @@ function wire() {
     const b = e.target.closest('button[data-s]'); if (!b) return;
     setMark(b.closest('.trow').dataset.adm, b.dataset.s);
   });
-  $('#regSearch').addEventListener('input', renderRegister);
+  $('#repeatOn').addEventListener('change', async (e) => {
+    const p = state.pick; if (!p) return;
+    const rkey = `${$('#fClass').value}|${$('#fUnit').value}`, day = Math.round((new Date(p.date) - new Date(p.monday)) / 864e5);
+    const all = { ...(state.settings.repeats || {}) };
+    const list = (all[rkey] || []).filter((r) => !(r.day === day && r.slot === p.slot));
+    if (e.target.checked) list.push({ day, slot: p.slot, slots: p.slots });
+    all[rkey] = list;
+    await saveSettings({ repeats: all });
+    renderTimetable();
+  });
+  $('#regSearch').addEventListener('input', () => { Tables.reset('register'); renderRegister(); });
+  Tables.on('register', renderRegister);
   $('#regNotes').addEventListener('input', () => { if (state.current) markDirty(); });
   $('#allPresent').addEventListener('click', () => setAll('P'));
   $('#allAbsent').addEventListener('click', () => setAll('A'));

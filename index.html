@@ -103,6 +103,7 @@
       <label id="fTitleBox" hidden>Title<input id="fTitle" maxlength="80" placeholder="e.g. CAT 1 make-up"></label>
       <div id="timetable" class="timetable"></div>
       <p id="weekHint" class="hint"></p>
+      <label id="repeatBox" class="repeat-row" hidden><input type="checkbox" id="repeatOn"> <span id="repeatText">Repeat this slot every week</span></label>
       <input type="hidden" id="fDate"><input type="hidden" id="fPeriod"><input type="hidden" id="fSlots" value="1">
       <button type="submit" class="btn primary" id="openBtn" disabled>Choose a slot on the timetable</button>
     </form>
@@ -126,14 +127,15 @@
           <button type="button" class="btn ghost" id="addStudentBtn"><svg class="i" aria-hidden="true"><use href="#i-add"/></svg>Add student</button>
         </span>
         <span class="qr-actions">
-          <button type="button" class="btn" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan ID cards</button>
+          <button type="button" class="btn" id="scanBtn" disabled title="Not available right now"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan ID cards</button>
           <button type="button" class="btn primary" id="lessonQrBtn"><svg class="i" aria-hidden="true"><use href="#i-qr"/></svg>Show lesson QR</button>
         </span>
       </div>
 
       <ul id="traineeList" class="trainee-list"></ul>
+      <div id="registerPager"></div>
 
-      <label class="notes">Notes e.g content covered, remarks)
+      <label class="notes">Notes e.g content covered, remarks
         <textarea id="regNotes" rows="2" placeholder="Optional"></textarea>
       </label>
 

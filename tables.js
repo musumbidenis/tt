@@ -8,9 +8,11 @@
 'use strict';
 
 const Tables = (() => {
-  const SIZES = [10, 25, 50];
-  const st = new Map(), redraw = new Map();
-  const get = (key) => { if (!st.has(key)) st.set(key, { page: 1, size: SIZES[0] }); return st.get(key); };
+  const SIZES = [10, 25, 30, 50, 100];
+  const st = new Map(), redraw = new Map(), start = new Map([['marks', 30], ['register', 30], ['signoffs', 30]]);
+  const get = (key) => { if (!st.has(key)) st.set(key, { page: 1, size: start.get(key) || SIZES[0] }); return st.get(key); };
+  /** How many rows a table starts with (before the person chooses another number). */
+  const defaults = (key, size) => { start.set(key, size); };
 
   function slice(key, list) {
     const s = get(key), pages = Math.max(1, Math.ceil(list.length / s.size));
@@ -19,7 +21,7 @@ const Tables = (() => {
   }
   function bar(key, list) {
     const s = get(key), n = list.length;
-    if (n <= SIZES[0]) return '';
+    if (n <= Math.min(SIZES[0], s.size)) return '';
     const pages = Math.ceil(n / s.size), from = (s.page - 1) * s.size + 1, to = Math.min(n, s.page * s.size);
     return `<nav class="pager" data-pager="${key}" aria-label="Pages">
       <span class="pg-info">${from}–${to} of ${n}</span>
@@ -66,5 +68,5 @@ const Tables = (() => {
     setTimeout(() => window.print(), 80);
   }
 
-  return { slice, bar, reset, on, exportXlsx, print };
+  return { slice, bar, reset, on, defaults, exportXlsx, print };
 })();

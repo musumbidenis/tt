@@ -53,15 +53,7 @@ The tables are created by themselves the first time anyone uses the app. Then si
 
 ### Moving from the Google Sheet
 
-If you used the earlier Google Sheet version, bring everything across once:
-
-1. In the Google Sheet open **Extensions → Apps Script**, paste in the latest [`apps-script/Code.gs`](apps-script/Code.gs) and **Save**.
-2. Reload the Sheet and choose **Attendance → Export everything for the new database**. Allow access when Google asks. It saves a file in your Google Drive; download it.
-3. In the app, signed in as MIS Officer, open **Manage → Bring in data from the Google Sheet** and choose that file.
-
-Staff, their PINs, terms, loading, class lists, registers, QR check-ins, student phones and sign-offs all come across. Running it again does no harm, so you can repeat it if a few registers reached the Sheet after the first run. Once `config.js` points at the Worker, phones switch over on their own: trainers sign in once more, and every register on their phone is sent to the new database.
-
-The Apps Script version is kept only so its data can be moved across: the 12-week terms, CAT weeks, doubles, CAT registers and the stream preview need the Cloudflare database.
+The one-time import from the old Google Sheet has been removed from the app (the **Bring in data from the Google Sheet** card and its Worker action are gone). If you still need to bring old data across, use the version of the app from before 4.8.0.
 
 ### Connect Google Drive (once, about 10 minutes)
 
@@ -365,3 +357,11 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Long tables are shown ten rows at a time** (or 25 or 50, chosen under the table): the term register, the POE students table, the department overview and the class list. Exports always contain every row.
 - **Manage → Department overview, Class lists and Staff** start folded away; tap the heading to open one. The app remembers which you opened until you leave the page.
 - There is no CSV export any more (Excel and PDF are the formats), and **Print QR ID cards** is visible but switched off. To bring it back, delete the word `disabled` on the `printQR` button in index.html; the code is still there.
+
+## Changes in 4.8.0
+
+- **Repeat a slot every week.** After you tap a slot on the timetable, tick **Repeat every Wednesday at 7:30** (for example). From then on, in any week where that slot has no register yet, it is already chosen when you reach the week; just tap **Open register**. Untick it to stop repeating. This is kept on the device.
+- **Registers and marks have serial numbers, search and pages of 30.**
+- **Manage → Registers to approve** can be searched by class, unit or trainer and is paged (30 at a time). The department overview sorts when you tap a column heading.
+- **Google Drive folders are made for you.** From bridge version 1.3.0, every trainer in the loading who has no folder gets one inside the Trainers folder the next time the Drive updates. Update the bridge with `clasp push -f` and deploy a new version of the web app (see *Updating the bridge later*).
+- **Scan ID cards** is visible but switched off.

@@ -203,15 +203,13 @@ label.file input { padding: .45rem; }
   align-items: center; justify-content: center; font: inherit; font-size: .72rem; color: var(--muted); cursor: pointer; overflow: hidden; }
 .tt-cell:hover:not(:disabled) { border-style: solid; border-color: var(--ink-2); }
 .tt-cell.future { background: var(--sunk); border-style: solid; border-color: transparent; cursor: default; }
-.tt-cell.picked { background: var(--btn-bg); border: 1px solid var(--btn-bg); color: var(--btn-ink); }
-.tt-cell.picked::after { content: "✓"; font-size: 1rem; font-weight: 700; }
+.tt-cell.picked { background: var(--p-soft); border: 2px solid var(--p); color: var(--p); }
 .tt-cell .other { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 100%; }
 .tt-cell.have { border: 1px solid transparent; background: var(--p-soft); color: var(--p); }
 .tt-cell.have b { font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .tt-cell.have.cat { background: var(--e-soft); color: var(--e); }
 .tt-cell.have.extra { background: var(--l-soft); color: var(--l); }
 .tt-cell.cont { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -4px; }
-.tt-cell.picked.cont::after { content: ""; }
 .tt-lunch { grid-row: 1 / span 6; grid-column: 5; display: flex; align-items: center; justify-content: center; border-left: 1px dashed var(--line); border-right: 1px dashed var(--line); }
 .tt-lunch span { writing-mode: vertical-rl; transform: rotate(180deg); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .empty-state { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: .3rem; text-align: center; padding: 2rem 1rem; color: var(--muted); background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); }
@@ -763,15 +761,20 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .marks-table thead th.prac { background: color-mix(in srgb, var(--l-soft) 70%, var(--sunk)); }
 .marks-table .mt-name { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; min-width: 9.5rem; max-width: 13rem; border-right: 1px solid var(--line); }
 .marks-table thead .mt-name { background: var(--sunk); padding-left: 1rem; z-index: 2; }
-.marks-table tbody .mt-name { display: flex; gap: .5rem; align-items: center; padding: .4rem .5rem .4rem 1rem; }
+.marks-table tbody .mt-name { padding: .4rem .5rem .4rem .25rem; }
+.marks-table .mt-in { min-width: 0; }
+.marks-table .mt-sn { position: sticky; left: 0; z-index: 1; background: var(--surface); width: 2.75rem; min-width: 2.75rem; color: var(--muted); font-size: .8125rem; }
+.marks-table thead .mt-sn { background: var(--sunk); z-index: 2; padding-left: .5rem; }
+.marks-table .mt-name { left: 2.75rem; }
+.marks-search { margin: .5rem 0 0; }
 .marks-table .mt-name b { display: block; font-weight: 600; font-size: .9rem; line-height: 1.2; }
 .marks-table .mt-name small { display: block; color: var(--muted); font-size: .75rem; }
 .mt-n { color: var(--muted); font-size: .75rem; min-width: 1.4em; text-align: right; }
-.marks-table input.mk { width: 3.6rem; height: 40px; margin: 3px; padding: 0 .25rem; text-align: center; font: 600 1rem var(--text); border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.marks-table input.mk { display: block; width: 3.6rem; height: 40px; margin: 3px auto; padding: 0 .25rem; text-align: center; font: 600 1rem var(--text); border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
 .marks-table input.mk:focus { outline: 2px solid var(--focus); outline-offset: 0; border-color: var(--focus); }
 .marks-table input.mk[readonly] { border-color: transparent; background: none; }
 .marks-table input.mk.bad { border-color: var(--a); background: var(--a-soft); }
-.marks-table td.avg { font: 700 .95rem var(--display); color: var(--ink-2); min-width: 3rem; background: var(--sunk); }
+.marks-table td.avg { font: 700 .95rem var(--display); color: var(--ink-2); min-width: 3rem; }
 .marks-table tr.dirty .mt-name { box-shadow: inset 3px 0 0 var(--l); }
 .marks-table tr.gone .mt-name b { color: var(--muted); }
 .marks-actions { margin-top: .75rem; }
@@ -858,3 +861,18 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .result-icon svg { width: 30px; height: 30px; }
 .result h2 { font-size: 1.25rem; }
 .result p { font-size: .9375rem; }
+
+/* register rows: serial number, and the padding of the timetable's times */
+.sn { flex: 0 0 auto; width: 2rem; color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.trow .tinfo { flex: 1 1 auto; }
+td.tadm { display: table-cell; }
+
+.tt-time b { font-size: .7rem; font-weight: 600; line-height: 1.2; }
+.repeat-row { display: flex; align-items: center; gap: .5rem; margin: 0; font-weight: 600; }
+.repeat-row input { width: 20px; height: 20px; margin: 0; }
+.tiny { font-size: .75rem; }
+.poe-what .item-tag { font-size: .7rem; padding: .05rem .4rem; }
+.so-search { margin: .25rem 0 .5rem; }
+th[data-sort] { cursor: pointer; user-select: none; }
+th[data-sort]:hover { color: var(--ink); }
+.sort-ind { font-size: .7rem; }

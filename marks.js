@@ -8,7 +8,7 @@
 const Marks = (() => {
   const COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
   const HEAD = { cat1: 'CAT 1', cat2: 'CAT 2', cat3: 'CAT 3', prac1: 'PRAC 1', prac2: 'PRAC 2', prac3: 'PRAC 3' };
-  const ms = { key: '', doc: null, saving: Promise.resolve(), sendTimer: null, sending: false, seq: 0 };
+  const ms = { q: '', roster: [], edit: false, drawnKey: '', key: '', doc: null, saving: Promise.resolve(), sendTimer: null, sending: false, seq: 0 };
   const termId = () => state.meta.term?.id || 'term';
   const docId = (cls, unit) => `marks:${termId()}:${cls}|${unit}`;
   const avg = (r, keys) => (keys.some((k) => r?.[k] !== null && r?.[k] !== undefined && r?.[k] !== '') ? keys.reduce((n, k) => n + (Number(r[k]) || 0), 0) / 3 : null);
@@ -106,6 +106,8 @@ const Marks = (() => {
     const roster = rosterFor(cls).sort((a, b) => String(a.admNo).localeCompare(String(b.admNo)));
     // Students who have marks but left the list stay visible so nothing is lost.
     for (const r of Object.values(d.rows)) if (!roster.some((t) => lower(t.admNo) === lower(r.admNo))) roster.push({ admNo: r.admNo, name: r.admNo, gone: true });
+    if (ms.drawnKey !== cls + '|' + unit) { ms.drawnKey = cls + '|' + unit; ms.q = ''; Tables.reset('marks'); }
+    ms.roster = roster; ms.edit = edit;
     $('#marksCard').innerHTML = `
       <div class="marks-head">
         <div><h2>${esc(u.name)}</h2></div>
@@ -114,22 +116,33 @@ const Marks = (() => {
       ${!roster.length ? '<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the marks sheet shows up here.</span></div>' : `
       ${edit ? '<p class="muted small">Marks are percentages (0–100). Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.</p>'
         : '<p class="muted small">Only the trainer of this unit can change these marks.</p>'}
-      <div class="marks-wrap"><table class="marks-table">
-        <thead><tr><th rowspan="2" class="mt-name">Student</th><th colspan="4" class="mt-grp">Oral / Theory (100%)</th><th colspan="4" class="mt-grp prac">Practical (100%)</th></tr>
-        <tr>${['cat1', 'cat2', 'cat3'].map((c) => `<th>${HEAD[c]}</th>`).join('')}<th class="avg">AVG</th>${['prac1', 'prac2', 'prac3'].map((c) => `<th class="prac">${HEAD[c]}</th>`).join('')}<th class="avg prac">AVG</th></tr></thead>
-        <tbody>${roster.map((t, i) => rowHtml(t, i, d.rows[lower(t.admNo)] || {}, edit, d.dirty[lower(t.admNo)])).join('')}</tbody>
-      </table></div>
+      <input type="search" id="marksSearch" class="marks-search" placeholder="Search name or admission no." aria-label="Search students" value="${esc(ms.q)}">
+      <div id="marksTable"></div>
       <div class="row-actions marks-actions">
         <button type="button" class="btn primary" id="marksExport"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel marksheet</button>
         ${edit ? '<button type="button" class="btn" id="marksSend">Send now</button>' : ''}
       </div>`}`;
+    if (roster.length) drawTable();
     status();
+  }
+  /** The table alone (a search or a page change must not rebuild the box being typed in). */
+  function drawTable() {
+    const box = $('#marksTable'); if (!box) return;
+    const q = (ms.q || '').trim().toLowerCase(), d = ms.doc;
+    const all = ms.roster.map((t, i) => ({ t, n: i + 1 })).filter(({ t }) => !q || t.name.toLowerCase().includes(q) || String(t.admNo).toLowerCase().includes(q));
+    const rows = Tables.slice('marks', all);
+    box.innerHTML = all.length ? `<div class="marks-wrap"><table class="marks-table">
+        <thead><tr><th rowspan="2" class="mt-sn">S/N</th><th rowspan="2" class="mt-name">Student</th><th colspan="4" class="mt-grp">Oral / Theory (100%)</th><th colspan="4" class="mt-grp prac">Practical (100%)</th></tr>
+        <tr>${['cat1', 'cat2', 'cat3'].map((c) => `<th>${HEAD[c]}</th>`).join('')}<th class="avg">AVG</th>${['prac1', 'prac2', 'prac3'].map((c) => `<th class="prac">${HEAD[c]}</th>`).join('')}<th class="avg prac">AVG</th></tr></thead>
+        <tbody>${rows.map(({ t, n }) => rowHtml(t, n - 1, d.rows[lower(t.admNo)] || {}, ms.edit, d.dirty[lower(t.admNo)])).join('')}</tbody>
+      </table></div>${Tables.bar('marks', all)}` : '<p class="empty">Nobody matches that search.</p>';
   }
   function rowHtml(t, i, r, edit, dirty) {
     const cell = (c) => `<td><input class="mk" inputmode="decimal" autocomplete="off" data-adm="${esc(t.admNo)}" data-col="${c}" value="${r[c] ?? ''}"
       aria-label="${esc(t.name)} ${HEAD[c]}" ${edit ? '' : 'readonly'}></td>`;
     return `<tr data-adm="${esc(t.admNo)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">
-      <th scope="row" class="mt-name"><span class="mt-n">${i + 1}</span><span><b>${esc(t.name)}</b><small>${esc(t.admNo)}${t.regCode ? ' · ' + esc(t.regCode) : ''}${t.pending ? ' · pending' : ''}${t.gone ? ' · not on the list' : ''}</small></span></th>
+      <td class="mt-sn">${i + 1}</td>
+      <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}</b><small>${esc(t.admNo)}${t.regCode ? ' · ' + esc(t.regCode) : ''}${t.pending ? ' · pending' : ''}${t.gone ? ' · not on the list' : ''}</small></div></th>
       ${['cat1', 'cat2', 'cat3'].map(cell).join('')}<td class="avg" data-avg="cat">${show(avg(r, ['cat1', 'cat2', 'cat3']))}</td>
       ${['prac1', 'prac2', 'prac3'].map(cell).join('')}<td class="avg" data-avg="prac">${show(avg(r, ['prac1', 'prac2', 'prac3']))}</td></tr>`;
   }
@@ -212,7 +225,11 @@ const Marks = (() => {
   }
 
   function wire() {
-    document.addEventListener('input', (e) => { if (e.target.matches('#marksCard input.mk') && !e.target.readOnly) onInput(e.target); });
+    document.addEventListener('input', (e) => {
+      if (e.target.id === 'marksSearch') { ms.q = e.target.value; Tables.reset('marks'); drawTable(); return; }
+      if (e.target.matches('#marksCard input.mk') && !e.target.readOnly) onInput(e.target);
+    });
+    Tables.on('marks', drawTable);
     document.addEventListener('keydown', (e) => {
       const t = e.target;
       if (!t.matches?.('#marksCard input.mk') || (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
