@@ -53,12 +53,17 @@ const Admin = (() => {
   }
 
   /* ---------- HOD: registers to approve ---------- */
-  let soQuery = '';
+  let soQuery = '', soSort = 'new', staffSort = 'name';
+  const SO_SORT = {
+    new: (a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)), old: (a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt)),
+    class: (a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode), unit: (a, b) => String(a.unitName || a.unitCode).localeCompare(String(b.unitName || b.unitCode)) || a.classCode.localeCompare(b.classCode),
+    trainer: (a, b) => String(a.trainerName).localeCompare(String(b.trainerName)) || a.classCode.localeCompare(b.classCode) };
   async function loadSignoffs() {
     try {
       cache.signoffs = need(await api('signoffs')).signoffs;
-      fill('m-signoffs', '<input type="search" id="soSearch" class="so-search" placeholder="Search by class, unit or trainer" aria-label="Search registers to approve"><div id="soList"></div>');
-      $('#soSearch').value = soQuery;
+      fill('m-signoffs', `<div class="list-tools"><input type="search" id="soSearch" class="so-search" placeholder="Search by class, unit or trainer" aria-label="Search registers to approve">
+        <select id="soSort" aria-label="Sort"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="class">By class</option><option value="unit">By unit</option><option value="trainer">By trainer</option></select></div><div id="soList"></div>`);
+      $('#soSearch').value = soQuery; $('#soSort').value = soSort;
       drawSignoffs();
     } catch (e) { fill('m-signoffs', `<p class="err-text">${esc(e.message)}</p>`); }
   }
@@ -66,8 +71,8 @@ const Admin = (() => {
     const box = $('#soList'); if (!box) return;
     const q = soQuery.trim().toLowerCase();
     const hit = (s) => !q || [s.classCode, s.unitCode, s.unitName, s.trainerName].some((x) => String(x || '').toLowerCase().includes(q));
-    const waiting = cache.signoffs.filter((s) => s.status === 'submitted' && hit(s));
-    const done = cache.signoffs.filter((s) => s.status !== 'submitted' && hit(s));
+    const waiting = cache.signoffs.filter((s) => s.status === 'submitted' && hit(s)).sort(SO_SORT[soSort]);
+    const done = cache.signoffs.filter((s) => s.status !== 'submitted' && hit(s)).sort(SO_SORT[soSort]);
     const item = (s) => `<li><button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
       <span><b>${esc(s.classCode)} · ${esc(s.unitCode)}</b><small>${esc(s.unitName)} - ${esc(s.trainerName)}</small></span>
       <span class="pill ${s.status === 'approved' ? 'synced' : s.status === 'returned' ? 'rejected' : 'pending'}">${s.status === 'submitted' ? 'Submitted ' + fmtShort(s.submittedAt) : s.status === 'approved' ? 'Approved' : 'Returned'}</span></button></li>`;
@@ -447,10 +452,22 @@ const Admin = (() => {
   async function loadStaff() {
     if (!hasRole('MIS')) return;
     try {
-      cache.staff = need(await api('staff')).staff.sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+      cache.staff = need(await api('staff')).staff;
+      drawStaff();
+    } catch (e) { fill('m-staff', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  const STAFF_SORT = {
+    name: (a, b) => (b.active - a.active) || a.name.localeCompare(b.name), code: (a, b) => (b.active - a.active) || a.code.localeCompare(b.code, undefined, { numeric: true }),
+    role: (a, b) => (b.active - a.active) || ['MIS', 'HOD', 'TRAINER'].findIndex((r) => a.roles.includes(r)) - ['MIS', 'HOD', 'TRAINER'].findIndex((r) => b.roles.includes(r)) || a.name.localeCompare(b.name),
+    pin: (a, b) => (b.active - a.active) || Number(a.hasPin) - Number(b.hasPin) || a.name.localeCompare(b.name) };
+  function drawStaff() {
+    try {
+      const q = $('#staffSearch')?.value || '';
+      cache.staff.sort(STAFF_SORT[staffSort] || STAFF_SORT.name);
       const noPin = cache.staff.filter((s) => s.active && !s.hasPin).length;
       fill('m-staff', `${noPin ? `<p class="warn-text">${noPin} staff member(s) can't sign in yet. Tap Issue PIN and give them the PIN privately.</p>` : ''}
-        ${fold('staff', `Show the staff (${cache.staff.length})`, `<input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
+        ${fold('staff', `Show the staff (${cache.staff.length})`, `<div class="list-tools"><input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
+        <select id="staffSort" aria-label="Sort staff"><option value="name">By name</option><option value="code">By staff code</option><option value="role">By role</option><option value="pin">No PIN yet first</option></select></div>
         <ul class="mlist staff">${cache.staff.map((s) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
           <span><b>${esc(s.name)}</b><small>${esc(s.code)}${s.responsibility ? ' · ' + esc(s.responsibility) : ''} · ${s.hasPin ? (s.mustChange ? 'PIN issued, not used yet' : 'signed in before') : 'no PIN yet'}</small></span>
           <span class="roles">${['TRAINER', 'HOD', 'MIS'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}</span>
@@ -459,6 +476,8 @@ const Admin = (() => {
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
           <button class="btn primary">Add and issue PIN</button></form></details>`);
+      $('#staffSort').value = staffSort;
+      if (q) { const s = $('#staffSearch'); s.value = q; s.dispatchEvent(new Event('input', { bubbles: true })); }
     } catch (e) { fill('m-staff', `<p class="err-text">${esc(e.message)}</p>`); }
   }
   function showPin(name, code, pin) {
@@ -615,6 +634,8 @@ const Admin = (() => {
     const t = e.target;
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
+    if (t.id === 'soSort') { soSort = t.value; Tables.reset('signoffs'); Tables.reset('signoffsDone'); drawSignoffs(); }
+    if (t.id === 'staffSort') { staffSort = t.value; drawStaff(); }
     if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
     if (t.id === 'regFiles' && t.files.length) { readRegCodes([...t.files]); t.value = ''; }
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');

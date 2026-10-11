@@ -121,6 +121,7 @@
 
       <div class="reg-tools">
         <input type="search" id="regSearch" placeholder="Search name or admission no." aria-label="Search trainees">
+        <select id="regSort" aria-label="Sort the register"><option value="name">Sort by name</option><option value="adm">Sort by admission number</option><option value="absent">Absent first</option></select>
         <span class="quick">
           <button type="button" class="btn ghost" id="allPresent">All present</button>
           <button type="button" class="btn ghost" id="allAbsent">All absent</button>
@@ -170,7 +171,7 @@
         <button type="button" class="chipbtn" data-filter="pending" id="chipPending">Pending</button>
       </div>
       <div class="chips">
-        <select id="rSort" aria-label="Sort"><option value="list">Sort by admission number</option><option value="name">Sort by name</option><option value="pct">Lowest % first</option></select>
+        <select id="rSort" aria-label="Sort"><option value="list">Sort by admission number</option><option value="name">Sort by name</option><option value="pct">Lowest % first</option><option value="custom" hidden>Sorted by a column</option></select>
         <button type="button" class="btn small" id="viewToggle"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Sheet view</span></button>
       </div>
     </div>

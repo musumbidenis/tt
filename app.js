@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.9.0';
+const APP_VERSION = '4.10.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -586,7 +586,13 @@ function renderRegister() {
   $('#regSub').textContent = `${s.unitName} — ${wk}(${day})${termLocked(s) ? ' · term ended, locked' : isLocked(s) ? ' · locked' : ''}`;
   $('#register').dataset.kind = kindOf(s);
   const q = $('#regSearch').value.trim().toLowerCase();
-  const all = rosterForCurrent().map((t, i) => ({ ...t, sn: i + 1 })).filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
+  const order = { P: 0, L: 1, E: 2, A: 3 };
+  const by = $('#regSort')?.value || 'name';
+  const all = rosterForCurrent().filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q))
+    .sort(by === 'adm' ? (x, y) => x.admNo.localeCompare(y.admNo, undefined, { numeric: true })
+      : by === 'absent' ? (x, y) => (order[s.marks?.[y.admNo]] ?? -1) - (order[s.marks?.[x.admNo]] ?? -1) || x.name.localeCompare(y.name)
+        : (x, y) => x.name.localeCompare(y.name))
+    .map((t, i) => ({ ...t, sn: i + 1 }));
   const rows = Tables.slice('register', all);
   $('#registerPager').innerHTML = Tables.bar('register', all);
   $('#traineeList').innerHTML = rows.length ? rows.map((t) => {
@@ -980,9 +986,11 @@ function drawReportBody() {
   let list = r.list;
   if (state.reportFilter === 'below') list = list.filter((x) => x.below);
   if (state.reportFilter === 'pending') list = list.filter((x) => x.pending);
-  const sort = $('#rSort').value;
-  list = [...list].sort(sort === 'pct' ? (a, b) => (a.pct ?? 101) - (b.pct ?? 101) || a.name.localeCompare(b.name)
-    : sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.admNo.localeCompare(b.admNo, undefined, { numeric: true }));
+  // The order: tap a heading in the sheet view, or use the Sort choice; both set the same thing.
+  list = Tables.sort('report', list, { adm: (x) => x.admNo, name: (x) => x.name, pct: (x) => x.pct, possible: (x) => x.possible, actual: (x) => x.actual }, 'adm');
+  list.forEach((x, i) => { x.sn = i + 1; });
+  const ord = Tables.sortState('report', 'adm');
+  $('#rSort').value = ord.dir === 1 && { adm: 'list', name: 'name', pct: 'pct' }[ord.col] || 'custom';
   const view = reportView();
   const tgl = $('#viewToggle');
   tgl.querySelector('use').setAttribute('href', view === 'sheet' ? '#i-rows' : '#i-grid');
@@ -990,7 +998,8 @@ function drawReportBody() {
   const warn = r.overflow.length
     ? `<p class="card warn-banner">${r.overflow.length} lesson(s) are not on the register: ${r.overflow.slice(0, 3).map((l) => esc(fmtShort(l.date) + ' ' + l.period)).join(', ')}${r.overflow.length > 3 ? '…' : ''}. They fall outside the term's 12 weeks or go past 3 lessons in one week (a double counts as two).</p>` : '';
   if (view === 'sheet') {
-    $('#reportBody').innerHTML = warn + `<div class="card sheet-wrap">${TermReport.sheetTable({ ...r, list: Tables.slice('report', list) }, esc)}</div>${Tables.bar('report', list)}`;
+    const th = (col, label, cls, extra) => Tables.th('report', col, label, cls, extra);
+    $('#reportBody').innerHTML = warn + `<div class="card sheet-wrap">${TermReport.sheetTable({ ...r, list: Tables.slice('report', list) }, esc, th)}</div>${Tables.bar('report', list)}`;
     return;
   }
   $('#reportBody').innerHTML = warn + (list.length ? `<ul class="card rlist">${Tables.slice('report', list).map((x) => `
@@ -1804,6 +1813,7 @@ function renderMe() {
 
 function fillSettingsForms() {
   const s = state.settings;
+  if ($('#regSort')) $('#regSort').value = s.regSort || 'name';
   $('#setLock').value = s.lockHours; $('#setDefault').value = s.defaultStatus;
   $('#setLate').value = s.latePct; $('#setExcused').value = s.excusedPct;
   $('#rThreshold').value = s.threshold;
@@ -1857,6 +1867,7 @@ function wire() {
     renderTimetable();
   });
   $('#regSearch').addEventListener('input', () => { Tables.reset('register'); renderRegister(); });
+  $('#regSort').addEventListener('change', (e) => { saveSettings({ regSort: e.target.value }); Tables.reset('register'); renderRegister(); });
   Tables.on('register', renderRegister);
   $('#regNotes').addEventListener('input', () => { if (state.current) markDirty(); });
   $('#allPresent').addEventListener('click', () => setAll('P'));
@@ -1880,7 +1891,7 @@ function wire() {
   $('#rClass').addEventListener('change', () => { Tables.reset('report'); renderReportUnitSelect(); renderReport(); });
   $('#rUnit').addEventListener('change', () => { Tables.reset('report'); renderReport(); });
   $('#rThreshold').addEventListener('change', async () => { await saveSettings({ threshold: Number($('#rThreshold').value) || 75 }); renderReport(); });
-  $('#rSort').addEventListener('change', () => { Tables.reset('report'); drawReportBody(); });
+  $('#rSort').addEventListener('change', (e) => { const col = { list: 'adm', name: 'name', pct: 'pct' }[e.target.value]; if (col) Tables.setSort('report', col, 1); drawReportBody(); });
   $$('.chipbtn').forEach((b) => b.addEventListener('click', () => { Tables.reset('report'); state.reportFilter = b.dataset.filter; $$('.chipbtn').forEach((x) => x.classList.toggle('on', x === b)); drawReportBody(); }));
   $('#viewToggle').addEventListener('click', async () => { await saveSettings({ reportView: reportView() === 'sheet' ? 'list' : 'sheet' }); drawReportBody(); });
   $('#signoffCard').addEventListener('click', (e) => {

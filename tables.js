@@ -99,5 +99,12 @@ const Tables = (() => {
     setTimeout(() => window.print(), 80);
   }
 
-  return { slice, bar, reset, on, defaults, th, sort, exportXlsx, print };
+  /** The order a table is in, and setting it (for a "Sort by" choice that sits beside the headings). */
+  const sortState = (key, first) => ({ ...sortOf(key, first) });
+  function setSort(key, col, dir = 1) {
+    sorts.set(key, { col, dir });
+    try { localStorage.setItem('tsort:' + key, JSON.stringify({ col, dir })); } catch { /* private mode */ }
+    get(key).page = 1;
+  }
+  return { slice, bar, reset, on, defaults, th, sort, sortState, setSort, exportXlsx, print };
 })();

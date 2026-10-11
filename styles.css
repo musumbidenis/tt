@@ -887,3 +887,6 @@ th[data-tsort]:hover { color: var(--ink); }
 .ov-term select { width: auto; margin: 0; height: 38px; }
 .archived-list li { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .6rem 1rem; border-bottom: 1px solid var(--line); }
 .archived-list li small { display: block; color: var(--muted); }
+.list-tools { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .25rem 0 .5rem; }
+.list-tools input[type=search] { flex: 1 1 14rem; margin: 0; }
+.list-tools select, #regSort { width: auto; flex: 0 0 auto; margin: 0; height: 40px; font-size: .875rem; }

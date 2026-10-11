@@ -374,3 +374,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **One marksheet per unit for its whole life.** A unit that spans terms, with different trainers, keeps CAT 1–3 and PRAC 1–3 on one sheet; each mark remembers the term it was entered in. Marks already entered are moved across automatically the first time the new Worker runs.
 - **Archive and delete a class** (MIS Officer). Open a class under Manage → Class lists and tap **Archive**: it disappears from day-to-day screens, nothing is deleted, and **Bring back** undoes it. An archived class can then be **deleted for good**: you type its name to confirm, a file with everything about it is saved to the device first, and the Google Drive copies are never touched.
 - **Sortable tables.** Tap a column heading to sort (tap again to reverse) in the POE students table, the class list, the marks table and the department overview.
+
+## Changes in 4.10.0 (Worker 6.1.0)
+
+- **Sorting everywhere.** In the term register's sheet view, tap a column heading (Admission no, Name, Possible hrs, Actual hrs, %) to sort; tap again to reverse. The Sort choice above it follows. Registers to approve, the staff list and the marking register each have a **Sort** choice (the marking register remembers yours).
+- **Students send POE for any unit their class has had**, not just this term's. Units from earlier terms are marked *(earlier term)*. Evidence for a unit not taught this term is decided by the trainer who had it last (or the HOD).
