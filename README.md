@@ -17,6 +17,8 @@ Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 
 - Trainer app: **https://musumbidenis.github.io/tt/**
 - Student check-in app: **https://musumbidenis.github.io/tt/student.html**
 
+**Documentation**: the [User Guide](docs/USER-GUIDE.md) (trainers, HODs, the MIS Officer and students) and the [Technical Documentation](docs/TECHNICAL.md) (setup, deployment, data model, API and operations) describe the current version. The sections below are the original set-up notes and the change log.
+
 ## Who does what
 
 | Role | Signs in with | Can |
