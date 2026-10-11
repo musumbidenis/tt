@@ -781,9 +781,10 @@ async function pushSessions(env, sessions, me, pre) {
   const results = [], fresh = [];
   for (const s of sessions) {
     const had = prev.get(s.sessionId);
-    // A register from a term that has ended stays as it was, unless the HOD or MIS Officer unlocked it.
+    // A register from a term that has ended stays as it was, unless the HOD or MIS Officer unlocked it. One the
+    // server has never seen (a device that was offline when the term ended) is still taken in: that is not a change.
     const termId = had?.term_id || s.termId || '';
-    if (termId && activeId && termId !== activeId && !open.has(`${termId}|${s.classCode}|${s.unitCode}`)) {
+    if (had && termId && activeId && termId !== activeId && !open.has(`${termId}|${s.classCode}|${s.unitCode}`)) {
       results.push({ sessionId: s.sessionId, status: 'locked' }); continue;
     }
     // Two devices (or a device that was offline a long time) can both have changed this register: every
