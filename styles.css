@@ -876,3 +876,14 @@ td.tadm { display: table-cell; }
 th[data-sort] { cursor: pointer; user-select: none; }
 th[data-sort]:hover { color: var(--ink); }
 .sort-ind { font-size: .7rem; }
+
+/* sortable headings, locked marks, archived classes, the end-of-term notice */
+th[data-tsort] { cursor: pointer; user-select: none; }
+th[data-tsort]:hover { color: var(--ink); }
+.marks-table input.mk.locked { background: var(--sunk); color: var(--muted); border-style: dashed; }
+.report-lock { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: space-between; padding: .6rem .85rem; margin: .5rem 0; border-radius: var(--r-sm); background: var(--l-soft); color: var(--ink); font-size: .9rem; }
+.archive-row { margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--line); }
+.ov-term { display: flex; align-items: center; gap: .5rem; margin: 0 0 .5rem; font-weight: 600; }
+.ov-term select { width: auto; margin: 0; height: 38px; }
+.archived-list li { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .6rem 1rem; border-bottom: 1px solid var(--line); }
+.archived-list li small { display: block; color: var(--muted); }

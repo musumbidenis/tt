@@ -3,6 +3,7 @@
  *   Tables.bar(key, list)        the "Previous / Next / rows per page" strip (empty when the list is short)
  *   Tables.on(key, redraw)       what to call when the page or the page size changes
  *   Tables.reset(key)            back to page 1 (call when a filter changes)
+ *   Tables.th(key, col, label)   a heading that sorts the table when tapped; Tables.sort(key, list, getters, first)
  *   Tables.exportXlsx(...)       an Excel file of a table; Tables.print(...) prints it or saves it as a PDF
  * Needs app.js ($, esc, download, toast, todayISO) and Xlsx.simple (xlsx.js). */
 'use strict';
@@ -34,6 +35,36 @@ const Tables = (() => {
     </nav>`;
   }
   const reset = (key) => { get(key).page = 1; };
+
+  /* ---------- sorting: tap a heading, tap it again to reverse; remembered on this device ---------- */
+  const sorts = new Map();
+  const saved = (key) => { try { return JSON.parse(localStorage.getItem('tsort:' + key) || 'null'); } catch { return null; } };
+  const sortOf = (key, first) => { if (!sorts.has(key)) sorts.set(key, saved(key) || { col: first, dir: 1 }); return sorts.get(key); };
+  function th(key, col, label, cls = '', extra = '') {
+    const s = sorts.get(key), on = s && s.col === col;
+    return `<th${cls ? ` class="${cls}"` : ''}${extra} data-tkey="${key}" data-tsort="${col}" tabindex="0" aria-sort="${on ? (s.dir > 0 ? 'ascending' : 'descending') : 'none'}">${label}<span class="sort-ind">${on ? (s.dir > 0 ? ' ▲' : ' ▼') : ''}</span></th>`;
+  }
+  function sort(key, list, getters, first) {
+    const s = sortOf(key, first), get = getters[s.col] || getters[first];
+    if (!get) return list;
+    return [...list].sort((a, b) => {
+      const x = get(a), y = get(b);
+      const blank = (v) => v === null || v === undefined || v === '';
+      if (blank(x) !== blank(y)) return blank(x) ? 1 : -1;        // empty cells always go last
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+      return c * s.dir;
+    });
+  }
+  function sortBy(el) {
+    const key = el.dataset.tkey, col = el.dataset.tsort, s = sorts.get(key) || { col, dir: -1 };
+    const next = { col, dir: s.col === col ? -s.dir : 1 };
+    sorts.set(key, next);
+    try { localStorage.setItem('tsort:' + key, JSON.stringify(next)); } catch { /* private mode */ }
+    get(key).page = 1;
+    redraw.get(key)?.();
+  }
+  document.addEventListener('click', (e) => { const h = e.target.closest?.('th[data-tsort]'); if (h) sortBy(h); });
+  document.addEventListener('keydown', (e) => { const h = e.target.closest?.('th[data-tsort]'); if (h && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sortBy(h); } });
   const on = (key, fn) => { redraw.set(key, fn); };
 
   document.addEventListener('click', (e) => {
@@ -68,5 +99,5 @@ const Tables = (() => {
     setTimeout(() => window.print(), 80);
   }
 
-  return { slice, bar, reset, on, defaults, exportXlsx, print };
+  return { slice, bar, reset, on, defaults, th, sort, exportXlsx, print };
 })();

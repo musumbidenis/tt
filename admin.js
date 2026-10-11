@@ -76,9 +76,10 @@ const Admin = (() => {
       + (done.length ? fold('signoffsDone', `Approved or returned (${done.length})`, `<ul class="mlist">${Tables.slice('signoffsDone', done).map(item).join('')}</ul>${Tables.bar('signoffsDone', done)}`) : '');
   }
 
+  let ovTerm = '';
   async function loadOverview() {
     try {
-      const o = cache.overview = need(await api('overview'));
+      const o = cache.overview = need(await api('overview', ovTerm ? { termId: ovTerm } : {}));
       Tables.reset('overview');
       drawOverview();
     } catch (e) { fill('m-overview', `<p class="err-text">${esc(e.message)}</p>`); }
@@ -96,7 +97,9 @@ const Admin = (() => {
     const behind = rows.filter((r) => r.lessons < r.due - 1).length;
     const page = Tables.slice('overview', rows);
     const th = (k, label, cls = '') => `<th${cls ? ` class="${cls}"` : ''} data-sort="${k}" tabindex="0" aria-sort="${key === k ? (dir > 0 ? 'ascending' : 'descending') : 'none'}">${label}<span class="sort-ind">${key === k ? (dir > 0 ? ' ▲' : ' ▼') : ''}</span></th>`;
-    fill('m-overview', `<p class="muted">${esc(o.term.name)} - Week ${o.week} of 12${behind ? ` (<b class="warn-text">${behind} behind on registers</b>)` : ''}</p>`
+    const past = (state.meta.terms || []).filter((x) => x.id !== state.meta.term?.id);
+    const termPick = past.length ? `<label class="ov-term">Term <select id="ovTerm" aria-label="Term"><option value="">${esc(state.meta.term?.duration || state.meta.term?.name || 'Current')} (current)</option>${past.map((x) => `<option value="${esc(x.id)}"${x.id === ovTerm ? ' selected' : ''}>${esc(x.duration || x.name)}</option>`).join('')}</select></label>` : '';
+    fill('m-overview', termPick + `<p class="muted">${esc(o.term.name)} - ${ovTerm ? 'ended' : `Week ${o.week} of 12`}${behind ? ` (<b class="warn-text">${behind} behind on registers</b>)` : ''}</p>`
       + fold('overview', `Show the class units (${rows.length})`, `<div class="table-wrap"><table class="report-table overview-table"><thead><tr>${th('classCode', 'Class')}${th('unitCode', 'Unit')}${th('trainerName', 'Trainer')}${th('lessons', 'Marked', 'num')}${th('due', 'Due', 'num')}${th('last', 'Last')}${th('pct', 'Att.', 'num')}${th('signoff', 'HOD')}</tr></thead>
         <tbody>${page.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
           <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
@@ -248,12 +251,20 @@ const Admin = (() => {
         <label class="btn small file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Upload registration codes<input type="file" id="regFiles" accept=".xlsx,.xlsm,.csv" multiple></label>
         <span id="regResult" class="small"></span></div>
       ${groups.size ? (() => {
-        const all = [...groups.entries()].sort().map(([g, codes]) => ({ g, codes, n: codes.reduce((a, c) => a + count(c), 0) }));
+        const all = Tables.sort('classes', [...groups.entries()].map(([g, codes]) => ({ g, codes, n: codes.reduce((a, c) => a + count(c), 0) })),
+          { g: (x) => x.g, streams: (x) => x.codes.length, n: (x) => x.n }, 'g');
         const page = Tables.slice('classes', all);
-        return fold('classes', `Show the classes (${all.length})`, `<div class="table-wrap"><table class="report-table class-table"><thead><tr><th>Class</th><th>Streams</th><th class="num">Students</th></tr></thead>
+        return fold('classes', `Show the classes (${all.length})`, `<div class="table-wrap"><table class="report-table class-table"><thead><tr>${Tables.th('classes', 'g', 'Class')}${Tables.th('classes', 'streams', 'Streams')}${Tables.th('classes', 'n', 'Students', 'num')}</tr></thead>
           <tbody>${page.map(({ g, codes, n }) => `<tr data-group="${esc(g)}" tabindex="0" role="button"><td><b>${esc(g)}</b></td>
             <td class="muted small">${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</td><td class="num">${n}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('classes', all)}`);
       })() : ''}
+      ${(() => {
+        const arch = archivedGroups();
+        return arch.length ? fold('archived', `Archived classes (${arch.length})`, `<ul class="mlist archived-list">${arch.map((g) => `<li><span><b>${esc(g.label)}</b>
+          <small>${g.students} student(s) · archived ${esc(fmtShort(g.at))}${g.by ? ' by ' + esc(g.by) : ''}</small></span>
+          <span class="st-actions"><button type="button" class="btn small" data-restore="${esc(g.label)}">Bring back</button>
+          <button type="button" class="btn small danger" data-delete="${esc(g.label)}">Delete…</button></span></li>`).join('')}</ul>`) : '';
+      })()}
       ${(() => {
         const empty = state.classes.filter((c) => state.units.some((u) => u.classCode === c.code) && !/[,/]/.test(c.code) && !count(c.code)).map((c) => c.code).sort();
         return empty.length ? `<details class="mdone"><summary>${empty.length} classes in the loading have no students yet</summary><p class="small">${empty.map(esc).join(' · ')}</p>
@@ -375,7 +386,53 @@ const Admin = (() => {
           <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' · ' + esc(s.status) : ''}</small></span>
           <span class="st-actions"><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button></span></li>`).join('')}</ul>`;
+      if (hasRole('MIS')) {
+        $('#adminDialogBody').insertAdjacentHTML('beforeend', `<div class="archive-row"><p class="muted small">Finished with this class? Archiving hides it, its students and its loading from day-to-day screens. Nothing is deleted, and it can be brought back.</p>
+          <button type="button" class="btn" data-archive="${esc(group)}">Archive ${esc(group)}</button></div>`);
+      }
     } catch (e) { $('#adminDialogBody').insertAdjacentHTML('beforeend', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  /** Archived classes, by MIS class name (all of its streams together). */
+  function archivedGroups() {
+    const groups = new Map();
+    for (const c of state.meta.archived || []) {
+      const g = c.misClass || c.code;
+      if (!groups.has(g)) groups.set(g, { label: g, codes: [], students: 0, at: c.archivedAt, by: c.archivedBy });
+      const x = groups.get(g); x.codes.push(c.code); x.students += c.students || 0;
+    }
+    return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }
+  async function archive(codes, on, label) {
+    try {
+      need(await api('archiveClasses', { codes, archive: on }));
+      toast(on ? `${label} archived` : `${label} is back`, 'ok');
+      closeDialog();
+      await pullRoster({ silent: true });
+      const el = $('#m-classes'); if (el) replaceBody(el, classesHtml());
+    } catch (e) { toast(e.message, 'err'); }
+  }
+  function askDelete(g) {
+    dialog(`<div class="scan-head"><strong>Delete ${esc(g.label)} for good</strong><button type="button" class="btn small ghost" data-close>Cancel</button></div>
+      <p>This removes ${esc(g.label)} from the database: its ${g.students} student(s), loading in every term, registers, QR check-ins, marks, sign-offs and evidence records.</p>
+      <p><b>The Google Drive copies stay</b> (attendance sheets, marksheets and the students' evidence files). A file with everything being deleted is saved to this device first.</p>
+      <label>Type <b>${esc(g.label)}</b> to confirm<input id="delConfirm" autocomplete="off"></label>
+      <button type="button" class="btn danger" data-delete-go="${esc(g.label)}">Save a copy and delete</button>`);
+  }
+  async function deleteGroup(label) {
+    const g = archivedGroups().find((x) => x.label === label); if (!g) return;
+    const typed = $('#delConfirm').value.trim();
+    if (typed.toLowerCase() !== label.toLowerCase()) { toast('Type the class name exactly to confirm', 'err'); return; }
+    const btn = $('[data-delete-go]'); btn.disabled = true; btn.textContent = 'Saving a copy…';
+    try {
+      const copy = need(await api('classExport', { codes: g.codes }));
+      download(`Class-${fileSafe(label)}_${todayISO()}.json`, JSON.stringify(copy), 'application/json');
+      btn.textContent = 'Deleting…';
+      need(await api('deleteClasses', { codes: g.codes, confirm: typed, label }));
+      toast(`${label} deleted. The copy is in this device's downloads.`, 'ok');
+      closeDialog();
+      await pullRoster({ silent: true });
+      const el = $('#m-classes'); if (el) replaceBody(el, classesHtml());
+    } catch (e) { toast(e.message, 'err'); btn.disabled = false; btn.textContent = 'Save a copy and delete'; }
   }
   async function updateStudent(li, patch) {
     try {
@@ -507,6 +564,14 @@ const Admin = (() => {
     const t = e.target;
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
+    const arc = t.closest('[data-archive]');
+    if (arc) { const codes = classGroups().get(arc.dataset.archive) || []; if (codes.length && confirm(`Archive ${arc.dataset.archive}? It can be brought back later.`)) archive(codes, true, arc.dataset.archive); return; }
+    const res = t.closest('[data-restore]');
+    if (res) { const g = archivedGroups().find((x) => x.label === res.dataset.restore); if (g) archive(g.codes, false, g.label); return; }
+    const del = t.closest('[data-delete]');
+    if (del) { const g = archivedGroups().find((x) => x.label === del.dataset.delete); if (g) askDelete(g); return; }
+    const go = t.closest('[data-delete-go]');
+    if (go) { deleteGroup(go.dataset.deleteGo); return; }
     const sortTh = t.closest('th[data-sort]');
     if (sortTh) { const k = sortTh.dataset.sort; ovSort = { key: k, dir: ovSort.key === k ? -ovSort.dir : 1 }; Tables.reset('overview'); drawOverview(); return; }
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
@@ -549,6 +614,7 @@ const Admin = (() => {
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
+    if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
     if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
     if (t.id === 'regFiles' && t.files.length) { readRegCodes([...t.files]); t.value = ''; }
     if (t.matches('#tBreaks input') && t.value && t === $$('#tBreaks input').at(-1)) t.insertAdjacentHTML('afterend', '<input type="date">');

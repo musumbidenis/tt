@@ -365,3 +365,12 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Manage → Registers to approve** can be searched by class, unit or trainer and is paged (30 at a time). The department overview sorts when you tap a column heading.
 - **Google Drive folders are made for you.** From bridge version 1.3.0, every trainer in the loading who has no folder gets one inside the Trainers folder the next time the Drive updates. Update the bridge with `clasp push -f` and deploy a new version of the web app (see *Updating the bridge later*).
 - **Scan ID cards** is visible but switched off.
+
+## Changes in 4.9.0 (Worker 6.0.0)
+
+- **One trainer, several devices.** Each device now brings down the registers the trainer made on their other devices, so the timetable shows them everywhere. Every mark carries the time it was set; when two copies of a register meet (on the server or on a device), each student keeps the latest mark, so one device can no longer wipe out another's work.
+- **Earlier terms.** Reports has a **Term** choice (and Manage → Department overview has one too) for looking back at a term that has ended. Earlier terms need internet.
+- **Ended terms are locked.** Registers and marks entered in a term that has ended cannot be changed. The HOD or MIS Officer can open an earlier term's report and tap **Unlock for 7 days** (or **Lock again**); in Marks, locked cells show with a dashed border and the HOD or MIS Officer can unlock them from the notice above the table.
+- **One marksheet per unit for its whole life.** A unit that spans terms, with different trainers, keeps CAT 1–3 and PRAC 1–3 on one sheet; each mark remembers the term it was entered in. Marks already entered are moved across automatically the first time the new Worker runs.
+- **Archive and delete a class** (MIS Officer). Open a class under Manage → Class lists and tap **Archive**: it disappears from day-to-day screens, nothing is deleted, and **Bring back** undoes it. An archived class can then be **deleted for good**: you type its name to confirm, a file with everything about it is saved to the device first, and the Google Drive copies are never touched.
+- **Sortable tables.** Tap a column heading to sort (tap again to reverse) in the POE students table, the class list, the marks table and the department overview.

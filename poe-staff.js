@@ -158,10 +158,12 @@ const PoeStaff = (() => {
       </div>
       <div id="poeStudents">
       <p class="muted small poe-sum">${esc(ps.sCls)} (${r.students.length} students, ${r.units.length} units)</p>
-      ${show.length ? studentTable(show) : `<div class="card notice"><h2>Nobody here</h2><p class="muted">${r.students.length ? 'Try another filter.' : 'This class has no students on its list.'}</p></div>`}
+      ${show.length ? studentTable(sortStudents(show)) : `<div class="card notice"><h2>Nobody here</h2><p class="muted">${r.students.length ? 'Try another filter.' : 'This class has no students on its list.'}</p></div>`}
       </div>`;
-    ps.shown = show;
+    ps.shown = sortStudents(show);
   }
+  const sortStudents = (list) => Tables.sort('poeStu', list, { name: (x) => x.st.name, adm: (x) => x.st.admNo, sent: (x) => x.sent,
+    approved: (x) => x.c.approved, submitted: (x) => x.c.submitted, returned: (x) => x.c.returned }, 'name');
   const SYM = { approved: '✓', returned: '↺', submitted: '•' };
   /** The table's rows as plain text, for Excel and the printed copy. */
   function studentSheet(show) {
@@ -176,7 +178,7 @@ const PoeStaff = (() => {
   function studentTable(show) {
     const rows = Tables.slice('poeStu', show);
     return `<div class="card table-card"><div class="table-wrap"><table class="report-table poe-table">
-      <thead><tr><th>Student</th><th>Admission no.</th><th class="num">Sent</th><th class="num">Approved</th><th class="num">With trainer</th><th class="num">Returned</th></tr></thead>
+      <thead><tr>${Tables.th('poeStu', 'name', 'Student')}${Tables.th('poeStu', 'adm', 'Admission no.')}${Tables.th('poeStu', 'sent', 'Sent', 'num')}${Tables.th('poeStu', 'approved', 'Approved', 'num')}${Tables.th('poeStu', 'submitted', 'With trainer', 'num')}${Tables.th('poeStu', 'returned', 'Returned', 'num')}</tr></thead>
       <tbody>${rows.map(studentHtml).join('')}</tbody></table></div>
       ${Tables.bar('poeStu', show)}
       <div class="row-actions table-actions">

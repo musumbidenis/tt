@@ -9,8 +9,10 @@ const Marks = (() => {
   const COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
   const HEAD = { cat1: 'CAT 1', cat2: 'CAT 2', cat3: 'CAT 3', prac1: 'PRAC 1', prac2: 'PRAC 2', prac3: 'PRAC 3' };
   const ms = { q: '', roster: [], edit: false, drawnKey: '', key: '', doc: null, saving: Promise.resolve(), sendTimer: null, sending: false, seq: 0 };
-  const termId = () => state.meta.term?.id || 'term';
-  const docId = (cls, unit) => `marks:${termId()}:${cls}|${unit}`;
+  // One marksheet per class and unit for the unit's whole life, whichever terms and trainers it spans.
+  const LIFE = 'unit';
+  const docId = (cls, unit) => `marks:${LIFE}:${cls}|${unit}`;
+  const oldDocId = (cls, unit) => `marks:${state.meta.term?.id || 'term'}:${cls}|${unit}`;   // before marks spanned terms
   const avg = (r, keys) => (keys.some((k) => r?.[k] !== null && r?.[k] !== undefined && r?.[k] !== '') ? keys.reduce((n, k) => n + (Number(r[k]) || 0), 0) / 3 : null);
   const show = (n) => (n === null || n === undefined ? '' : String(Math.round(n)));
   const canEdit = (unit) => (hasRole('HOD') || (hasRole('TRAINER') && isMyUnit(unit)));
@@ -22,10 +24,18 @@ const Marks = (() => {
   };
 
   async function load(cls, unit) {
-    const d = await getLocal(docId(cls, unit), { rows: {}, dirty: {} });
+    let d = await getLocal(docId(cls, unit), { rows: {}, dirty: {} });
     d.rows = d.rows || {}; d.dirty = d.dirty || {};
+    // Marks typed on this device before marksheets spanned terms (and maybe not sent yet) move across once.
+    if (!d._rev) {
+      const old = await getLocal(oldDocId(cls, unit), { rows: {}, dirty: {} });
+      if (old._rev && Object.keys(old.rows || {}).length) {
+        d = await updateLocal(docId(cls, unit), (x) => { x.rows = { ...(old.rows || {}) }; x.dirty = { ...(old.dirty || {}) }; x.movedFrom = old._id; }, { rows: {}, dirty: {} });
+      }
+    }
     return d;
   }
+  const rowOf = (r) => ({ admNo: r.admNo, ...Object.fromEntries(COLS.map((c) => [c, r[c]])), updatedAt: r.updatedAt, updatedBy: r.updatedBy, locked: r.locked || [], terms: r.terms || {} });
   /** The server's rows join the phone's: a row edited here and not sent yet stays as typed. */
   async function pull(cls, unit) {
     const res = await api('marksPull', { classCode: cls, unitCode: unit });
@@ -35,9 +45,10 @@ const Marks = (() => {
       for (const r of res.rows) {
         const k = lower(r.admNo), mine = d.rows[k];
         if (d.dirty[k] && mine && String(mine.updatedAt) > String(r.updatedAt)) continue;
-        d.rows[k] = { admNo: r.admNo, ...Object.fromEntries(COLS.map((c) => [c, r[c]])), updatedAt: r.updatedAt, updatedBy: r.updatedBy };
+        d.rows[k] = rowOf(r);
         delete d.dirty[k];
       }
+      d.lockedTerms = res.lockedTerms || [];
       d.pulledAt = nowISO();
     }, { rows: {}, dirty: {} });
   }
@@ -49,11 +60,13 @@ const Marks = (() => {
     if (!res.ok) throw new Error(res.error);
     await updateLocal(docId(cls, unit), (x) => {
       for (const k of keys) if (x.dirty[k] && String(x.rows[k]?.updatedAt) <= String(d.rows[k]?.updatedAt)) delete x.dirty[k];
-      for (const r of res.rows) { const k = lower(r.admNo); if (!x.dirty[k]) x.rows[k] = { admNo: r.admNo, ...Object.fromEntries(COLS.map((c) => [c, r[c]])), updatedAt: r.updatedAt, updatedBy: r.updatedBy }; }
+      for (const r of res.rows) { const k = lower(r.admNo); if (!x.dirty[k]) x.rows[k] = rowOf(r); }
+      x.lockedTerms = res.lockedTerms || [];
       x.sentAt = nowISO();
     }, { rows: {}, dirty: {} }).then(async (x) => {
-      if (!Object.keys(x.dirty || {}).length) await updateLocal('marksIndex', (i) => { i.keys = (i.keys || []).filter((k) => k !== `${termId()}:${cls}|${unit}`); }, { keys: [] });
+      if (!Object.keys(x.dirty || {}).length) await updateLocal('marksIndex', (i) => { i.keys = (i.keys || []).filter((k) => k.slice(k.indexOf(':') + 1) !== `${cls}|${unit}`); }, { keys: [] });
     });
+    if (res.held) toast(`${res.held} mark(s) were entered in a term that has ended, so they were kept as they were. The HOD or MIS Officer can unlock them.`, 'err');
     return keys.length;
   }
   /** Every marksheet on this phone with unsent rows (run with the register sync and when the internet returns). */
@@ -65,8 +78,7 @@ const Marks = (() => {
       // _local docs are not listed by the database, so the phone keeps its own list of marksheets with unsent rows.
       const idx = await getLocal('marksIndex', { keys: [] });
       for (const key of idx.keys || []) {
-        const [t, cu] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
-        if (t !== termId()) continue;
+        const cu = key.slice(key.indexOf(':') + 1);
         const [cls, unit] = cu.split('|');
         sent += await push(cls, unit);
       }
@@ -116,6 +128,8 @@ const Marks = (() => {
       ${!roster.length ? '<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the marks sheet shows up here.</span></div>' : `
       ${edit ? '<p class="muted small">Marks are percentages (0–100). Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.</p>'
         : '<p class="muted small">Only the trainer of this unit can change these marks.</p>'}
+      ${(d.lockedTerms || []).length ? `<div class="report-lock"><span><b>Some marks are locked.</b> Marks entered in ${d.lockedTerms.map((x) => esc(x.name)).join(', ')} cannot change now that the term has ended.</span>
+        ${hasRole('HOD') || hasRole('MIS') ? d.lockedTerms.map((x) => `<button type="button" class="btn small" data-munlock="${esc(x.id)}">Unlock ${esc(x.name)} for 7 days</button>`).join('') : ''}</div>` : ''}
       <input type="search" id="marksSearch" class="marks-search" placeholder="Search name or admission no." aria-label="Search students" value="${esc(ms.q)}">
       <div id="marksTable"></div>
       <div class="row-actions marks-actions">
@@ -129,17 +143,23 @@ const Marks = (() => {
   function drawTable() {
     const box = $('#marksTable'); if (!box) return;
     const q = (ms.q || '').trim().toLowerCase(), d = ms.doc;
-    const all = ms.roster.map((t, i) => ({ t, n: i + 1 })).filter(({ t }) => !q || t.name.toLowerCase().includes(q) || String(t.admNo).toLowerCase().includes(q));
+    const row = (t) => d.rows[lower(t.admNo)] || {};
+    const all = Tables.sort('marks', ms.roster.map((t, i) => ({ t, n: i + 1 })).filter(({ t }) => !q || t.name.toLowerCase().includes(q) || String(t.admNo).toLowerCase().includes(q)),
+      { sn: (x) => x.n, name: (x) => x.t.name, cat: (x) => avg(row(x.t), ['cat1', 'cat2', 'cat3']), prac: (x) => avg(row(x.t), ['prac1', 'prac2', 'prac3']) }, 'sn');
+    all.forEach((x, i) => { x.pos = i + 1; });   // S/N follows the order on screen
     const rows = Tables.slice('marks', all);
     box.innerHTML = all.length ? `<div class="marks-wrap"><table class="marks-table">
-        <thead><tr><th rowspan="2" class="mt-sn">S/N</th><th rowspan="2" class="mt-name">Student</th><th colspan="4" class="mt-grp">Oral / Theory (100%)</th><th colspan="4" class="mt-grp prac">Practical (100%)</th></tr>
-        <tr>${['cat1', 'cat2', 'cat3'].map((c) => `<th>${HEAD[c]}</th>`).join('')}<th class="avg">AVG</th>${['prac1', 'prac2', 'prac3'].map((c) => `<th class="prac">${HEAD[c]}</th>`).join('')}<th class="avg prac">AVG</th></tr></thead>
-        <tbody>${rows.map(({ t, n }) => rowHtml(t, n - 1, d.rows[lower(t.admNo)] || {}, ms.edit, d.dirty[lower(t.admNo)])).join('')}</tbody>
+        <thead><tr>${Tables.th('marks', 'sn', 'S/N', 'mt-sn', ' rowspan="2"')}${Tables.th('marks', 'name', 'Student', 'mt-name', ' rowspan="2"')}<th colspan="4" class="mt-grp">Oral / Theory (100%)</th><th colspan="4" class="mt-grp prac">Practical (100%)</th></tr>
+        <tr>${['cat1', 'cat2', 'cat3'].map((c) => `<th>${HEAD[c]}</th>`).join('')}${Tables.th('marks', 'cat', 'AVG', 'avg')}${['prac1', 'prac2', 'prac3'].map((c) => `<th class="prac">${HEAD[c]}</th>`).join('')}${Tables.th('marks', 'prac', 'AVG', 'avg prac')}</tr></thead>
+        <tbody>${rows.map(({ t, pos }) => rowHtml(t, pos - 1, row(t), ms.edit, d.dirty[lower(t.admNo)])).join('')}</tbody>
       </table></div>${Tables.bar('marks', all)}` : '<p class="empty">Nobody matches that search.</p>';
   }
   function rowHtml(t, i, r, edit, dirty) {
-    const cell = (c) => `<td><input class="mk" inputmode="decimal" autocomplete="off" data-adm="${esc(t.admNo)}" data-col="${c}" value="${r[c] ?? ''}"
-      aria-label="${esc(t.name)} ${HEAD[c]}" ${edit ? '' : 'readonly'}></td>`;
+    const cell = (c) => {
+      const lock = (r.locked || []).includes(c);
+      return `<td><input class="mk${lock ? ' locked' : ''}" inputmode="decimal" autocomplete="off" data-adm="${esc(t.admNo)}" data-col="${c}" value="${r[c] ?? ''}"
+      aria-label="${esc(t.name)} ${HEAD[c]}"${lock ? ` title="Entered in ${esc(r.terms?.[c] || 'an earlier term')}, which has ended: locked"` : ''} ${edit && !lock ? '' : 'readonly'}></td>`;
+    };
     return `<tr data-adm="${esc(t.admNo)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">
       <td class="mt-sn">${i + 1}</td>
       <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}</b><small>${esc(t.admNo)}${t.regCode ? ' · ' + esc(t.regCode) : ''}${t.pending ? ' · pending' : ''}${t.gone ? ' · not on the list' : ''}</small></div></th>
@@ -191,7 +211,7 @@ const Marks = (() => {
       for (const k of Object.keys(snap.dirty)) d.dirty[k] = true;
     }, { rows: {}, dirty: {} });
     if (ms.doc === snap && ms.key === cls + '|' + unit) { snap._rev = saved._rev; }
-    await updateLocal('marksIndex', (i) => { const k = `${termId()}:${cls}|${unit}`; i.keys = [...new Set([...(i.keys || []), k])]; }, { keys: [] });
+    await updateLocal('marksIndex', (i) => { const k = `${LIFE}:${cls}|${unit}`; i.keys = [...new Set([...(i.keys || []), k])]; }, { keys: [] });
     scheduleSend();
   }
   function scheduleSend() {
@@ -242,12 +262,21 @@ const Marks = (() => {
     document.addEventListener('click', (e) => {
       if (e.target.closest('#marksExport')) exportXlsx();
       if (e.target.closest('#marksSend')) syncAll().then(() => render());
+      const un = e.target.closest('[data-munlock]');
+      if (un) {
+        const [cls, unit] = ms.key.split('|');
+        api('unlock', { termId: un.dataset.munlock, classCode: cls, unitCode: unit, days: 7 })
+          .then((r) => { if (!r.ok) throw new Error(r.error); toast('Unlocked for 7 days', 'ok'); render(); })
+          .catch((err) => toast(err.message, 'err'));
+      }
       const m = e.target.closest('#reportMode [data-rmode]');
       if (m) setMode(m.dataset.rmode);
     });
     window.addEventListener('online', () => syncAll({ quiet: true }));
   }
   function setMode(mode) {
+    // Marks belong to the unit, not to a term: the marksheet always opens on this term's classes.
+    if (mode === 'marks' && state.reportTerm) { state.reportTerm = ''; state.pastUnits = null; fillTermSelect(); fillReportClasses(); }
     state.reportMode = mode;
     $$('#reportMode [data-rmode]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.rmode === mode)));
     $('#tab-reports').classList.toggle('marks-mode', mode === 'marks');
