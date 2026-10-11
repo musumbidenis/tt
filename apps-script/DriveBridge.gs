@@ -23,7 +23,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.2.0';
+var BRIDGE_VERSION = '1.3.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -203,11 +203,12 @@ function sync() {
     var since = pend ? pend.since : (p.getProperty('CURSOR') || ''), offset = pend ? pend.offset : 0, startNow = pend ? pend.now : null;
     var folders = trainerFolders_(), sheets = JSON.parse(p.getProperty('SHEETS') || '{}');
     var report = { matched: 0, unmatched: [], sheets: {} };
-    var trainers = pend ? JSON.parse(p.getProperty('TRAINERS') || '[]') : null;
+    var trainers = pend ? JSON.parse(p.getProperty('TRAINERS') || '[]') : null, made = false;
     while (true) {
       var feed = callWorker_('bridgeFeed', { since: since, offset: offset });
       if (!startNow) startNow = feed.now;
       if (feed.trainers) { trainers = feed.trainers; p.setProperty('TRAINERS', JSON.stringify(trainers)); }
+      if (!made && trainers) { made = true; makeFolders_(trainers, folders); }
       if (feed.evidence && feed.evidence.length) writeEvidenceIndex_(feed.evidence);
       feed.units.forEach(function (u) {
         var tr = (trainers || []).filter(function (x) { return lowerEq_(x.code, u.trainerCode); })[0] || { code: u.trainerCode, name: u.trainerName, folder: '' };
@@ -272,6 +273,17 @@ function trainerFolders_() {
   var out = [], it = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('TRAINERS_FOLDER_ID')).getFolders();
   while (it.hasNext()) { var f = it.next(); out.push({ id: f.getId(), name: f.getName(), folder: f }); }
   return out;
+}
+/** Every trainer in the loading gets a folder of their own in the Trainers folder, unless one already matches. */
+function makeFolders_(trainers, folders) {
+  var root = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('TRAINERS_FOLDER_ID'));
+  trainers.forEach(function (tr) {
+    if (!tr.code || resolveFolder_(tr, folders)) return;
+    try {
+      var f = root.createFolder(String(tr.name || tr.code).replace(/[\/:*?"<>|]+/g, ' ').trim() || tr.code);
+      folders.push({ id: f.getId(), name: f.getName(), folder: f });
+    } catch (e) { Logger.log('could not make a folder for ' + tr.code + ': ' + e); }
+  });
 }
 function words_(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(' ').filter(Boolean); }
 /** The MIS Officer's choice first; else a folder naming the staff code; else the one folder with the trainer's surname. */
