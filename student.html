@@ -42,15 +42,15 @@
     <div class="setup-intro">
       <img src="icons/rvnp-logo.png" alt="" width="64" height="64">
       <div>
-        <h2>Set up this phone</h2>
-        <p class="muted">Choose your class and your name. This phone is then <b>registered to you</b>: it checks in only you, and you check in only from this phone.</p>
+        <h2>Set up this device</h2>
+        <p class="muted">Choose your class and your name. This device is then <b>registered to you</b>: it checks in only you, and you check in only from this device.</p>
       </div>
     </div>
     <p id="setupMsg" class="small err-text"></p>
     <div id="setupForm">
       <label>Class<select id="setupClass"><option value="">Loading…</option></select></label>
       <label>Your name<select id="setupName" disabled><option value="">Choose your class first</option></select></label>
-      <button type="button" class="btn primary big" id="setupSave" disabled>Register this phone</button>
+      <button type="button" class="btn primary big" id="setupSave" disabled>Register this device</button>
     </div>
   </section>
 
@@ -67,29 +67,26 @@
         <strong id="pName"></strong>
         <span id="pMeta" class="muted small"></span>
       </div>
-      <span class="pill synced">Registered to this phone</span>
+      <span class="pill synced">Registered to this device</span>
     </div>
   </section>
 
   <div id="viewTabs" class="view-tabs" role="group" aria-label="Show" hidden>
     <button type="button" data-view="checkin" aria-pressed="true">Check-in</button>
     <button type="button" data-view="poe" aria-pressed="false">Evidence (POE)</button>
+    <button type="button" data-view="subs" aria-pressed="false">Submissions</button>
   </div>
 
   <div class="view-checkin">
   <button type="button" class="btn primary big" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan lesson QR</button>
-  <p class="scan-hint">Or point your normal camera at your trainer's QR. No internet needed.</p>
+  <p class="scan-hint">Point your camera at your trainer's QR. No internet needed.</p>
 
-  <section id="historyCard" class="card" hidden>
-    <h2>My check-ins</h2>
-    <ul id="history" class="history"></ul>
-  </section>
   </div>
 
   <div class="view-poe">
   <section id="poeCard" class="card" hidden>
-    <h2>Send evidence</h2>
-    <p class="muted small">Scan your marked CAT or practical like a document. It is saved on this phone first and goes to the college Drive when you have internet. Your trainer then approves it.</p>
+    <h2>Send POE(s)</h2>
+    <p class="muted small">Scan your marked CAT or practical like a document. It is saved on this device first and goes to the college Drive when you have internet. Your trainer then approves it.</p>
     <label>Unit<select id="poeUnit"></select></label>
     <p class="field-label">What are you sending? <span class="muted small">Pick one or more</span></p>
     <div id="poeItems" class="item-chips" role="group" aria-label="Items"></div>
@@ -97,18 +94,25 @@
     <button type="button" class="btn primary big" id="poeSave" disabled>Scan pages first</button>
     <div id="poeNotify" class="notify-row" hidden>
       <label class="check"><input type="checkbox" id="poeNotifyOn"> Notify me about my evidence</label>
-      <p id="poeNotifyHint" class="muted small">Your phone tells you when your trainer approves your work or sends it back.</p>
+      <p id="poeNotifyHint" class="muted small">Your device tells you when your trainer approves your work or sends it back.</p>
     </div>
     <input type="file" id="poeCamera" accept="image/*" capture="environment" hidden>
     <input type="file" id="poeGallery" accept="image/*,application/pdf" multiple hidden>
   </section>
-  <section id="poeListCard" class="card" hidden>
-    <h2>My evidence</h2>
-    <ul id="poeList" class="history poe-list"></ul>
-  </section>
   </div>
 
-  <p id="deviceInfo" class="device-foot"></p>
+  <div class="view-subs">
+  <section id="historyCard" class="card" hidden>
+    <h2>My check-ins</h2>
+    <ul id="history" class="history"></ul>
+  </section>
+  <section id="poeListCard" class="card" hidden>
+    <h2>My POE submissions</h2>
+    <ul id="poeList" class="history poe-list"></ul>
+  </section>
+  <p class="subs-empty muted center">Nothing here yet. Your check-ins and the evidence you send show up here.</p>
+  </div>
+
   <p class="center"><button type="button" class="linkish" id="resetSetup" hidden>Wrong name? Set up again</button></p>
 </main>
 

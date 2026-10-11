@@ -1,15 +1,15 @@
 /* Student check-in — works offline.
  * First login (online, once): the student picks their class and name; the server ties this
- * phone to that student. After that, scanning the trainer's lesson QR works with no internet:
- * the class is checked on the phone, the check-in is stored, and it is sent to the server
+ * device to that student. After that, scanning the trainer's lesson QR works with no internet:
+ * the class is checked on the device, the check-in is stored, and it is sent to the server
  * whenever there is internet — even months later. */
 'use strict';
 
 const sdb = new PouchDB('rvnp_student', { auto_compaction: true });
 const REASONS = {
   'wrong-class': 'Not your class',
-  'device-other-student': 'This phone is registered to another student',
-  'student-other-device': 'You are registered on another phone — see your trainer',
+  'device-other-student': 'This device is registered to another student',
+  'student-other-device': 'You are registered on another device — see your trainer',
   'invalid-code': 'Code not valid (expired, or not from your trainer)',
   'unknown-student': 'You are not on the class list any more — see your trainer',
 };
@@ -128,7 +128,7 @@ async function openSetup(message = '') {
   const msg = $('#setupMsg');
   const form = $('#setupForm');
   if (!st.sheetsUrl) { msg.textContent = 'Open the student app link your trainer shared (it connects this app to your class lists).'; form.hidden = true; return; }
-  if (!navigator.onLine) { msg.textContent = 'Connect to the internet once to set up this phone. After that, scanning works offline.'; form.hidden = true; return; }
+  if (!navigator.onLine) { msg.textContent = 'Connect to the internet once to set up this device. After that, scanning works offline.'; form.hidden = true; return; }
   form.hidden = false;
   msg.textContent = message;
   const sel = $('#setupClass');
@@ -169,14 +169,14 @@ async function register() {
   const classCode = $('#setupClass').value, admNo = $('#setupName').value;
   if (!classCode || !admNo) return;
   const label = $('#setupName').selectedOptions[0]?.textContent || admNo;
-  if (!confirm(`Register this phone to ${label}?\n\nThis phone will only ever check in this student.`)) return;
+  if (!confirm(`Register this device to ${label}?\n\nThis device will only ever check in this student.`)) return;
   $('#setupSave').disabled = true;
   try {
     const res = await api('POST', null, { action: 'register', admNo, classCode, deviceId: st.deviceId });
     if (!res.ok) throw new Error(res.error || 'Registration failed');
     await saveProfile({ admNo: res.admNo, name: res.name, classCode: res.classCode, className: res.className, registeredAt: nowISO() });
     $('#setupCard').hidden = true;
-    showResult('ok', 'Phone registered', `${res.name} — ${res.classCode}`, 'You can now scan your trainer\'s lesson QR, even without internet.');
+    showResult('ok', 'Device registered', `${res.name} — ${res.classCode}`, 'You can now scan your trainer\'s lesson QR, even without internet.');
     const l = st.pendingLesson;
     st.pendingLesson = null;
     if (l) await handleLesson(l);
@@ -194,7 +194,7 @@ async function handleLesson(l) {
   const p = st.profile;
   if (!p) {
     st.pendingLesson = l; // recorded automatically as soon as setup is done
-    showResult('err', 'Set up this phone first', 'Choose your class and name below. Your scan is kept and recorded right after.');
+    showResult('err', 'Set up this device first', 'Choose your class and name below. Your scan is kept and recorded right after.');
     await openSetup();
     return;
   }
@@ -218,7 +218,7 @@ async function handleLesson(l) {
   st.lastScan = id;
   await mirrorUnsent();
   showResult('ok', 'Attendance recorded', `${doc.unitName} · ${doc.period}${doc.trainer ? ' · ' + doc.trainer : ''}`,
-    navigator.onLine ? 'Sending…' : 'Saved safely on this phone — it is sent automatically when you next have internet.');
+    navigator.onLine ? 'Sending…' : 'Saved safely on this device — it is sent automatically when you next have internet.');
   await render();
   sync();
 }
@@ -232,7 +232,7 @@ async function handleScanned(text) {
 /* ---------- sending to the server ---------- */
 async function sync({ manual = false } = {}) {
   if (!st.profile || !st.sheetsUrl || st.syncing) return;
-  if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this phone'); return; }
+  if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this device'); return; }
   const docs = (await checkins()).filter((d) => d.status === 'saved' || d.status === 'pending');
   if (!docs.length) { if (manual) toast('Nothing waiting to send', 'ok'); return; }
   st.syncing = true;
@@ -264,7 +264,7 @@ async function sync({ manual = false } = {}) {
     await mirrorUnsent();
     render();
   }
-  // While a check-in waits for the trainer's phone, ask again within seconds instead of a minute.
+  // While a check-in waits for the trainer's device, ask again within seconds instead of a minute.
   const waiting = (await checkins()).some((d) => d.status === 'pending' || d.status === 'saved');
   clearTimeout(st.retryTimer);
   if (waiting && navigator.onLine && (st.retries = (st.retries || 0) + 1) <= 20) st.retryTimer = setTimeout(() => sync(), 8000);
@@ -315,14 +315,14 @@ function stopScan() {
 /* ---------- screen ---------- */
 async function render() {
   const p = st.profile;
-  $('#who').textContent = p ? `${p.name} · ${p.classCode}` : 'Not set up';
+  $('#who').textContent = p ? `${p.name} - ${p.classCode}` : 'Not set up';
   $('#profileCard').hidden = !p;
   $('#resetSetup').hidden = !p;
   $('#viewTabs').hidden = !p;
   if (!p) delete document.body.dataset.view;
   if (p) {
     $('#pName').textContent = p.name;
-    $('#pMeta').textContent = `${p.admNo} · ${p.className || p.classCode}`;
+    $('#pMeta').textContent = p.admNo;
   }
   const list = (await checkins()).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt)));
   $('#historyCard').hidden = !list.length;
@@ -330,7 +330,7 @@ async function render() {
     const label = d.status === 'accepted' ? ['synced', 'Confirmed']
       : d.status === 'pending' ? ['pending', 'Sent — waiting for trainer to sync']
       : d.status === 'rejected' ? ['rejected', REASONS[d.reason] || 'Not accepted']
-      : ['pending', 'Saved on phone'];
+      : ['pending', 'Saved on device'];
     return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} · ${esc(d.period)} · ${esc(fmtTime(d.scannedAt))}</span>
 </div>
       <span class="pill ${label[0]}">${esc(label[1])}</span></li>`;
@@ -339,26 +339,25 @@ async function render() {
   const last = st.lastScan && !$('#result').hidden && list.find((d) => d._id === st.lastScan);
   if (last) {
     $('#resultSub').textContent = last.status === 'accepted' ? 'Confirmed in your trainer\'s register.'
-      : last.status === 'pending' ? 'Sent. It is confirmed once your trainer\'s phone syncs.'
+      : last.status === 'pending' ? 'Sent. It is confirmed once your trainer\'s device syncs.'
       : last.status === 'rejected' ? (REASONS[last.reason] || 'Not accepted')
-      : navigator.onLine ? 'Sending…' : 'Saved safely on this phone. It is sent automatically when you next have internet.';
+      : navigator.onLine ? 'Sending…' : 'Saved safely on this device. It is sent automatically when you next have internet.';
   }
   const unsent = list.filter((d) => d.status === 'saved');
   const el = $('#pendingCount'); el.textContent = unsent.length; el.classList.toggle('zero', unsent.length === 0);
 
-  // Warn when check-ins have been waiting a long time, so they are sent before anything can happen to the phone.
+  // Warn when check-ins have been waiting a long time, so they are sent before anything can happen to the device.
   const oldest = unsent.reduce((m, d) => (!m || d.scannedAt < m ? d.scannedAt : m), '');
   const days = oldest ? Math.floor((Date.now() - new Date(oldest).getTime()) / 864e5) : 0;
   const warn = $('#warning');
   if (days >= 3) {
     warn.hidden = false;
-    warn.textContent = `${unsent.length} check-in(s) not sent for ${days} days. They are safe on this phone — connect to the internet and tap Send.`;
+    warn.textContent = `${unsent.length} check-in(s) not sent for ${days} days. They are safe on this device — connect to the internet and tap Send.`;
   } else if (st.storage === 'not-protected' && list.length) {
     warn.hidden = false;
-    warn.textContent = 'Add this app to your home screen (browser menu → Add to Home screen) so your phone keeps your check-ins safely.';
+    warn.textContent = 'Add this app to your home screen (browser menu → Add to Home screen) so your device keeps your check-ins safely.';
   } else warn.hidden = true;
 
-  $('#deviceInfo').textContent = `Phone ID ${st.deviceId}` + (st.storage === 'protected' ? ' · storage protected ✓' : '');
 }
 
 function updateNet() {
@@ -387,7 +386,7 @@ async function protectStorage() {
 }
 
 async function init() {
-  // Phone ID: kept in the database and in a second place, so it survives if one is lost.
+  // Device ID: kept in the database and in a second place, so it survives if one is lost.
   const dev = await updateLocal('device', (d) => { if (!d.deviceId) d.deviceId = ls.get('rvnp_device_id') || 'stu-' + uuid().replace(/-/g, '').slice(0, 12); });
   st.deviceId = dev.deviceId;
   ls.set('rvnp_device_id', st.deviceId);
@@ -405,7 +404,7 @@ async function init() {
   $('#setupClass').addEventListener('change', loadNames);
   $('#setupName').addEventListener('change', () => { $('#setupSave').disabled = !$('#setupName').value; });
   $('#setupSave').addEventListener('click', register);
-  $('#resetSetup').addEventListener('click', () => openSetup('Choose your class and name again. If this phone is already registered to someone else, your trainer must reset it first.'));
+  $('#resetSetup').addEventListener('click', () => openSetup('Choose your class and name again. If this device is already registered to someone else, your trainer must reset it first.'));
   $('#scanBtn').addEventListener('click', startScan);
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);

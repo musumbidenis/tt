@@ -1,4 +1,4 @@
-/* Student app — POE evidence: scan pages like a document scanner, keep the PDF on the phone, and send it
+/* Student app — POE evidence: scan pages like a document scanner, keep the PDF on the device, and send it
  * to the college Drive when there is internet. Statuses (with your trainer, approved, returned) come back
  * when the app opens, when it comes back into view, after an upload, and when a notification arrives.
  * Uses student.js (st, sdb, api, toast, esc, $) and scanner.js. */
@@ -6,7 +6,6 @@
 
 const POE = (() => {
   const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
-  const FILTERS = [['document', 'Document'], ['grey', 'Grey'], ['colour', 'Colour']];
   const ps = { units: [], unit: '', picked: new Set(), drafts: {}, server: [], syncing: false, crop: null, target: null, notify: null };
   const $$ = (q, el = document) => [...el.querySelectorAll(q)];
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -68,13 +67,12 @@ const POE = (() => {
     await renderNotify();
   }
   function docCard(item, d) {
-    const pages = d?.pages || [], f = d?.filter || 'document';
+    const pages = d?.pages || [];
     return `<div class="poe-doc" data-doc="${item}">
-      <div class="poe-doc-head"><b>${esc(unitName(ps.unit))} — ${item}</b><span class="muted small">${d?.pdfOnly ? 'PDF from the phone' : pages.length + ' page' + (pages.length === 1 ? '' : 's')}</span></div>
+      <div class="poe-doc-head"><b>${esc(unitName(ps.unit))} — ${item}</b><span class="muted small">${d?.pdfOnly ? 'PDF from the device' : pages.length + ' page' + (pages.length === 1 ? '' : 's')}</span></div>
       ${d?.pdfOnly ? `<p class="small">${esc(d.pdfName || 'document.pdf')} <button type="button" class="linkish" data-clear>Remove</button></p>` : `
-      <ol class="poe-pages">${pages.map((_, i) => `<li data-page="${i}"><img alt="Page ${i + 1}" class="f-${f}"><span>${i + 1}</span>
-        <span class="pg-tools"><button type="button" data-move="-1" aria-label="Move page ${i + 1} up" ${i ? '' : 'disabled'}>↑</button><button type="button" data-move="1" aria-label="Move page ${i + 1} down" ${i < pages.length - 1 ? '' : 'disabled'}>↓</button><button type="button" data-del aria-label="Delete page ${i + 1}">✕</button></span></li>`).join('')}</ol>
-      <div class="seg filt" role="group" aria-label="Look">${FILTERS.map(([k, l]) => `<button type="button" data-filter="${k}" aria-pressed="${f === k}">${l}</button>`).join('')}</div>`}
+      <ol class="poe-pages">${pages.map((_, i) => `<li data-page="${i}"><img alt="Page ${i + 1}" class="f-document"><span>${i + 1}</span>
+        <span class="pg-tools"><button type="button" data-move="-1" aria-label="Move page ${i + 1} up" ${i ? '' : 'disabled'}>↑</button><button type="button" data-move="1" aria-label="Move page ${i + 1} down" ${i < pages.length - 1 ? '' : 'disabled'}>↓</button><button type="button" data-del aria-label="Delete page ${i + 1}">✕</button></span></li>`).join('')}</ol>`}
       <div class="row-actions"><button type="button" class="btn primary" data-camera>Take photo of a page</button><button type="button" class="btn" data-gallery>From gallery or PDF</button></div>
     </div>`;
   }
@@ -87,23 +85,23 @@ const POE = (() => {
       rows.push(`<li data-local="${esc(d._id)}"><div><b>${esc(d.unitName)} — ${esc(d.item)}</b><span class="muted small">${d.pageCount || ''} page(s) · saved ${esc(fmtTime(d.createdAt))}${d.error ? ' · ' + esc(d.error) : ''}</span></div>
         <span class="poe-acts">${d.status === 'error' && navigator.onLine
           ? `<span class="pill rejected">Not sent yet</span><span class="poe-why small">${esc(d.error || 'Try again later')}</span><button type="button" class="linkish" data-retry>Try again</button>`
-          : `<span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on phone — sends when online'}</span>`}<button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
+          : `<span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on device — sends when online'}</span>`}<button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
     }
     for (const e of [...ps.server].sort((a, b) => String(b.submittedAt).localeCompare(a.submittedAt))) {
       const [cls, label] = STATUS[e.status] || ['pending', e.status];
       const mine = local.find((d) => d.serverId === e.id);
-      rows.push(`<li><div><b>${esc(e.unitName)} — ${esc(e.item)} <span class="muted">v${e.version}</span></b><span class="muted small">${esc(e.fileName)} · sent ${esc(fmtTime(e.submittedAt))}${e.comment ? ` · “${esc(e.comment)}”` : ''}</span></div>
+      rows.push(`<li><div><b>${esc(e.unitName)} — ${esc(e.item)} <span class="muted">v${e.version}</span></b>${e.comment ? `<span class="muted small">“${esc(e.comment)}”</span>` : ''}</div>
         <span class="poe-acts"><span class="pill ${cls}">${label}</span>${mine ? `<button type="button" class="linkish" data-copy data-id="${esc(mine._id)}">Save a copy</button>` : ''}${e.status === 'returned' ? `<button type="button" class="linkish" data-redo="${esc(e.unitCode)}|${esc(e.item)}">Scan again</button>` : ''}</span></li>`);
     }
     $('#poeListCard').hidden = !rows.length;
     box.innerHTML = rows.join('');
   }
 
-  /* ---------- drafts: one per unit and item, kept on the phone ---------- */
+  /* ---------- drafts: one per unit and item, kept on the device ---------- */
   async function draft(item) {
     const id = draftId(ps.unit, item);
     try { return await sdb.get(id); } catch (e) { if (e.status !== 404) throw e; }
-    return { _id: id, type: 'evidence', status: 'draft', unitCode: ps.unit, unitName: unitName(ps.unit), item, filter: 'document', pages: [], createdAt: nowISO() };
+    return { _id: id, type: 'evidence', status: 'draft', unitCode: ps.unit, unitName: unitName(ps.unit), item, pages: [], createdAt: nowISO() };
   }
   async function saveDraft(d) { const r = await sdb.put(d); d._rev = r.rev; return d; }
   async function addPage(item, blob) {
@@ -163,7 +161,7 @@ const POE = (() => {
     finally { $('#cropKeep').disabled = false; $('#cropKeep').textContent = 'Keep page'; }
   }
 
-  /* ---------- saving: one PDF per item, kept on the phone ---------- */
+  /* ---------- saving: one PDF per item, kept on the device ---------- */
   async function saveAll() {
     const btn = $('#poeSave'); btn.disabled = true; btn.textContent = 'Making the PDF…';
     try {
@@ -176,8 +174,8 @@ const POE = (() => {
           const pages = [];
           for (const name of d.pages) {
             const c = await Scanner.load(await attachment(d, name));
-            const f = Scanner.filter(c, d.filter || 'document');
-            pages.push({ jpeg: await Scanner.toJpeg(f, d.filter === 'colour' ? 0.72 : 0.68), width: f.width, height: f.height });
+            const f = Scanner.filter(c, 'document');
+            pages.push({ jpeg: await Scanner.toJpeg(f, 0.68), width: f.width, height: f.height });
           }
           pdf = await Scanner.pdf(pages);
         }
@@ -187,7 +185,7 @@ const POE = (() => {
         await sdb.remove(d._id, d._rev);
         ps.picked.delete(it);
       }
-      toast('Saved on this phone. It is sent to the college Drive when you have internet.', 'ok');
+      toast('Saved on this device. It is sent to the college Drive when you have internet.', 'ok');
       await render();
       sync();
     } catch (e) { toast('Could not save: ' + e.message, 'err'); }
@@ -241,8 +239,8 @@ const POE = (() => {
         } catch (e) {
           d.status = 'error';
           d.error = !navigator.onLine ? 'Waiting for internet'
-            : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this phone.'
-            : e.bridge ? 'The college Drive did not answer this phone. Your file is safe on this phone. Your MIS Officer can check Manage → Google Drive.'
+            : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this device.'
+            : e.bridge ? 'The college Drive did not answer this device. Your file is safe on this device. Your MIS Officer can check Manage → Google Drive.'
             : 'Could not send: ' + e.message;
           await saveDraft(d);
         }
@@ -254,7 +252,7 @@ const POE = (() => {
   }
 
   /* ---------- "Notify me about my evidence" ----------
-   * Standard browser notifications: the phone subscribes with the college's public key (config.js) and
+   * Standard browser notifications: the device subscribes with the college's public key (config.js) and
    * the server pokes it when a trainer decides on something. Permission is only ever asked for when the
    * student taps the switch, never when the app opens. */
   const vapidKey = () => window.ATTENDANCE_CONFIG?.vapidPublicKey || '';
@@ -294,10 +292,10 @@ const POE = (() => {
     row.hidden = false;
     const sub = await subscription();
     box.checked = !!sub && Notification.permission === 'granted';
-    if (box.checked) await rememberIdentity(true);   // keeps the server address and the phone's details in step
-    hint.textContent = box.checked ? 'Your phone will tell you when your trainer approves your work or sends it back.'
-      : Notification.permission === 'denied' ? 'Notifications are switched off for this app in your phone settings. Turn them on there first.'
-      : 'Your phone tells you when your trainer approves your work or sends it back.';
+    if (box.checked) await rememberIdentity(true);   // keeps the server address and the device's details in step
+    hint.textContent = box.checked ? 'Your device will tell you when your trainer approves your work or sends it back.'
+      : Notification.permission === 'denied' ? 'Notifications are switched off for this app in your device settings. Turn them on there first.'
+      : 'Your device tells you when your trainer approves your work or sends it back.';
   }
   async function toggleNotify(on) {
     const box = $('#poeNotifyOn');
@@ -315,13 +313,13 @@ const POE = (() => {
         return;
       }
       const ask = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
-      if (ask !== 'granted') { toast(ask === 'denied' ? 'Your phone is blocking notifications for this app' : 'Not switched on', 'err'); return; }
+      if (ask !== 'granted') { toast(ask === 'denied' ? 'Your device is blocking notifications for this app' : 'Not switched on', 'err'); return; }
       const sub = await reg.pushManager.getSubscription()
         || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidKey()) });
       const r = await api('POST', null, { action: 'pushSubscribe', deviceId: st.deviceId, admNo: st.profile.admNo, endpoint: sub.endpoint });
       if (!r.ok) throw new Error(r.error);
       await rememberIdentity(true);
-      toast('Done — your phone will tell you about your evidence', 'ok');
+      toast('Done — your device will tell you about your evidence', 'ok');
     } catch (e) {
       toast((on ? 'Could not switch that on: ' : 'Could not switch that off: ') + e.message, 'err');
     } finally {
@@ -337,6 +335,7 @@ const POE = (() => {
       document.body.dataset.view = b.dataset.view;
       $$('#viewTabs [data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       if (b.dataset.view === 'poe') { loadUnits().then(render); sync(); }
+      if (b.dataset.view === 'subs') { render(); sync(); }
     });
     $('#poeUnit').addEventListener('change', (e) => { ps.unit = e.target.value; ps.picked = new Set(); render(); });
     $('#poeItems').addEventListener('click', (e) => {
@@ -352,7 +351,6 @@ const POE = (() => {
       if (e.target.closest('[data-gallery]')) { ps.target = item; $('#poeGallery').click(); return; }
       const d = await draft(item);
       const li = e.target.closest('[data-page]');
-      if (e.target.closest('[data-filter]')) { d.filter = e.target.closest('[data-filter]').dataset.filter; await saveDraft(d); return render(); }
       if (e.target.closest('[data-clear]')) { if (d._rev) await sdb.remove(d._id, d._rev); ps.picked.delete(item); return render(); }
       if (li && e.target.closest('[data-del]')) {
         const [gone] = d.pages.splice(Number(li.dataset.page), 1);
@@ -398,9 +396,9 @@ const POE = (() => {
       if (e.data?.type === 'show-evidence') showEvidence();
     });
   }
-  /** Brings the Evidence view to the front (after a tap on a notification). */
+  /** Brings the Submissions view to the front (after a tap on a notification): that is where the decisions are. */
   function showEvidence() {
-    const btn = document.querySelector('#viewTabs [data-view=poe]');
+    const btn = document.querySelector('#viewTabs [data-view=subs]');
     if (btn && !$('#viewTabs').hidden) btn.click();
   }
 
