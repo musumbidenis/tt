@@ -63,13 +63,14 @@
 
   <section id="profileCard" class="card" hidden>
     <div class="profile">
-      <div>
+      <div class="profile-who">
         <strong id="pName"></strong>
         <span id="pMeta" class="muted small"></span>
+        <span class="pill synced tiny-pill">Registered to this device</span>
       </div>
-      <span class="pill synced tiny-pill">Registered to this device</span>
+      <div class="inst"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="52" height="52"><span>ICT Department</span></div>
     </div>
-    <div class="my-qr"><div id="pQr" aria-label="My QR ID"></div><span class="muted small">My QR ID: your trainer can scan it to mark you</span></div>
+    <div class="my-qr"><div id="pQr" aria-label="My QR ID"></div><span class="muted small">Student QR ID: Trainer can scan it to mark attendance</span></div>
   </section>
 
   <div id="viewTabs" class="view-tabs" role="group" aria-label="Show" hidden>
@@ -123,6 +124,11 @@
   </div>
 
   <p class="center"><button type="button" class="linkish" id="resetSetup" hidden>Wrong name? Set up again</button></p>
+  <footer class="site-foot">
+    <span class="sf-copy">© <span class="sf-year">2026</span> RVNP ICT Department</span>
+    <span class="sf-made">Made with ♥️ by NzaMba✨</span>
+  </footer>
+  <script>document.querySelectorAll('.sf-year').forEach((e) => { e.textContent = new Date().getFullYear(); });</script>
 </main>
 
 <dialog id="scanDialog" class="scan-dialog">

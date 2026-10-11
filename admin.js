@@ -477,8 +477,8 @@ const Admin = (() => {
         ${fold('staff', `Show the staff (${cache.staff.length})`, `<div class="list-tools"><input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
         <select id="staffSort" aria-label="Sort staff"><option value="name">By name</option><option value="code">By staff code</option><option value="role">By role</option><option value="pin">No PIN yet first</option></select></div>
         <ul class="mlist staff">${cache.staff.map((s, i) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
-          <span class="sn">${i + 1}</span>
-          <span><b>${esc(s.name)}</b><small>${esc(s.code)}${s.responsibility ? ' · ' + esc(s.responsibility) : ''} · ${s.hasPin ? (s.mustChange ? 'PIN issued, not used yet' : 'signed in before') : def ? 'uses the first-time PIN' : 'no PIN yet'}</small></span>
+          <span class="sn st-code">${esc(s.code)}</span>
+          <span><b>${esc(s.name)}</b></span>
           <span class="roles">${['TRAINER', 'HOD', 'MIS'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
           <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>`)}

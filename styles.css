@@ -927,3 +927,22 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 #poeItems .kchip-btn, .item-chips .kchip-btn { min-height: 28px; padding: .1rem .55rem; font-size: .75rem; }
 .poe-doc .row-actions .btn { min-height: 34px; font-size: .8125rem; padding: .25rem .7rem; }
 .crop-actions { flex-wrap: wrap; }
+
+/* ---------- 4.12: staff code column, lunch, footer, the college logo in the student profile ---------- */
+.mlist.staff li .st-code { width: 4.5rem; font-weight: 600; color: var(--ink-2); }
+.tt-cell.lunch.off { cursor: default; opacity: .75; }
+.tt-cell.lunch.off:hover { border-style: dashed; border-color: var(--line-strong); }
+.site-foot { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .25rem 1rem; margin: 2rem 0 .5rem; padding-top: .75rem;
+  border-top: 1px solid var(--line); font-size: .8125rem; color: var(--muted); }
+.site-foot .sf-copy { grid-column: 2; text-align: center; }
+.site-foot .sf-made { grid-column: 3; justify-self: end; text-align: right; }
+@media (max-width: 520px) {
+  .site-foot { grid-template-columns: 1fr; }
+  .site-foot .sf-copy, .site-foot .sf-made { grid-column: 1; justify-self: center; text-align: center; }
+}
+body.printing .site-foot { display: none; }
+.profile { flex-direction: row; align-items: center; justify-content: space-between; gap: .75rem; }
+.profile-who { display: flex; flex-direction: column; align-items: flex-start; gap: .35rem; min-width: 0; }
+.profile .inst { display: flex; flex-direction: column; align-items: center; gap: .2rem; flex-shrink: 0; text-align: center; }
+.profile .inst img { width: 52px; height: 52px; display: block; }
+.profile .inst span { font-size: .75rem; font-weight: 600; color: var(--ink-2); }

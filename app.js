@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.11.0';
+const APP_VERSION = '4.12.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -366,11 +366,16 @@ const chosenKind = () => ($$('input[name="fKind"]').find((r) => r.checked) || {}
 const isCatWeek = (monday) => { const i = (state.meta.weeks || []).indexOf(monday); return i !== -1 && (state.meta.term?.catWeeks || []).includes(i + 1); };
 function renderKind() {
   const cat = isCatWeek($('#fWeek').value);
-  const catRadio = $('input[name="fKind"][value="cat"]');
+  const catRadio = $('input[name="fKind"][value="cat"]'), lessonRadio = $('input[name="fKind"][value="lesson"]');
   catRadio.disabled = !cat;
   $('#kindCat').classList.toggle('off', !cat);
   $('#kindCat').title = cat ? '' : 'CAT registers are for the CAT weeks the MIS Officer set';
-  if (!cat && catRadio.checked) $('input[name="fKind"][value="lesson"]').checked = true;
+  // In a CAT week there are no lessons: the CAT register (or extra CAT attendance) is taken instead.
+  lessonRadio.disabled = cat;
+  lessonRadio.closest('.kchip').classList.toggle('off', cat);
+  lessonRadio.closest('.kchip').title = cat ? 'This is a CAT week: take the CAT register, or extra CAT attendance' : '';
+  if (cat && lessonRadio.checked) catRadio.checked = true;
+  if (!cat && catRadio.checked) lessonRadio.checked = true;
   $('#fTitleBox').hidden = chosenKind() !== 'extra';
   renderTimetable();
 }
@@ -428,7 +433,8 @@ async function renderTimetable() {
       aria-pressed="${picked}">${other ? `<span class="other">${esc(other.map((o) => o.classCode.split(' ').pop() + ' ' + o.unitCode).join(', '))}</span>` : ''}</button>`;
   };
   // Lunch: a thin break for lessons; for a CAT or extra attendance it is a slot that can be chosen.
-  const lunchCell = (d) => (mineHere[`${d.date}|${LUNCH_SLOT}`] || !lessonMode ? cellFor(d, LUNCH_SLOT).replace('class="tt-cell', 'class="tt-cell lunch') : '<div class="tt-lunch-cell" aria-hidden="true"></div>');
+  const lunchCell = (d) => (mineHere[`${d.date}|${LUNCH_SLOT}`] || !lessonMode ? cellFor(d, LUNCH_SLOT).replace('class="tt-cell', 'class="tt-cell lunch')
+    : '<button type="button" class="tt-cell lunch off" disabled title="Lunch is for a CAT or extra attendance, not a lesson"></button>');
   let html = '<div class="tt-corner"></div>';
   SLOTS.forEach(([a, b], i) => {
     if (i === LUNCH_AFTER) html += `<div class="tt-lunch" title="Lunch ${LUNCH_TIME[0]}–${LUNCH_TIME[1]}${lessonMode ? '' : ': can be chosen for this'}"><span>Lunch</span></div>`;
@@ -441,7 +447,7 @@ async function renderTimetable() {
       html += cellFor(d, i + 1);
     });
   }
-  box.classList.toggle('lunch-open', !lessonMode);
+  box.classList.add('lunch-open');
   box.innerHTML = html;
   // The button says exactly what will open.
   const btn = $('#openBtn');
