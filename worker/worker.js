@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.1.0';
-const SCHEMA_VERSION = '7';
+export const VERSION = '6.2.0';
+const SCHEMA_VERSION = '8';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);`;
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
   'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT',
   'ALTER TABLE evidence ADD COLUMN seen_at TEXT', 'ALTER TABLE classes ADD COLUMN status TEXT', 'ALTER TABLE classes ADD COLUMN archived_at TEXT',
-  'ALTER TABLE classes ADD COLUMN archived_by TEXT'];
+  'ALTER TABLE classes ADD COLUMN archived_by TEXT', 'ALTER TABLE terms ADD COLUMN lesson_hours REAL'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -156,7 +156,7 @@ const markChanged = (env) => many(env, changedStmt());
 const bumpRoster = (env) => setMeta(env, 'roster_v', nowIso() + '#' + Math.random().toString(36).slice(2, 6));
 const catWeeksOf = (v) => [...new Set(String(v || '').split(/[\s,;]+/).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= TERM_WEEKS))].sort((a, b) => a - b);
 const termOut = (r) => (r ? { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean),
-  catWeeks: catWeeksOf(r.cat_weeks), series: r.series || '' } : null);
+  catWeeks: catWeeksOf(r.cat_weeks), series: r.series || '', lessonHours: Number(r.lesson_hours) || null } : null);
 async function audit(env, me, action, details) {
   await run(env, 'INSERT INTO audit (at,staff_code,name,action,details) VALUES (?,?,?,?,?)', nowIso(), me.code, me.name, action, String(details || '').slice(0, 2000));
 }
@@ -264,6 +264,9 @@ const ACTIONS = {
   marksPull: { fn: (env, b, me) => marksPull(env, b, me) },
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   importRegCodes: { role: ['MIS'], fn: (env, b, me) => importRegCodes(env, b, me) },
+  setDefaultPin: { role: ['MIS'], fn: (env, b, me) => setDefaultPin(env, b, me) },
+  absences: { role: ['HOD', 'MIS'], fn: (env, b, me) => absences(env, b, me) },
+  setAbsenceLimit: { role: ['HOD', 'MIS'], fn: (env, b, me) => setAbsenceLimit(env, b, me) },
 };
 
 /* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
@@ -304,8 +307,8 @@ async function makeToken(env, row) {
 async function login(env, b) {
   const code = String(b.staff || '').trim(), pin = String(b.pin || '').trim();
   if (!code || !pin) fail('Enter your staff code and PIN');
-  const [lfRows, staffRows, misRows, secretRows] = await many(env, ['SELECT * FROM login_fails WHERE code=?', code], ['SELECT * FROM staff WHERE code=?', code],
-    ["SELECT 1 AS x FROM staff WHERE active=1 AND upper(roles) LIKE '%MIS%' LIMIT 1"], ["SELECT value FROM meta WHERE key='auth_secret'"]);
+  const [lfRows, staffRows, misRows, secretRows, defRows] = await many(env, ['SELECT * FROM login_fails WHERE code=?', code], ['SELECT * FROM staff WHERE code=?', code],
+    ["SELECT 1 AS x FROM staff WHERE active=1 AND upper(roles) LIKE '%MIS%' LIMIT 1"], ["SELECT value FROM meta WHERE key='auth_secret'"], ["SELECT value FROM meta WHERE key='default_pin'"]);
   if (!secretCache && secretRows[0]) secretCache = secretRows[0].value;
   const lf = lfRows[0];
   if (lf && lf.fails >= 5 && lf.until > nowIso()) fail('Too many wrong PINs. Try again in 15 minutes.');
@@ -315,14 +318,21 @@ async function login(env, b) {
     row = await setStaffPin(env, 'MIS', String(env.ADMIN_PIN), true, { name: 'MIS Officer', roles: 'MIS' });
   }
   if (!row && lower(code) === 'mis' && !env.ADMIN_PIN) fail('First sign-in: add the ADMIN_PIN secret to the Worker (Settings → Variables and Secrets), then try again.');
-  if (!row || !row.active || !row.pin_hash || (await sha256Hex(row.pin_salt + '|' + pin)) !== row.pin_hash) {
+  // Someone who has no PIN of their own yet may use the first-time PIN the MIS Officer set; they then choose their own.
+  let firstTime = false;
+  if (row && row.active && !row.pin_hash && defRows[0]) {
+    const d = JSON.parse(defRows[0].value || '{}');
+    firstTime = !!d.hash && (await sha256Hex(d.salt + '|' + pin)) === d.hash;
+  }
+  if (!firstTime && (!row || !row.active || !row.pin_hash || (await sha256Hex(row.pin_salt + '|' + pin)) !== row.pin_hash)) {
     const fails = lf && lf.until > nowIso() ? lf.fails + 1 : 1;
     await run(env, 'INSERT INTO login_fails (code,fails,until) VALUES (?,?,?) ON CONFLICT(code) DO UPDATE SET fails=excluded.fails, until=excluded.until',
       code, fails, new Date(Date.now() + 15 * 6e4).toISOString());
-    fail(row && !row.pin_hash ? 'No PIN has been set for this staff code yet. Ask the MIS Officer.' : 'Wrong staff code or PIN');
+    fail(row && !row.pin_hash && !defRows[0] ? 'No PIN has been set for this staff code yet. Ask the MIS Officer.' : 'Wrong staff code or PIN');
   }
   if (lf) await run(env, 'DELETE FROM login_fails WHERE code=?', code);
-  return { ok: true, token: await makeToken(env, row), staff: staffPublic(row), mustChange: !!row.must_change };
+  if (firstTime && !row.must_change) { await run(env, 'UPDATE staff SET must_change=1 WHERE code=?', row.code); row.must_change = 1; }
+  return { ok: true, token: await makeToken(env, row), staff: staffPublic(row), mustChange: firstTime || !!row.must_change };
 }
 
 /** Checks a sign-in token: genuine, staff still active, PIN not changed or reset since.
@@ -389,9 +399,10 @@ async function saveTerm(env, b, me) {
   const breaks = (b.breaks || []).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x)).map(mondayOf);
   await run(env, "UPDATE terms SET status='closed' WHERE status='active' AND id<>?", id);
   const cats = catWeeksOf((b.catWeeks || []).join(','));
-  await run(env, `INSERT INTO terms (id,name,duration,start_date,weeks,breaks,status,updated_at,cat_weeks,series) VALUES (?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at, cat_weeks=excluded.cat_weeks, series=excluded.series`,
-  id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso(), cats.join(', '), String(b.series || '').trim().slice(0, 60));
+  const hours = Number(b.lessonHours) > 0 && Number(b.lessonHours) <= 8 ? Math.round(Number(b.lessonHours) * 100) / 100 : null;
+  await run(env, `INSERT INTO terms (id,name,duration,start_date,weeks,breaks,status,updated_at,cat_weeks,series,lesson_hours) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at, cat_weeks=excluded.cat_weeks, series=excluded.series, lesson_hours=excluded.lesson_hours`,
+  id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso(), cats.join(', '), String(b.series || '').trim().slice(0, 60), hours);
   await audit(env, me, b.close ? 'close term' : 'save term', `${id} ${b.name} from ${b.startDate}${breaks.length ? ' breaks ' + breaks.join(' ') : ''}${cats.length ? ' CAT weeks ' + cats.join(' ') : ''}`);
   await bumpRoster(env);
   const term = await activeTerm(env);
@@ -688,7 +699,19 @@ async function decideRequest(env, b, me) {
 
 /* ---------- staff (MIS Officer) ---------- */
 async function listStaff(env) {
-  return { ok: true, staff: (await all(env, 'SELECT * FROM staff ORDER BY name')).map(staffPublic) };
+  const [rows, def] = await many(env, ['SELECT * FROM staff ORDER BY name'], ["SELECT value FROM meta WHERE key='default_pin'"]);
+  const d = def[0] ? JSON.parse(def[0].value || '{}') : null;
+  return { ok: true, staff: rows.map(staffPublic), defaultPin: d ? { at: d.at || '', by: d.by || '' } : null };
+}
+/** The MIS Officer's first-time PIN (kept only as a salted hash). An empty PIN removes it. */
+async function setDefaultPin(env, b, me) {
+  const pin = String(b.pin || '').trim();
+  if (!pin) { await run(env, "DELETE FROM meta WHERE key='default_pin'"); await audit(env, me, 'first-time PIN', 'removed'); return { ok: true, set: false }; }
+  if (!/^\d{4,8}$/.test(pin)) fail('Use 4 to 8 digits for the first-time PIN');
+  const salt = crypto.randomUUID().slice(0, 12);
+  await setMeta(env, 'default_pin', JSON.stringify({ salt, hash: await sha256Hex(salt + '|' + pin), at: nowIso(), by: me.name }));
+  await audit(env, me, 'first-time PIN', 'set');
+  return { ok: true, set: true };
 }
 async function updateStaff(env, b, me) {
   const code = String(b.code || '').trim().toUpperCase();
@@ -718,11 +741,15 @@ async function updateStaff(env, b, me) {
   await run(env, `INSERT INTO staff (code,name,roles,responsibility,active,pin_version,must_change,updated_at) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(code) DO UPDATE SET name=excluded.name, roles=excluded.roles, active=excluded.active, pin_version=excluded.pin_version, updated_at=excluded.updated_at`,
   row.code, row.name, row.roles, row.responsibility || '', row.active ? 1 : 0, Number(row.pin_version) || 0, row.must_change ? 1 : 0, nowIso());
-  let pin = null;
-  if (b.resetPin) { pin = randomPin(); row = await setStaffPin(env, code, pin, true); }
-  await audit(env, me, 'staff', `${code}${b.roles ? ' roles ' + row.roles : ''}${b.active !== undefined ? (b.active ? ' switched on' : ' switched off') : ''}${pin ? ' PIN reset' : ''}`);
+  let pin = null, toDefault = false;
+  if (b.resetPin && b.toDefault && (await getMeta(env, 'default_pin'))) {
+    // Back to the first-time PIN: their own PIN stops working and they choose a new one at their next sign-in.
+    await run(env, 'UPDATE staff SET pin_hash=NULL, pin_salt=NULL, must_change=1, pin_version=COALESCE(pin_version,0)+1, updated_at=? WHERE code=?', nowIso(), code);
+    toDefault = true;
+  } else if (b.resetPin) { pin = randomPin(); row = await setStaffPin(env, code, pin, true); }
+  await audit(env, me, 'staff', `${code}${b.roles ? ' roles ' + row.roles : ''}${b.active !== undefined ? (b.active ? ' switched on' : ' switched off') : ''}${pin ? ' PIN reset' : ''}${toDefault ? ' back to the first-time PIN' : ''}`);
   await bumpRoster(env);
-  return { ok: true, staff: staffPublic(await getStaff(env, code)), pin };
+  return { ok: true, staff: staffPublic(await getStaff(env, code)), pin, toDefault };
 }
 
 /* ---------- trainer registers ---------- */
@@ -881,6 +908,40 @@ async function termUnits(env, b, me) {
   return { ok: true, term, weeks: teachingWeeks(term),
     units: mine.map((r) => ({ classCode: r.class_code, code: r.unit_code, name: r.unit_name || r.unit_code, trainerCode: r.trainer_code, trainerName: r.trainer_name,
       lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3 })) };
+}
+
+/* ---------- absences: students who have missed more lessons of a unit than the limit ---------- */
+async function absenceLimit(env) { return Math.max(0, Math.round(Number(await getMeta(env, 'absence_limit')) || 3)); }
+async function setAbsenceLimit(env, b, me) {
+  const n = Math.max(0, Math.min(60, Math.round(Number(b.limit))));
+  if (!Number.isFinite(n)) fail('Enter a number of lessons');
+  await setMeta(env, 'absence_limit', String(n));
+  await audit(env, me, 'absence limit', String(n));
+  return { ok: true, limit: n };
+}
+/** Counted in the database from the registers' marks (a double counts as two lessons), so the Worker does little work. */
+async function absences(env, b, me) {
+  const term = termOut(b.termId ? await one(env, 'SELECT * FROM terms WHERE id=?', String(b.termId)) : await one(env, TERM_SQL));
+  if (!term) return { ok: true, term: null, limit: await absenceLimit(env), rows: [] };
+  const limit = b.limit !== undefined && b.limit !== '' ? Math.max(0, Math.round(Number(b.limit) || 0)) : await absenceLimit(env);
+  const [missed, held, loading, archived] = await many(env,
+    [`SELECT s.class_code, s.unit_code, MAX(s.unit_name) AS unit_name, json_extract(m.value,'$.admNo') AS adm, MAX(json_extract(m.value,'$.name')) AS name,
+      SUM(CASE WHEN json_extract(m.value,'$.status')='Absent' THEN COALESCE(s.slots,1) ELSE 0 END) AS missed,
+      SUM(CASE WHEN json_extract(m.value,'$.status') IN ('Present','Late') THEN COALESCE(s.slots,1) ELSE 0 END) AS attended
+      FROM sessions s, json_each(s.data, '$.marks') m
+      WHERE s.term_id=? AND COALESCE(s.kind,'lesson')='lesson'
+      GROUP BY s.class_code, s.unit_code, adm HAVING missed > ?`, term.id, limit],
+    [`SELECT class_code, unit_code, SUM(COALESCE(slots,1)) AS held FROM sessions WHERE term_id=? AND COALESCE(kind,'lesson')='lesson' GROUP BY class_code, unit_code`, term.id],
+    ['SELECT class_code, unit_code, unit_name, trainer_name FROM loading WHERE term_id=?', term.id], ["SELECT code FROM classes WHERE status='archived'"]);
+  const gone = new Set(archived.map((r) => r.code));
+  const heldOf = new Map(held.map((r) => [r.class_code + '|' + r.unit_code, r.held]));
+  const load = new Map(loading.map((r) => [r.class_code + '|' + r.unit_code, r]));
+  const rows = missed.filter((r) => r.adm && !gone.has(r.class_code)).map((r) => {
+    const k = r.class_code + '|' + r.unit_code, l = load.get(k) || {}, h = Number(heldOf.get(k)) || 0;
+    return { classCode: r.class_code, unitCode: r.unit_code, unitName: l.unit_name || r.unit_name || r.unit_code, trainerName: l.trainer_name || '',
+      admNo: r.adm, name: r.name || r.adm, missed: Number(r.missed) || 0, held: h, pct: h ? Math.round(((Number(r.attended) || 0) / h) * 100) : null };
+  });
+  return { ok: true, term, limit, rows };
 }
 
 /* ---------- archiving and deleting a class (the MIS Officer) ---------- */
@@ -1313,7 +1374,7 @@ async function bridgeFeed(env, q) {
     const rejected = new Set(mine.filter((r) => r.status === 'rejected').map((r) => r.adm_no));
     const alias = Object.fromEntries(mine.filter((r) => r.status === 'merged' && r.merged_into).map((r) => [r.adm_no, r.merged_into]));
     const pct = staffPct.find((x) => lower(x.code) === lower(u.trainer_code)) || {};
-    const h = (Number(u.hours_per_week) || 3) / (Number(u.lessons_per_week) || 2);
+    const h = term.lessonHours || (Number(u.hours_per_week) || 3) / (Number(u.lessons_per_week) || 2);
     const so = signoffs.find((x) => x.class_code === u.class_code && x.unit_code === u.unit_code);
     const lessons = all.filter((l) => l.kind === 'lesson');
     out.units.push({
@@ -1468,6 +1529,19 @@ const evidenceOut = (r) => ({ id: r.id, admNo: r.adm_no, name: r.name, classCode
   version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.status,
   decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at });
 const STUDENT_ACTIONS = {
+  /** Every lesson of this student's class with their mark, so the student keeps a copy of their own attendance. */
+  async myAttendance(env, b) {
+    const t = await studentOf(env, b);
+    const [rows, acc] = await many(env,
+      [`SELECT s.id, s.date, s.unit_code, s.unit_name, s.period, COALESCE(s.kind,'lesson') AS kind, s.slots, json_extract(m.value,'$.status') AS status
+        FROM sessions s, json_each(s.data, '$.marks') m
+        WHERE (s.class_code=?1 OR instr(s.class_code, ?1) > 0) AND lower(json_extract(m.value,'$.admNo'))=lower(?2)
+        ORDER BY s.date DESC, s.period LIMIT 800`, t.class_code, t.adm_no],
+      ["SELECT session_id FROM checkins WHERE adm_no=? AND status='accepted'", t.adm_no]);
+    const qr = new Set(acc.map((r) => r.session_id));
+    return { ok: true, serverTime: nowIso(), lessons: rows.map((r) => ({ id: r.id, date: r.date, unitCode: r.unit_code, unitName: r.unit_name || r.unit_code,
+      period: r.period, kind: r.kind, slots: Number(r.slots) === 2 ? 2 : 1, status: qr.has(r.id) && r.status !== 'Late' ? 'Present' : r.status || '' })) };
+  },
   async poeTicket(env, b) {
     const t = await studentOf(env, b);
     const item = String(b.item || '').toUpperCase();
