@@ -16,6 +16,8 @@ const POE = (() => {
   async function attachment(doc, name) { return sdb.getAttachment(doc._id, name); }
 
   /* ---------- units of my class (cached for offline) ---------- */
+  const MIN_PAGES = 2;   // a submission is never a single page
+  const pagesOf = (d) => (d?.pdfOnly ? Number(d.pdfPages) || 0 : (d?.pages || []).length);
   async function loadUnits() {
     const p = st.profile; if (!p) return;
     const cache = await getLocal('poeUnits');
@@ -52,9 +54,10 @@ const POE = (() => {
     }).join('');
     $('#poeDocs').innerHTML = [...ps.picked].filter((it) => ITEMS.includes(it)).sort((a, b) => ITEMS.indexOf(a) - ITEMS.indexOf(b)).map((it) => docCard(it, ps.drafts[it])).join('')
       || '<p class="muted small">Tap one or more items above (for example CAT1 and PRAC1), then scan the pages for each.</p>';
-    const ready = Object.values(ps.drafts).filter((d) => (d.pages || []).length || d.pdfOnly).length;
-    $('#poeSave').disabled = !ready;
-    $('#poeSave').textContent = ready ? `Save and send ${ready === 1 ? 'the document' : ready + ' documents'}` : 'Scan pages first';
+    const started = Object.values(ps.drafts).filter((d) => pagesOf(d) > 0);
+    const ready = started.filter((d) => pagesOf(d) >= MIN_PAGES).length, short = started.length - ready;
+    $('#poeSave').disabled = !ready || short > 0;
+    $('#poeSave').textContent = short ? `Add at least ${MIN_PAGES} pages to each item` : ready ? `Save and send ${ready === 1 ? 'the document' : ready + ' documents'}` : `Scan at least ${MIN_PAGES} pages`;
     // Thumbnails load after the cards exist.
     for (const it of ps.picked) {
       const d = ps.drafts[it]; if (!d) continue;
@@ -69,11 +72,11 @@ const POE = (() => {
   function docCard(item, d) {
     const pages = d?.pages || [];
     return `<div class="poe-doc" data-doc="${item}">
-      <div class="poe-doc-head"><b>${esc(unitName(ps.unit))} — ${item}</b><span class="muted small">${d?.pdfOnly ? 'PDF from the device' : pages.length + ' page' + (pages.length === 1 ? '' : 's')}</span></div>
+      <div class="poe-doc-head"><b>${esc(unitName(ps.unit))} — ${item}</b><span class="muted small">${d?.pdfOnly ? `PDF from the device · ${pagesOf(d)} pages` : pages.length + ' page' + (pages.length === 1 ? '' : 's')}${pagesOf(d) < MIN_PAGES ? ` · add at least ${MIN_PAGES}` : ''}</span></div>
       ${d?.pdfOnly ? `<p class="small">${esc(d.pdfName || 'document.pdf')} <button type="button" class="linkish" data-clear>Remove</button></p>` : `
       <ol class="poe-pages">${pages.map((_, i) => `<li data-page="${i}"><img alt="Page ${i + 1}" class="f-document"><span>${i + 1}</span>
         <span class="pg-tools"><button type="button" data-move="-1" aria-label="Move page ${i + 1} up" ${i ? '' : 'disabled'}>↑</button><button type="button" data-move="1" aria-label="Move page ${i + 1} down" ${i < pages.length - 1 ? '' : 'disabled'}>↓</button><button type="button" data-del aria-label="Delete page ${i + 1}">✕</button></span></li>`).join('')}</ol>`}
-      <div class="row-actions"><button type="button" class="btn primary" data-camera>Take photo of a page</button><button type="button" class="btn" data-gallery>From gallery or PDF</button></div>
+      <div class="row-actions"><button type="button" class="btn small primary" data-camera>${pages.length ? 'Add another page' : 'Take photo of a page'}</button><button type="button" class="btn small" data-gallery>From gallery or PDF</button></div>
     </div>`;
   }
   const STATUS = { submitted: ['pending', 'With your trainer'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
@@ -87,13 +90,19 @@ const POE = (() => {
           ? `<span class="pill rejected">Not sent yet</span><span class="poe-why small">${esc(d.error || 'Try again later')}</span><button type="button" class="linkish" data-retry>Try again</button>`
           : `<span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on device — sends when online'}</span>`}<button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
     }
-    for (const e of [...ps.server].sort((a, b) => String(b.submittedAt).localeCompare(a.submittedAt))) {
+    const by = $('#poeSort')?.value || 'new', ORDER = { returned: 0, submitted: 1, approved: 2 };
+    const order = by === 'old' ? (a, b) => String(a.submittedAt).localeCompare(b.submittedAt)
+      : by === 'unit' ? (a, b) => String(a.unitName).localeCompare(String(b.unitName)) || String(a.item).localeCompare(String(b.item))
+        : by === 'status' ? (a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || String(b.submittedAt).localeCompare(a.submittedAt)
+          : (a, b) => String(b.submittedAt).localeCompare(a.submittedAt);
+    for (const e of [...ps.server].sort(order)) {
       const [cls, label] = STATUS[e.status] || ['pending', e.status];
       const mine = local.find((d) => d.serverId === e.id);
-      rows.push(`<li><div><b>${esc(e.unitName)} — ${esc(e.item)} <span class="muted">v${e.version}</span></b>${e.comment ? `<span class="muted small">“${esc(e.comment)}”</span>` : ''}</div>
+      rows.push(`<li><div><b>${esc(e.unitName)} — ${esc(e.item)} <span class="muted">v${e.version}</span></b>${e.comment ? `<span class="small"><b>Comment(s):</b> ${esc(e.comment)}</span>` : ''}</div>
         <span class="poe-acts"><span class="pill ${cls}">${label}</span>${mine ? `<button type="button" class="linkish" data-copy data-id="${esc(mine._id)}">Save a copy</button>` : ''}${e.status === 'returned' ? `<button type="button" class="linkish" data-redo="${esc(e.unitCode)}|${esc(e.item)}">Scan again</button>` : ''}</span></li>`);
     }
     $('#poeListCard').hidden = !rows.length;
+    if ($('#poeListCount')) $('#poeListCount').textContent = rows.length || '';
     box.innerHTML = rows.join('');
   }
 
@@ -115,6 +124,7 @@ const POE = (() => {
 
   /* ---------- the crop screen ---------- */
   async function openCrop(file, item) {
+    ps.cropSeq = (ps.cropSeq || 0) + 1;
     let canvas;
     try { canvas = await Scanner.load(file); } catch (e) { toast(e.message, 'err'); return; }
     ps.crop = { canvas, quad: Scanner.findCorners(canvas), item };
@@ -148,13 +158,13 @@ const POE = (() => {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   }
   async function keepPage() {
-    const { canvas, quad, item } = ps.crop;
+    const { canvas, quad, item } = ps.crop, seq = ps.cropSeq;
     $('#cropKeep').disabled = true; $('#cropKeep').textContent = 'Straightening…';
     await new Promise((r) => setTimeout(r, 30));
     try {
       const flat = Scanner.flatten(canvas, quad);
       await addPage(item, await Scanner.toJpeg(flat, 0.85));
-      $('#cropDialog').close();
+      if (ps.cropSeq === seq) $('#cropDialog').close();    // unless the next page's photo is already being adjusted
       toast('Page added');
       await render();
     } catch (e) { toast('Could not keep that page: ' + e.message, 'err'); }
@@ -167,7 +177,7 @@ const POE = (() => {
     try {
       for (const it of [...ps.picked]) {
         const d = ps.drafts[it];
-        if (!d || (!(d.pages || []).length && !d.pdfOnly)) continue;
+        if (!d || pagesOf(d) < MIN_PAGES) continue;
         let pdf;
         if (d.pdfOnly) pdf = await attachment(d, 'doc.pdf');
         else {
@@ -335,7 +345,7 @@ const POE = (() => {
       document.body.dataset.view = b.dataset.view;
       $$('#viewTabs [data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       if (b.dataset.view === 'poe') { loadUnits().then(render); sync(); }
-      if (b.dataset.view === 'subs') { render(); sync(); }
+      if (b.dataset.view === 'subs') { render(); sync(); window.syncAttendance?.({ force: true }); }
     });
     $('#poeUnit').addEventListener('change', (e) => { ps.unit = e.target.value; ps.picked = new Set(); render(); });
     $('#poeItems').addEventListener('click', (e) => {
@@ -367,8 +377,11 @@ const POE = (() => {
       const files = [...e.target.files]; e.target.value = '';
       const pdf = files.find((f) => f.type === 'application/pdf');
       if (pdf) {
+        const text = new TextDecoder('latin1').decode(new Uint8Array(await pdf.arrayBuffer()));
+        const count = (text.match(/\/Type\s*\/Page(?![s\w])/g) || []).length;
+        if (count && count < MIN_PAGES) { toast(`That PDF has ${count} page. A submission needs at least ${MIN_PAGES} pages.`, 'err'); return; }
         const d = await draft(ps.target);
-        Object.assign(d, { pdfOnly: true, pdfName: pdf.name, pages: [], _attachments: { 'doc.pdf': { content_type: 'application/pdf', data: pdf } } });
+        Object.assign(d, { pdfOnly: true, pdfName: pdf.name, pdfPages: count || MIN_PAGES, pages: [], _attachments: { 'doc.pdf': { content_type: 'application/pdf', data: pdf } } });
         await saveDraft(d); return render();
       }
       for (const f of files) { await openCrop(f, ps.target); await new Promise((r) => $('#cropDialog').addEventListener('close', r, { once: true })); }
@@ -378,6 +391,9 @@ const POE = (() => {
     $('#cropRotate').addEventListener('click', () => { ps.crop.canvas = Scanner.rotate(ps.crop.canvas); ps.crop.quad = Scanner.findCorners(ps.crop.canvas); drawCrop(); });
     $('#cropWhole').addEventListener('click', () => { const c = ps.crop.canvas; ps.crop.quad = [[0, 0], [c.width, 0], [c.width, c.height], [0, c.height]]; drawCrop(); });
     $('#cropKeep').addEventListener('click', keepPage);
+    // Keep this page and open the camera for the next one at once (the camera must open on the tap itself).
+    $('#cropNext').addEventListener('click', () => { ps.target = ps.crop.item; keepPage(); $('#poeCamera').click(); });
+    $('#poeSort').addEventListener('change', () => render());
     $('#poeSave').addEventListener('click', saveAll);
     $('#poeList').addEventListener('click', (e) => {
       if (e.target.closest('[data-retry]')) { sync(); return; }

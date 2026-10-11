@@ -379,3 +379,13 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **Sorting everywhere.** In the term register's sheet view, tap a column heading (Admission no, Name, Possible hrs, Actual hrs, %) to sort; tap again to reverse. The Sort choice above it follows. Registers to approve, the staff list and the marking register each have a **Sort** choice (the marking register remembers yours).
 - **Students send POE for any unit their class has had**, not just this term's. Units from earlier terms are marked *(earlier term)*. Evidence for a unit not taught this term is decided by the trainer who had it last (or the HOD).
+
+## Changes in 4.11.0 (Worker 6.2.0)
+
+- **Absences tab** (HOD and MIS Officer). Set "Tell me about students who have missed more than N lessons of a unit"; the tab's dot shows how many students are over it. The list is searchable, sortable, 30 to a page, can look back at earlier terms, and saves as **Excel** or **PDF**. A double lesson counts as two.
+- **First-time PIN** (Manage → Staff and roles). The MIS Officer sets one PIN; anyone without their own PIN signs in with it and then chooses their own. Resetting a PIN (MIS Officer only) sends someone back to the first-time PIN, or issues a one-off PIN.
+- **Hours per lesson** is set by the MIS Officer with the term (Manage → Term). The register legend now reads "Late counts - 50%, Excused counts - 100%".
+- **Lunch** can be chosen on the timetable for a CAT or extra attendance (never a lesson).
+- **Tables start at 30 rows a page.**
+- **POE preview** opens faster: files are kept on the device once opened, and the next submission is fetched while you read the current one.
+- **Student app**: renamed *Student-POE*; shows the student's **QR ID** (the trainer's **Scan ID cards** is switched back on); **My POE submissions**, **My scanned check-in(s)** and **My attendance** fold away and sort, and *My attendance* keeps a copy of every lesson the trainers marked; a submission needs **at least 2 pages**, and **Keep and take the next page** goes straight to the camera.

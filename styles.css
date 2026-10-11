@@ -210,7 +210,7 @@ label.file input { padding: .45rem; }
 .tt-cell.have.cat { background: var(--e-soft); color: var(--e); }
 .tt-cell.have.extra { background: var(--l-soft); color: var(--l); }
 .tt-cell.cont { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -4px; }
-.tt-lunch { grid-row: 1 / span 6; grid-column: 5; display: flex; align-items: center; justify-content: center; border-left: 1px dashed var(--line); border-right: 1px dashed var(--line); }
+.tt-lunch { display: flex; align-items: center; justify-content: center; border-left: 1px dashed var(--line); border-right: 1px dashed var(--line); }
 .tt-lunch span { writing-mode: vertical-rl; transform: rotate(180deg); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .empty-state { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: .3rem; text-align: center; padding: 2rem 1rem; color: var(--muted); background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); }
 .empty-state .i { width: 2rem; height: 2rem; color: var(--p); }
@@ -890,3 +890,40 @@ th[data-tsort]:hover { color: var(--ink); }
 .list-tools { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .25rem 0 .5rem; }
 .list-tools input[type=search] { flex: 1 1 14rem; margin: 0; }
 .list-tools select, #regSort { width: auto; flex: 0 0 auto; margin: 0; height: 40px; font-size: .875rem; }
+
+/* ---------- 4.11: lunch slot, roster line, first-time PIN, absences, POE preview ---------- */
+#rosterInfo { white-space: pre-line; }
+.list-tools input[type=search] { height: 40px; }
+.tt-lunch-cell { border-left: 1px dashed var(--line); border-right: 1px dashed var(--line); min-height: 46px; }
+.timetable.lunch-open { grid-template-columns: 3.1rem repeat(3, minmax(0, 1fr)) minmax(2.4rem, .75fr) repeat(3, minmax(0, 1fr)); }
+.tt-cell.lunch:not(.have):not(.picked) { background: color-mix(in srgb, var(--l-soft) 55%, var(--surface)); }
+.item-tag.small-tag { font-size: .65rem; padding: 0 .35rem; line-height: 1.4; vertical-align: .15em; }
+.default-pin { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; justify-content: space-between; padding: .75rem; margin: 0 0 .75rem; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--sunk); }
+.default-pin p { margin: .15rem 0 0; }
+.default-pin .dp-row { display: flex; gap: .4rem; align-items: center; }
+.default-pin input { width: 9rem; height: 38px; margin: 0; }
+.mlist.staff li .sn { flex: 0 0 auto; width: 1.75rem; color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.alert-limit { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; }
+.alert-limit label { margin: 0; flex: 1 1 18rem; }
+.alert-limit .input-suffix input { width: 5rem; }
+.alerts-head .poe-filters { margin-top: .75rem; }
+.alerts-table td.who { font-weight: 600; }
+
+/* ---------- student app 4.11 ---------- */
+body.student .status { gap: .35rem; }
+body.student .status .badge, body.student .status .btn { height: 30px; min-height: 30px; padding: 0 .55rem; font-size: .75rem; display: inline-flex; align-items: center; }
+body.student .status .btn svg.i { width: 15px; height: 15px; }
+.tiny-pill { font-size: .6875rem; padding: .05rem .45rem; }
+.my-qr { display: flex; flex-direction: column; align-items: center; gap: .35rem; margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--line); }
+.my-qr #pQr { width: min(70vw, 240px); background: #fff; padding: 8px; border-radius: 10px; }
+.my-qr #pQr svg { display: block; width: 100%; height: auto; }
+.fold-card > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: .5rem; }
+.fold-card > summary::-webkit-details-marker { display: none; }
+.fold-card > summary h2 { margin: 0; flex: 1; }
+.fold-card > summary::after { content: "›"; font-size: 1.3rem; color: var(--muted); transition: transform .15s; }
+.fold-card[open] > summary::after { transform: rotate(90deg); }
+.fold-card[open] > summary { margin-bottom: .5rem; }
+.count-pill:not(:empty) { font-size: .75rem; font-weight: 700; padding: .05rem .5rem; border-radius: 99px; background: var(--sunk); color: var(--ink-2); }
+#poeItems .kchip-btn, .item-chips .kchip-btn { min-height: 28px; padding: .1rem .55rem; font-size: .75rem; }
+.poe-doc .row-actions .btn { min-height: 34px; font-size: .8125rem; padding: .25rem .7rem; }
+.crop-actions { flex-wrap: wrap; }

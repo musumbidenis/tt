@@ -230,6 +230,42 @@ async function handleScanned(text) {
 }
 
 /* ---------- sending to the server ---------- */
+/* ---------- my attendance: every lesson my trainers marked, kept on this device as my own copy ---------- */
+async function syncAttendance({ force = false } = {}) {
+  if (!st.profile || !st.sheetsUrl || !navigator.onLine) return;
+  const have = await getLocal('myAttendance');
+  if (!force && have.at && Date.now() - new Date(have.at).getTime() < 10 * 60e3) return;
+  try {
+    const res = await api('POST', null, { action: 'myAttendance', deviceId: st.deviceId, admNo: st.profile.admNo });
+    if (!res.ok) return;
+    await updateLocal('myAttendance', (d) => { d.lessons = res.lessons || []; d.at = nowISO(); d.admNo = st.profile.admNo; });
+    await renderAttendance();
+  } catch { /* offline or server busy: the copy on this device stays */ }
+}
+async function renderAttendance() {
+  const card = $('#attendCard'); if (!card) return;
+  const d = await getLocal('myAttendance');
+  const lessons = st.profile && d.admNo && lowerEq(d.admNo, st.profile.admNo) ? d.lessons || [] : [];
+  card.hidden = !lessons.length;
+  $('#attendCount').textContent = lessons.length || '';
+  if (!lessons.length) return;
+  const ORDER = { Absent: 0, Late: 1, Excused: 2, Present: 3 };
+  const by = $('#attSort').value || 'new';
+  const key = (l) => l.date + ' ' + l.period;
+  const list = [...lessons].sort(by === 'old' ? (a, b) => key(a).localeCompare(key(b))
+    : by === 'unit' ? (a, b) => String(a.unitName).localeCompare(String(b.unitName)) || key(b).localeCompare(key(a))
+      : by === 'status' ? (a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || key(b).localeCompare(key(a))
+        : (a, b) => key(b).localeCompare(key(a)));
+  const lessonsOnly = lessons.filter((l) => l.kind === 'lesson');
+  const count = (st) => lessonsOnly.filter((l) => l.status === st).reduce((n, l) => n + (l.slots || 1), 0);
+  const held = lessonsOnly.reduce((n, l) => n + (l.slots || 1), 0), came = count('Present') + count('Late');
+  $('#attendSum').textContent = `${held} lesson(s) marked: ${count('Present')} present, ${count('Late')} late, ${count('Absent')} absent, ${count('Excused')} excused`
+    + (held ? ` · ${Math.round((came / Math.max(1, held - count('Excused'))) * 100)}% attended` : '') + (d.at ? ` · updated ${fmtTime(d.at)}` : '');
+  const PILL = { Present: 'synced', Late: 'pending', Absent: 'rejected', Excused: 'locked' };
+  $('#attendList').innerHTML = list.map((l) => `<li><div><b>${esc(l.unitName)}${l.kind !== 'lesson' ? ` <span class="muted small">(${l.kind === 'cat' ? 'CAT' : 'extra'})</span>` : ''}</b>
+    <span class="muted small">${esc(fmtDate(l.date))} · ${esc(l.period)}</span></div><span class="pill ${PILL[l.status] || 'locked'}">${esc(l.status || '–')}</span></li>`).join('');
+}
+
 async function sync({ manual = false } = {}) {
   if (!st.profile || !st.sheetsUrl || st.syncing) return;
   if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this device'); return; }
@@ -323,9 +359,23 @@ async function render() {
   if (p) {
     $('#pName').textContent = p.name;
     $('#pMeta').textContent = p.admNo;
+    // The student's own QR ID (their admission number): the trainer's Scan ID cards reads it.
+    const qrBox = $('#pQr');
+    if (qrBox && qrBox.dataset.adm !== p.admNo && window.qrcode) {
+      const qr = qrcode(0, 'M'); qr.addData(p.admNo); qr.make();
+      qrBox.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+      qrBox.dataset.adm = p.admNo;
+    }
   }
-  const list = (await checkins()).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt)));
+  const STATUS_ORDER = { accepted: 0, pending: 1, saved: 2, rejected: 3 };
+  const by = $('#histSort')?.value || 'new';
+  const list = (await checkins()).sort(by === 'old' ? (a, b) => String(a.scannedAt).localeCompare(String(b.scannedAt))
+    : by === 'unit' ? (a, b) => String(a.unitName || a.classCode).localeCompare(String(b.unitName || b.classCode)) || String(b.scannedAt).localeCompare(String(a.scannedAt))
+      : by === 'status' ? (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || String(b.scannedAt).localeCompare(String(a.scannedAt))
+        : (a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt)));
   $('#historyCard').hidden = !list.length;
+  $('#historyCount').textContent = list.length || '';
+  await renderAttendance();
   $('#history').innerHTML = list.map((d) => {
     const label = d.status === 'accepted' ? ['synced', 'Confirmed']
       : d.status === 'pending' ? ['pending', 'Sent — waiting for trainer to sync']
@@ -410,7 +460,10 @@ async function init() {
   $('#scanDialog').addEventListener('close', stopScan);
   $('#syncBtn').addEventListener('click', () => sync({ manual: true }));
   window.addEventListener('hashchange', consumeHash);
-  window.addEventListener('online', () => { updateNet(); if (!st.profile && !$('#setupCard').hidden) openSetup(); sync(); });
+  window.addEventListener('online', () => { updateNet(); if (!st.profile && !$('#setupCard').hidden) openSetup(); sync(); syncAttendance(); });
+  $('#histSort').addEventListener('change', () => render());
+  $('#attSort').addEventListener('change', () => renderAttendance());
+  window.syncAttendance = syncAttendance;
   window.addEventListener('offline', updateNet);
   // Automatic sending: on every scan, when the internet comes back, when the app is opened, and every minute.
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
@@ -421,6 +474,7 @@ async function init() {
   if (!st.profile && $('#setupCard').hidden) await openSetup();
   await render();
   sync();
+  syncAttendance();
   POE.init().then(() => { if (st.openPoe) POE.showEvidence(); }).catch((e) => console.error('Evidence', e));
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});

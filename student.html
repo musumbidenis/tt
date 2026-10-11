@@ -24,7 +24,7 @@
   <div class="brand">
     <span class="crest"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="40" height="40"></span>
     <div>
-      <strong>Check-in</strong>
+      <strong>Student-POE</strong>
       <span id="who">Not set up</span>
     </div>
   </div>
@@ -67,8 +67,9 @@
         <strong id="pName"></strong>
         <span id="pMeta" class="muted small"></span>
       </div>
-      <span class="pill synced">Registered to this device</span>
+      <span class="pill synced tiny-pill">Registered to this device</span>
     </div>
+    <div class="my-qr"><div id="pQr" aria-label="My QR ID"></div><span class="muted small">My QR ID: your trainer can scan it to mark you</span></div>
   </section>
 
   <div id="viewTabs" class="view-tabs" role="group" aria-label="Show" hidden>
@@ -79,7 +80,7 @@
 
   <div class="view-checkin">
   <button type="button" class="btn primary big" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan lesson QR</button>
-  <p class="scan-hint">Point your camera at your trainer's QR. No internet needed.</p>
+  <p class="scan-hint">Point your camera at your trainer's Lesson QR. No internet needed.</p>
 
   </div>
 
@@ -102,14 +103,22 @@
   </div>
 
   <div class="view-subs">
-  <section id="historyCard" class="card" hidden>
-    <h2>My check-ins</h2>
-    <ul id="history" class="history"></ul>
-  </section>
-  <section id="poeListCard" class="card" hidden>
-    <h2>My POE submissions</h2>
+  <details id="poeListCard" class="card fold-card" hidden>
+    <summary><h2>My POE submissions</h2><span id="poeListCount" class="count-pill"></span></summary>
+    <div class="list-tools"><select id="poeSort" aria-label="Sort my submissions"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="unit">By unit</option><option value="status">By status</option></select></div>
     <ul id="poeList" class="history poe-list"></ul>
-  </section>
+  </details>
+  <details id="historyCard" class="card fold-card" hidden>
+    <summary><h2>My scanned check-in(s)</h2><span id="historyCount" class="count-pill"></span></summary>
+    <div class="list-tools"><select id="histSort" aria-label="Sort my check-ins"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="unit">By unit</option><option value="status">By status</option></select></div>
+    <ul id="history" class="history"></ul>
+  </details>
+  <details id="attendCard" class="card fold-card" hidden>
+    <summary><h2>My attendance</h2><span id="attendCount" class="count-pill"></span></summary>
+    <p id="attendSum" class="muted small"></p>
+    <div class="list-tools"><select id="attSort" aria-label="Sort my attendance"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="unit">By unit</option><option value="status">By status</option></select></div>
+    <ul id="attendList" class="history"></ul>
+  </details>
   <p class="subs-empty muted center">Nothing here yet. Your check-ins and the evidence you send show up here.</p>
   </div>
 
@@ -134,7 +143,8 @@
   <div class="crop-actions">
     <button type="button" class="btn" id="cropRotate">Rotate</button>
     <button type="button" class="btn" id="cropWhole">Whole photo</button>
-    <button type="button" class="btn primary" id="cropKeep">Keep page</button>
+    <button type="button" class="btn" id="cropKeep">Keep page</button>
+    <button type="button" class="btn primary" id="cropNext">Keep and take the next page</button>
   </div>
 </dialog>
 
@@ -143,6 +153,7 @@
 <script src="config.js"></script>
 <script src="vendor/pouchdb.min.js"></script>
 <script src="vendor/jsQR.js"></script>
+<script src="vendor/qrcode.js"></script>
 <script src="scanner.js"></script>
 <script src="poe-student.js"></script>
 <script src="student.js"></script>
