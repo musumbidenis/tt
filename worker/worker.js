@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '5.6.0';
-const SCHEMA_VERSION = '6';
+export const VERSION = '6.0.0';
+const SCHEMA_VERSION = '7';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -55,12 +55,30 @@ CREATE INDEX IF NOT EXISTS evidence_status ON evidence (status, submitted_at);
 CREATE INDEX IF NOT EXISTS evidence_sub ON evidence (submitted_at);
 CREATE TABLE IF NOT EXISTS marks (term_id TEXT, class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, cat1 REAL, cat2 REAL, cat3 REAL, prac1 REAL, prac2 REAL, prac3 REAL, updated_at TEXT, updated_by TEXT, synced_at TEXT, PRIMARY KEY (term_id, class_code, unit_code, adm_no));
 CREATE INDEX IF NOT EXISTS marks_synced ON marks (synced_at);
+CREATE TABLE IF NOT EXISTS unit_marks (class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, cat1 REAL, cat2 REAL, cat3 REAL, prac1 REAL, prac2 REAL, prac3 REAL, meta TEXT, updated_at TEXT, updated_by TEXT, synced_at TEXT, PRIMARY KEY (class_code, unit_code, adm_no));
+CREATE INDEX IF NOT EXISTS unit_marks_synced ON unit_marks (synced_at);
+CREATE TABLE IF NOT EXISTS unlocks (term_id TEXT, class_code TEXT, unit_code TEXT, by_code TEXT, by_name TEXT, at TEXT, until TEXT, PRIMARY KEY (term_id, class_code, unit_code));
+CREATE INDEX IF NOT EXISTS sessions_trainer ON sessions (trainer_id, synced_at, id);
 CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, device_id TEXT, created_at TEXT, last_ok_at TEXT, fail_count INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
   'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT',
-  'ALTER TABLE evidence ADD COLUMN seen_at TEXT'];
+  'ALTER TABLE evidence ADD COLUMN seen_at TEXT', 'ALTER TABLE classes ADD COLUMN status TEXT', 'ALTER TABLE classes ADD COLUMN archived_at TEXT',
+  'ALTER TABLE classes ADD COLUMN archived_by TEXT'];
+/* Data moved once when the schema version changes (each is one statement, safe to run again). */
+const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
+const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
+const DATA_MIGRATIONS = [
+  // Marks used to be kept per term; a unit now has one marksheet for its whole life. Each cell keeps the
+  // newest value it had in any term, and remembers the term it was entered in (for the end-of-term lock).
+  `INSERT OR IGNORE INTO unit_marks (class_code, unit_code, adm_no, ${MARK_CELLS.join(', ')}, meta, updated_at, updated_by, synced_at)
+   SELECT m.class_code, m.unit_code, m.adm_no,
+   ${MARK_CELLS.map((c) => `(SELECT x.${c} FROM marks x WHERE ${SAME_ROW} AND x.${c} IS NOT NULL ORDER BY x.updated_at DESC LIMIT 1)`).join(', ')},
+   json_object(${MARK_CELLS.map((c) => `'${c}', json((SELECT json_object('term', x.term_id, 'by', x.updated_by, 'at', x.updated_at) FROM marks x WHERE ${SAME_ROW} AND x.${c} IS NOT NULL ORDER BY x.updated_at DESC LIMIT 1))`).join(', ')}),
+   MAX(m.updated_at), (SELECT x.updated_by FROM marks x WHERE ${SAME_ROW} ORDER BY x.updated_at DESC LIMIT 1), MAX(m.synced_at)
+   FROM marks m GROUP BY m.class_code, m.unit_code, m.adm_no`,
+];
 
 /* ---------- small helpers ---------- */
 const nowIso = () => new Date().toISOString();
@@ -126,6 +144,7 @@ async function ready(env) {
   await env.DB.exec(SCHEMA);
   // Columns added after a database was first created (fail harmlessly when already there).
   for (const sql of MIGRATIONS) { try { await env.DB.exec(sql); } catch { /* column exists */ } }
+  for (const sql of DATA_MIGRATIONS) { try { await env.DB.prepare(sql).run(); } catch (e) { console.error('data migration', e); } }
   await setMeta(env, 'schema', SCHEMA_VERSION);
   schemaReady = true;
 }
@@ -212,14 +231,21 @@ const ACTIONS = {
   roster: { fn: (env, b, me, pre) => readRoster(env, b, me, pre) },
   pulse: { fn: async (env, b, me, pre) => ({ ok: true, last: pre.meta.last_change || '' }) },
   push: { role: ['TRAINER', 'HOD'], pre: (b) => pushPre(b.sessions || []), fn: (env, b, me, pre) => pushSessions(env, b.sessions || [], me, pre) },
+  mySessions: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => mySessions(env, b, me) },
   checkins: { role: ['TRAINER', 'HOD'], pre: (b) => [checkinsQuery(b.sessionIds || [], b.since || '')], fn: (env, b, me, pre) => acceptedCheckins(b.sessionIds || [], pre.rows[0]) },
   addStudents: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => addStudents(env, b.students || [], me) },
   mySettings: { fn: (env, b, me) => saveMySettings(env, b, me) },
   report: { pre: (b) => reportPre(b), fn: (env, b, me, pre) => reportData(env, b, me, pre) },
   submitSignoff: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => submitSignoff(env, b, me) },
-  signoffs: { fn: (env, b, me) => listSignoffs(env, me) },
+  signoffs: { fn: (env, b, me) => listSignoffs(env, b, me) },
   decideSignoff: { role: ['HOD'], fn: (env, b, me) => decideSignoff(env, b, me) },
-  overview: { role: ['HOD', 'MIS'], pre: () => overviewPre(), fn: (env, b, me, pre) => overview(pre) },
+  overview: { role: ['HOD', 'MIS'], pre: (b) => overviewPre(b), fn: (env, b, me, pre) => overview(pre) },
+  termUnits: { fn: (env, b, me) => termUnits(env, b, me) },
+  unlock: { role: ['HOD', 'MIS'], fn: (env, b, me) => setUnlock(env, b, me, true) },
+  relock: { role: ['HOD', 'MIS'], fn: (env, b, me) => setUnlock(env, b, me, false) },
+  archiveClasses: { role: ['MIS'], fn: (env, b, me) => archiveClasses(env, b, me) },
+  classExport: { role: ['MIS'], fn: (env, b, me) => classExport(env, b, me) },
+  deleteClasses: { role: ['MIS'], fn: (env, b, me) => deleteClasses(env, b, me) },
   saveTerm: { role: ['MIS'], fn: (env, b, me) => saveTerm(env, b, me) },
   uploadLoading: { role: ['MIS'], fn: (env, b, me) => uploadLoading(env, b, me) },
   importClassList: { role: ['MIS'], fn: (env, b, me) => importClassList(env, b, me) },
@@ -244,7 +270,7 @@ const ACTIONS = {
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeReceive', 'submitSignoff', 'decideSignoff',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
-  'updateStudent', 'updateStaff', 'mySettings']);
+  'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -424,24 +450,34 @@ async function readRoster(env, b, me, pre) {
   const [termRows, loading, unitRows, classRows, reqs, staffRows] = await many(env, [TERM_SQL], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`], ['SELECT * FROM units'],
     ['SELECT * FROM classes'], ["SELECT adm_no, name, class_code, requested_name, reason, status, merged_into FROM requests WHERE status IN ('pending','rejected','merged')"],
     ['SELECT code, name, late_pct, excused_pct FROM staff']);
+  const [termList, unlockRows] = await many(env, ['SELECT * FROM terms ORDER BY start_date DESC'], [`SELECT term_id, class_code, unit_code, until FROM unlocks WHERE ${UNLOCK_LIVE}`]);
   const term = termOut(termRows[0]);
+  // Archived classes are kept but left out of everything a trainer works with day to day.
+  const gone = new Set(classRows.filter((r) => r.status === 'archived').map((r) => r.code));
+  const keep = (code) => !classParts(code).some((c) => gone.has(c)) && !gone.has(code);
+  loading.splice(0, loading.length, ...loading.filter((r) => keep(r.class_code)));
   const units = loading.length
     ? loading.map((r) => ({ classCode: r.class_code, code: r.unit_code, name: r.unit_name || r.unit_code, trainerCode: r.trainer_code, trainerName: r.trainer_name,
       lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3 }))
-    : unitRows.map((r) => ({ classCode: r.class_code, code: r.code, name: r.name || r.code, lessonsPerWeek: 2, hoursPerWeek: 3 }));
+    : unitRows.filter((r) => keep(r.class_code)).map((r) => ({ classCode: r.class_code, code: r.code, name: r.name || r.code, lessonsPerWeek: 2, hoursPerWeek: 3 }));
   // Trainers get only the class lists of the classes they teach; the HOD and MIS Officer get all.
   const mine = new Set();
   if (!(me.roles.includes('HOD') || me.roles.includes('MIS'))) {
     for (const u of loading) if (lower(u.trainer_code) === lower(me.code)) classParts(u.class_code).forEach((c) => mine.add(c));
   }
-  const trainees = mine.size ? await all(env, `SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]))
+  const everyone = mine.size ? await all(env, `SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]))
     : await all(env, 'SELECT adm_no, name, class_code, status, reg_code FROM trainees');
+  const trainees = everyone.filter((r) => !gone.has(r.class_code));
   const staff = {};
   for (const r of staffRows) staff[r.code] = { name: r.name, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
   return {
     ok: true, version, me, term, weeks: teachingWeeks(term),
-    classes: classRows.map((r) => ({ code: r.code, name: r.name || r.code, level: r.level || levelOf(r.code), misClass: r.mis_class || '' })),
+    classes: classRows.filter((r) => !gone.has(r.code)).map((r) => ({ code: r.code, name: r.name || r.code, level: r.level || levelOf(r.code), misClass: r.mis_class || '' })),
     units,
+    terms: termList.map((r) => ({ id: r.id, name: r.name, duration: r.duration || '', startDate: r.start_date || '', status: r.status || '' })),
+    unlocks: unlockRows.map((r) => ({ termId: r.term_id, classCode: r.class_code, unitCode: r.unit_code, until: r.until || '' })),
+    archived: me.roles.includes('MIS') ? classRows.filter((r) => gone.has(r.code)).map((r) => ({ code: r.code, misClass: r.mis_class || '', archivedAt: r.archived_at || '',
+      archivedBy: r.archived_by || '', students: everyone.filter((x) => x.class_code === r.code && active(x)).length })) : [],
     trainees: trainees.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code, active: active(r), regCode: r.reg_code || '' })),
     pending: reqs.filter((r) => r.status === 'pending').map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, requestedBy: r.requested_name, reason: r.reason })),
     rejected: reqs.filter((r) => r.status === 'rejected').map((r) => ({ admNo: r.adm_no, classCode: r.class_code })),
@@ -732,22 +768,31 @@ const pushList = (sessions) => sessions.filter((s) => s && s.sessionId).slice(0,
 /** Read together with the sign-in check: the stored copies, the term, and check-ins for these lessons. */
 function pushPre(sessions) {
   const J = JSON.stringify(pushList(sessions).map((s) => s.sessionId));
-  return [[`SELECT id, updated_at, json_extract(data, '$.qrFolded') AS folded FROM sessions WHERE id IN ${IN}`, J], [TERM_SQL],
-    [`SELECT * FROM checkins WHERE session_id IN ${IN} AND status IN ('accepted','pending')`, J]];
+  return [[`SELECT id, updated_at, term_id, data FROM sessions WHERE id IN ${IN}`, J], [TERM_SQL],
+    [`SELECT * FROM checkins WHERE session_id IN ${IN} AND status IN ('accepted','pending')`, J],
+    [`SELECT term_id, class_code, unit_code FROM unlocks WHERE ${UNLOCK_LIVE}`]];
 }
 async function pushSessions(env, sessions, me, pre) {
   sessions = pushList(sessions);
-  const [old, termRows, cis] = pre.rows;
-  const have = new Map(old.map((r) => [r.id, r.updated_at]));
-  const folded = new Map(old.filter((r) => r.folded).map((r) => [r.id, JSON.parse(r.folded)]));
+  const [old, termRows, cis, unlockRows] = pre.rows;
+  const prev = new Map(old.map((r) => [r.id, r]));
+  const activeId = termRows[0]?.id || '';
+  const open = new Set(unlockRows.map((r) => `${r.term_id}|${r.class_code}|${r.unit_code}`));
   const results = [], fresh = [];
   for (const s of sessions) {
-    // Never let an older copy (e.g. from a phone that was offline longer) overwrite a newer one.
-    if (have.has(s.sessionId) && String(have.get(s.sessionId)) > String(s.updatedAt || '')) { results.push({ sessionId: s.sessionId, status: 'stale' }); continue; }
-    s.uploadedBy = me.code;
-    if (folded.has(s.sessionId)) s.qrFolded = { ...folded.get(s.sessionId), ...(s.qrFolded || {}) };
-    fresh.push(s);
-    results.push({ sessionId: s.sessionId, status: have.has(s.sessionId) ? 'updated' : 'added' });
+    const had = prev.get(s.sessionId);
+    // A register from a term that has ended stays as it was, unless the HOD or MIS Officer unlocked it.
+    const termId = had?.term_id || s.termId || '';
+    if (termId && activeId && termId !== activeId && !open.has(`${termId}|${s.classCode}|${s.unitCode}`)) {
+      results.push({ sessionId: s.sessionId, status: 'locked' }); continue;
+    }
+    // Two devices (or a device that was offline a long time) can both have changed this register: every
+    // student keeps the mark that was set last, wherever it was set, so neither copy undoes the other.
+    const out = had ? mergeRegisters(JSON.parse(had.data), s) : s;
+    out.uploadedBy = me.code;
+    fresh.push(out);
+    const differs = had && registerKey(out) !== registerKey(s);
+    results.push({ sessionId: s.sessionId, status: !had ? 'added' : differs ? 'merged' : 'updated', ...(differs ? { session: out } : {}) });
   }
   if (!fresh.length) return { ok: true, results };
   // Student check-ins that arrived before this register can be verified now.
@@ -767,6 +812,122 @@ async function pushSessions(env, sessions, me, pre) {
   return { ok: true, results };
 }
 
+/** Two copies of one register made one: each student's latest mark wins; the edit history of both is kept. */
+function mergeRegisters(a, b) {
+  const newer = String(b.updatedAt || '') >= String(a.updatedAt || '') ? b : a, older = newer === b ? a : b;
+  const best = new Map();
+  [older, newer].forEach((s, rank) => {
+    for (const m of s.marks || []) {
+      const at = m.at || s.createdAt || '', k = lower(m.admNo), had = best.get(k);
+      if (!had || at > had.at || (at === had.at && rank >= had.rank)) best.set(k, { m: { ...m, at }, at, rank });
+    }
+  });
+  const logs = new Map();
+  for (const l of [...(a.editLog || []), ...(b.editLog || [])]) logs.set(`${l.at}|${l.device || ''}|${l.reason || ''}`, l);
+  const marks = [...best.values()].map((x) => x.m);
+  const counts = { P: 0, A: 0, L: 0, E: 0 };
+  for (const m of marks) { const k = STATUS_CODE[m.status]; if (k) counts[k]++; }
+  const created = [a.createdAt, b.createdAt].filter(Boolean).sort()[0] || '';
+  return { ...older, ...newer, marks, counts, createdAt: created, updatedAt: newer.updatedAt || older.updatedAt || '',
+    editLog: [...logs.values()].sort((x, y) => String(x.at).localeCompare(String(y.at))), edits: logs.size,
+    viaQr: { ...(older.viaQr || {}), ...(newer.viaQr || {}) }, qrFolded: { ...(older.qrFolded || {}), ...(newer.qrFolded || {}) },
+    qr: newer.qr || older.qr, notes: newer.notes || older.notes || '' };
+}
+/** What a trainer sees of a register: whether the merged copy differs from the one a device sent. */
+const registerKey = (s) => JSON.stringify([(s.marks || []).map((m) => `${lower(m.admNo)}=${m.status}`).sort(), s.notes || '']);
+
+/** Every register this trainer has on the server, a page at a time (in the order they reached it), for their other devices. */
+async function mySessions(env, b, me) {
+  const at = String(b.cursor?.at || ''), id = String(b.cursor?.id || '');
+  const rows = await all(env, `SELECT id, data, synced_at FROM sessions WHERE trainer_id=? AND (synced_at > ? OR (synced_at = ? AND id > ?))
+    ORDER BY synced_at, id LIMIT ${PULL_PAGE}`, me.code, at, at, id);
+  const last = rows[rows.length - 1];
+  return { ok: true, sessions: rows.map((r) => r.data), cursor: last ? { at: last.synced_at, id: last.id } : { at, id }, more: rows.length === PULL_PAGE };
+}
+const PULL_PAGE = 120;
+
+/* ---------- terms that have ended: locked, unless the HOD or MIS Officer unlocks a class and unit ---------- */
+const UNLOCK_LIVE = "(until IS NULL OR until = '' OR until > strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+async function setUnlock(env, b, me, on) {
+  const termId = String(b.termId || ''), cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  if (!termId || !cls || !unit) fail('Choose the term, class and unit');
+  const term = await one(env, 'SELECT id, status FROM terms WHERE id=?', termId);
+  if (!term) fail('That term does not exist');
+  if (on) {
+    const days = Math.min(60, Math.max(1, Number(b.days) || 7));
+    const until = new Date(Date.now() + days * 864e5).toISOString();
+    await run(env, `INSERT INTO unlocks (term_id,class_code,unit_code,by_code,by_name,at,until) VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT(term_id,class_code,unit_code) DO UPDATE SET by_code=excluded.by_code, by_name=excluded.by_name, at=excluded.at, until=excluded.until`,
+    termId, cls, unit, me.code, me.name, nowIso(), until);
+    await audit(env, me, 'unlock', `${termId} ${cls} ${unit} for ${days} day(s)`);
+  } else {
+    await run(env, 'DELETE FROM unlocks WHERE term_id=? AND class_code=? AND unit_code=?', termId, cls, unit);
+    await audit(env, me, 'relock', `${termId} ${cls} ${unit}`);
+  }
+  await bumpRoster(env);
+  return { ok: true };
+}
+const unlockedSet = async (env) => new Set((await all(env, `SELECT term_id, class_code, unit_code FROM unlocks WHERE ${UNLOCK_LIVE}`))
+  .map((r) => `${r.term_id}|${r.class_code}|${r.unit_code}`));
+
+/** The class-units of any term: the trainer's own (or, for the HOD and MIS Officer, all), for looking back at earlier terms. */
+async function termUnits(env, b, me) {
+  const termId = String(b.termId || '');
+  const term = termOut(termId ? await one(env, 'SELECT * FROM terms WHERE id=?', termId) : await one(env, TERM_SQL));
+  if (!term) fail('That term does not exist');
+  const rows = await all(env, 'SELECT * FROM loading WHERE term_id=? ORDER BY class_code, unit_code', term.id);
+  const mine = seesAll(me) ? rows : rows.filter((r) => lower(r.trainer_code) === lower(me.code));
+  return { ok: true, term, weeks: teachingWeeks(term),
+    units: mine.map((r) => ({ classCode: r.class_code, code: r.unit_code, name: r.unit_name || r.unit_code, trainerCode: r.trainer_code, trainerName: r.trainer_name,
+      lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3 })) };
+}
+
+/* ---------- archiving and deleting a class (the MIS Officer) ---------- */
+const codesOf = (b) => [...new Set((b.codes || []).map((c) => String(c || '').trim()).filter(Boolean))].slice(0, 50);
+async function archiveClasses(env, b, me) {
+  const codes = codesOf(b);
+  if (!codes.length) fail('Choose a class');
+  const on = b.archive !== false, J = JSON.stringify(codes), now = nowIso();
+  await many(env, [`INSERT OR IGNORE INTO classes (code, name, level) SELECT value, value, '' FROM json_each(?)`, J],
+    [`UPDATE classes SET status=?, archived_at=?, archived_by=? WHERE code IN ${IN}`, on ? 'archived' : 'active', on ? now : null, on ? me.name : null, J]);
+  await audit(env, me, on ? 'archive class' : 'restore class', codes.join(', '));
+  await bumpRoster(env);
+  return { ok: true, codes, archived: on };
+}
+/** Everything kept about these classes, for a file the MIS Officer saves before deleting them. */
+async function classExport(env, b, me) {
+  const codes = codesOf(b);
+  if (!codes.length) fail('Choose a class');
+  const J = JSON.stringify(codes);
+  const [classes, trainees, loading, sessions, checkins, marks, oldMarks, signoffs, evidence, requests, devices] = await many(env,
+    [`SELECT * FROM classes WHERE code IN ${IN}`, J], [`SELECT * FROM trainees WHERE class_code IN ${IN}`, J], [`SELECT * FROM loading WHERE class_code IN ${IN}`, J],
+    [`SELECT * FROM sessions WHERE class_code IN ${IN}`, J], [`SELECT * FROM checkins WHERE session_id IN (SELECT id FROM sessions WHERE class_code IN ${IN})`, J],
+    [`SELECT * FROM unit_marks WHERE class_code IN ${IN}`, J], [`SELECT * FROM marks WHERE class_code IN ${IN}`, J], [`SELECT * FROM signoffs WHERE class_code IN ${IN}`, J],
+    [`SELECT * FROM evidence WHERE class_code IN ${IN}`, J], [`SELECT * FROM requests WHERE class_code IN ${IN}`, J], [`SELECT * FROM devices WHERE class_code IN ${IN}`, J]);
+  await audit(env, me, 'class export', codes.join(', '));
+  return { ok: true, app: 'rvnp-class-export', exportedAt: nowIso(), by: me.name, codes,
+    tables: { classes, trainees, loading, sessions, checkins, marks, oldMarks, signoffs, evidence, requests, devices } };
+}
+async function deleteClasses(env, b, me) {
+  const codes = codesOf(b);
+  if (!codes.length) fail('Choose a class');
+  const J = JSON.stringify(codes);
+  const rows = await all(env, `SELECT code, status FROM classes WHERE code IN ${IN}`, J);
+  if (rows.length !== codes.length || rows.some((r) => r.status !== 'archived')) fail('Archive a class before deleting it');
+  if (String(b.confirm || '').trim().toLowerCase() !== String(b.label || codes[0]).trim().toLowerCase()) fail('Type the class name exactly to confirm');
+  const SESS = `(SELECT id FROM sessions WHERE class_code IN ${IN})`, ADMS = `(SELECT adm_no FROM trainees WHERE class_code IN ${IN})`;
+  // The Google Drive copies (attendance sheets, marksheets, students' evidence files) are never touched.
+  await many(env, [`DELETE FROM checkins WHERE session_id IN ${SESS}`, J], [`DELETE FROM sessions WHERE class_code IN ${IN}`, J],
+    [`DELETE FROM unit_marks WHERE class_code IN ${IN}`, J], [`DELETE FROM marks WHERE class_code IN ${IN}`, J], [`DELETE FROM signoffs WHERE class_code IN ${IN}`, J],
+    [`DELETE FROM unlocks WHERE class_code IN ${IN}`, J], [`DELETE FROM loading WHERE class_code IN ${IN}`, J], [`DELETE FROM units WHERE class_code IN ${IN}`, J],
+    [`DELETE FROM push_subs WHERE adm_no IN ${ADMS}`, J], [`DELETE FROM devices WHERE class_code IN ${IN}`, J], [`DELETE FROM evidence WHERE class_code IN ${IN}`, J],
+    [`DELETE FROM requests WHERE class_code IN ${IN}`, J], [`DELETE FROM trainees WHERE class_code IN ${IN}`, J], [`DELETE FROM classes WHERE code IN ${IN}`, J],
+    ["DELETE FROM meta WHERE key='pub_classes'"]);
+  await audit(env, me, 'delete class', codes.join(', '));
+  await bumpRoster(env);
+  return { ok: true, deleted: codes };
+}
+
 /* ---------- reports, sign-off and overview ---------- */
 async function teachesUnit(env, me, classCode, unitCode, term) {
   if (me.roles.includes('HOD') || me.roles.includes('MIS')) return true;
@@ -778,19 +939,27 @@ async function teachesUnit(env, me, classCode, unitCode, term) {
 
 /** Read together with the sign-in check: everything one term register needs. */
 function reportPre(b) {
-  const c = String(b.classCode || ''), u = String(b.unitCode || '');
-  return [[TERM_SQL], [`SELECT 1 AS x FROM loading WHERE term_id=${ACTIVE_TERM} LIMIT 1`], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM} AND class_code=? AND unit_code=?`, c, u],
+  const c = String(b.classCode || ''), u = String(b.unitCode || ''), tid = String(b.termId || '');
+  // An earlier term when one is asked for, otherwise the term that is running.
+  const TERM = tid ? ['SELECT * FROM terms WHERE id=?', tid] : [TERM_SQL], T = tid ? '?' : ACTIVE_TERM, tp = tid ? [tid] : [];
+  return [TERM, [`SELECT 1 AS x FROM loading WHERE term_id=${T} LIMIT 1`, ...tp], [`SELECT * FROM loading WHERE term_id=${T} AND class_code=? AND unit_code=?`, ...tp, c, u],
     ['SELECT id, date, data FROM sessions WHERE class_code=? AND unit_code=?', c, u],
     ["SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN (SELECT id FROM sessions WHERE class_code=? AND unit_code=?)", c, u],
-    ['SELECT * FROM signoffs WHERE class_code=? AND unit_code=?', c, u]];
+    ['SELECT * FROM signoffs WHERE class_code=? AND unit_code=?', c, u],
+    [TERM_SQL], [`SELECT 1 AS x FROM loading WHERE term_id=${ACTIVE_TERM} AND class_code=? AND unit_code=?`, c, u],
+    [`SELECT 1 AS x FROM unlocks WHERE term_id=${T} AND class_code=? AND unit_code=? AND ${UNLOCK_LIVE}`, ...tp, c, u]];
 }
 /** Every lesson of one class and unit this term, with final marks, for the term register. */
 async function reportData(env, b, me, pre) {
   if (!b.classCode || !b.unitCode) fail('Choose a class and a unit');
-  const [termRows, anyLoading, loadRows, sessRows, acc, soRows] = pre.rows;
+  const [termRows, anyLoading, loadRows, sessRows, acc, soRows, activeRows, nowLoad, unlockRow] = pre.rows;
   const term = termOut(termRows[0]), load = loadRows[0] || null;
+  if (b.termId && !term) fail('That term does not exist');
   const staffOnly = !(me.roles.includes('HOD') || me.roles.includes('MIS'));
-  if (staffOnly && term && anyLoading.length && !(load && lower(load.trainer_code) === lower(me.code))) fail('You can only see reports for the units in your loading');
+  const ended = !!(term && activeRows[0] && term.id !== activeRows[0].id);
+  // A trainer sees the units they taught that term; whoever teaches the unit now also sees its earlier terms.
+  const teachesNow = ended && nowLoad.length && !!(await one(env, `SELECT 1 FROM loading WHERE term_id=${ACTIVE_TERM} AND class_code=? AND unit_code=? AND trainer_code=?`, b.classCode, b.unitCode, me.code));
+  if (staffOnly && term && anyLoading.length && !(load && lower(load.trainer_code) === lower(me.code)) && !teachesNow) fail('You can only see reports for the units in your loading');
   const weeks = teachingWeeks(term);
   let from = '0000-00-00', to = '9999-12-31';
   if (weeks.length) { from = weeks[0]; const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); to = e.toISOString().slice(0, 10); }
@@ -803,7 +972,7 @@ async function reportData(env, b, me, pre) {
       trainerId: s.trainerId, trainerName: s.trainerName, updatedAt: s.updatedAt, marks, names };
   });
   const so = soRows.find((r) => r.id === signoffId(term, b.classCode, b.unitCode));
-  return { ok: true, term, weeks, lessons, serverTime: nowIso(), signoff: so ? signoffOut(so) : null,
+  return { ok: true, term, weeks, lessons, serverTime: nowIso(), signoff: so ? signoffOut(so) : null, ended, unlocked: unlockRow.length > 0,
     loading: load ? { trainerCode: load.trainer_code, trainerName: load.trainer_name, unitName: load.unit_name, lessonsPerWeek: Number(load.lessons_per_week) || 2, hoursPerWeek: Number(load.hours_per_week) || 3 } : null };
 }
 
@@ -834,8 +1003,8 @@ async function decideSignoff(env, b, me) {
   return { ok: true, signoff: signoffOut(await one(env, 'SELECT * FROM signoffs WHERE id=?', b.id)) };
 }
 
-async function listSignoffs(env, me) {
-  const term = await activeTerm(env);
+async function listSignoffs(env, b, me) {
+  const term = b.termId ? termOut(await one(env, 'SELECT * FROM terms WHERE id=?', String(b.termId))) : await activeTerm(env);
   const mine = !me.roles.includes('HOD') && !me.roles.includes('MIS');
   const rows = await all(env, `SELECT * FROM signoffs WHERE (? IS NULL OR term_id=?) ${mine ? 'AND trainer_code=?' : ''} ORDER BY submitted_at DESC`,
     ...(mine ? [term?.id ?? null, term?.id ?? null, me.code] : [term?.id ?? null, term?.id ?? null]));
@@ -843,13 +1012,24 @@ async function listSignoffs(env, me) {
 }
 
 /** HOD view: for each class and unit in the loading, how many lessons are marked against how many were due. */
-const overviewPre = () => [[TERM_SQL],
-  [`SELECT class_code, unit_code, SUM(COALESCE(slots,1)) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted FROM sessions
-    WHERE COALESCE(kind,'lesson')='lesson' AND (term_id=${ACTIVE_TERM} OR ((term_id IS NULL OR term_id='') AND date >= date((SELECT start_date FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1), '-6 days')))
-    GROUP BY class_code, unit_code`],
-  [`SELECT class_code, unit_code, status FROM signoffs WHERE term_id=${ACTIVE_TERM}`], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`]];
+function overviewPre(b = {}) {
+  const tid = String(b.termId || '');
+  if (tid) {
+    return [['SELECT * FROM terms WHERE id=?', tid],
+      [`SELECT class_code, unit_code, SUM(COALESCE(slots,1)) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted FROM sessions
+        WHERE COALESCE(kind,'lesson')='lesson' AND term_id=? GROUP BY class_code, unit_code`, tid],
+      ['SELECT class_code, unit_code, status FROM signoffs WHERE term_id=?', tid], ['SELECT * FROM loading WHERE term_id=?', tid], ["SELECT code FROM classes WHERE status='archived'"]];
+  }
+  return [[TERM_SQL],
+    [`SELECT class_code, unit_code, SUM(COALESCE(slots,1)) AS lessons, MAX(date) AS last, SUM(present+late) AS att, SUM(present+late+absent) AS counted FROM sessions
+      WHERE COALESCE(kind,'lesson')='lesson' AND (term_id=${ACTIVE_TERM} OR ((term_id IS NULL OR term_id='') AND date >= date((SELECT start_date FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1), '-6 days')))
+      GROUP BY class_code, unit_code`],
+    [`SELECT class_code, unit_code, status FROM signoffs WHERE term_id=${ACTIVE_TERM}`], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`], ["SELECT code FROM classes WHERE status='archived'"]];
+}
 function overview(pre) {
-  const [termRows, statRows, soRows, loading] = pre.rows;
+  const [termRows, statRows, soRows, allLoading, archivedRows] = pre.rows;
+  const archived = new Set(archivedRows.map((r) => r.code));
+  const loading = allLoading.filter((r) => !archived.has(r.class_code));
   const term = termOut(termRows[0]);
   if (!term) return { ok: true, term: null, rows: [] };
   const weeks = teachingWeeks(term), today = todayIso();
@@ -1088,7 +1268,7 @@ async function bridgeFeed(env, q) {
       ['SELECT DISTINCT class_code FROM requests WHERE requested_at > ? OR decided_at > ?', since, since],
       ['SELECT DISTINCT class_code, unit_code FROM signoffs WHERE submitted_at > ? OR decided_at > ?', since, since],
       ['SELECT code FROM staff WHERE updated_at > ?', since], ['SELECT 1 AS x FROM loading WHERE updated_at > ? LIMIT 1', since], ['SELECT 1 AS x FROM terms WHERE updated_at > ? LIMIT 1', since],
-      ['SELECT DISTINCT class_code, unit_code FROM marks WHERE synced_at > ?', since]);
+      ['SELECT DISTINCT class_code, unit_code FROM unit_marks WHERE synced_at > ?', since]);
     const all = ld.length || tm.length;
     const want = new Set([...sess, ...so, ...mk].map(unitKey));
     const classes = new Set([...tr, ...rq].map((r) => r.class_code)), staffSet = new Set(st.map((r) => lower(r.code)));
@@ -1114,7 +1294,7 @@ async function bridgeFeed(env, q) {
   const res = await many(env, ...stmts, [`SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify(classSet)],
     [`SELECT adm_no, name, class_code, status, merged_into FROM requests WHERE class_code IN ${IN} AND status IN ('pending','rejected','merged')`, JSON.stringify(units.map((u) => u.class_code))],
     [`SELECT * FROM signoffs WHERE term_id=?`, term.id], [`SELECT code, late_pct, excused_pct FROM staff`], [`SELECT code, name, mis_class FROM classes WHERE code IN ${IN}`, JSON.stringify(classSet.concat(units.map((u) => u.class_code)))],
-    [`SELECT * FROM marks WHERE term_id=? AND class_code IN ${IN}`, term.id, JSON.stringify(units.map((u) => u.class_code))]);
+    [`SELECT * FROM unit_marks WHERE class_code IN ${IN}`, JSON.stringify(units.map((u) => u.class_code))]);
   const [trainees, reqs, signoffs, staffPct, classes, markRows] = res.slice(units.length * 2);
   const weeks = teachingWeeks(term);
   const from = weeks[0], to = (() => { const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); return e.toISOString().slice(0, 10); })();
@@ -1351,8 +1531,14 @@ async function myUnitPairs(env, me) {
   return { loading, pairs: new Set(mine.flatMap((u) => classParts(u.class_code).map((c) => c + '|' + u.unit_code))) };
 }
 const seesAll = (me) => me.roles.includes('HOD') || me.roles.includes('MIS');
+/** Class-units a trainer taught in any term: they can still look at that evidence, but only this term's trainer decides. */
+async function everTaught(env, me) {
+  const rows = await all(env, 'SELECT DISTINCT class_code, unit_code FROM loading WHERE trainer_code=?', me.code);
+  return new Set(rows.flatMap((u) => classParts(u.class_code).map((c) => c + '|' + u.unit_code)));
+}
 async function poeList(env, b, me) {
-  const { pairs } = await myUnitPairs(env, me);
+  const { pairs: now } = await myUnitPairs(env, me);
+  const pairs = seesAll(me) ? now : new Set([...now, ...(await everTaught(env, me))]);
   const status = ['submitted', 'approved', 'returned'].includes(b.status) ? b.status : '';
   let list = [];
   if (seesAll(me)) {
@@ -1372,13 +1558,14 @@ async function poeList(env, b, me) {
   // Links into Drive: the trainer's own attendance sheet; the evidence index for the HOD and MIS Officer.
   const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
   const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(me.code))?.[1] || '';
-  return { ok: true, evidence: list.map(evidenceOut), mine: [...pairs], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
+  return { ok: true, evidence: list.map(evidenceOut), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
 }
 async function evidenceFor(env, id, me, decide) {
   const r = await one(env, 'SELECT * FROM evidence WHERE id=?', String(id || ''));
   if (!r) fail('That submission no longer exists');
   const { pairs } = await myUnitPairs(env, me);
-  const ok = pairs.has(r.class_code + '|' + r.unit_code) || me.roles.includes('HOD') || (!decide && me.roles.includes('MIS'));
+  const key = r.class_code + '|' + r.unit_code;
+  const ok = pairs.has(key) || me.roles.includes('HOD') || (!decide && (me.roles.includes('MIS') || (await everTaught(env, me)).has(key)));
   if (!ok) fail('Only the trainer of this unit or the HOD can do that');
   return r;
 }
@@ -1410,6 +1597,12 @@ async function poeReceive(env, b, me) {
 const MARK_COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const markOf = (v) => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) fail('Marks are percentages from 0 to 100'); return Math.round(n * 10) / 10; };
 const marksOut = (r) => ({ admNo: r.adm_no, ...Object.fromEntries(MARK_COLS.map((c) => [c, r[c] ?? null])), updatedAt: r.updated_at, updatedBy: r.updated_by || '' });
+const metaOf = (r) => { try { return JSON.parse(r?.meta || '{}') || {}; } catch { return {}; } };
+/** The cells of a row entered in a term that has ended, and not unlocked for this class and unit: they cannot change. */
+function lockedCells(r, activeId, open, cls, unit) {
+  const meta = metaOf(r);
+  return MARK_COLS.filter((c) => { const t = meta[c]?.term; return t && activeId && t !== activeId && !open.has(`${t}|${cls}|${unit}`); });
+}
 async function marksAccess(env, me, cls, unit, write) {
   if (!cls || !unit) fail('Choose the class and unit');
   if (me.roles.includes('HOD') || (!write && me.roles.includes('MIS'))) return;
@@ -1419,24 +1612,47 @@ async function marksAccess(env, me, cls, unit, write) {
 async function marksPull(env, b, me) {
   const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
   await marksAccess(env, me, cls, unit, false);
-  const rows = await all(env, `SELECT * FROM marks WHERE term_id=${ACTIVE_TERM} AND class_code=? AND unit_code=?`, cls, unit);
-  return { ok: true, classCode: cls, unitCode: unit, rows: rows.map(marksOut) };
+  const [rows, termRows] = await many(env, ['SELECT * FROM unit_marks WHERE class_code=? AND unit_code=?', cls, unit], [TERM_SQL]);
+  const activeId = termRows[0]?.id || '', open = await unlockedSet(env);
+  const terms = Object.fromEntries((await all(env, 'SELECT id, name FROM terms')).map((x) => [x.id, x.name]));
+  return { ok: true, classCode: cls, unitCode: unit, activeTerm: activeId,
+    rows: rows.map((r) => { const meta = metaOf(r); return { ...marksOut(r), locked: lockedCells(r, activeId, open, cls, unit),
+      terms: Object.fromEntries(MARK_COLS.filter((c) => meta[c]?.term).map((c) => [c, terms[meta[c].term] || meta[c].term])) }; }),
+    lockedTerms: [...new Set(rows.flatMap((r) => lockedCells(r, activeId, open, cls, unit).map((c) => metaOf(r)[c].term)))].map((id) => ({ id, name: terms[id] || id })) };
 }
-/** Each student's row is kept whole; the newer edit wins, so two phones of the same trainer do not undo each other. */
+/** One marksheet per unit for its whole life. A row's newer edit wins (two devices of one trainer do not undo each
+ * other); each cell remembers the term it was entered in, and cells from an ended term stay as they were unless unlocked. */
 async function marksPush(env, b, me) {
   const term = await activeTerm(env);
   if (!term) fail('The MIS Officer has not set up the term yet');
   const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
   await marksAccess(env, me, cls, unit, true);
-  const now = nowIso();
-  const rows = (b.rows || []).slice(0, 400).filter((r) => r && r.admNo).map((r) => [term.id, cls, unit, String(r.admNo).trim(), ...MARK_COLS.map((c) => markOf(r[c])),
-    String(r.updatedAt || now) > now ? now : String(r.updatedAt || now), me.code, now]);
-  const sql = `INSERT INTO marks (term_id,class_code,unit_code,adm_no,${MARK_COLS.join(',')},updated_at,updated_by,synced_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(term_id,class_code,unit_code,adm_no) DO UPDATE SET ${MARK_COLS.map((c) => `${c}=excluded.${c}`).join(', ')}, updated_at=excluded.updated_at, updated_by=excluded.updated_by, synced_at=excluded.synced_at
-    WHERE excluded.updated_at >= marks.updated_at`;
-  for (let i = 0; i < rows.length; i += 50) await many(env, ...rows.slice(i, i + 50).map((r) => [sql, ...r]));
-  if (rows.length) await audit(env, me, 'marks', `${cls} ${unit}: ${rows.length} student(s)`);
-  return marksPull(env, b, me);
+  const now = nowIso(), open = await unlockedSet(env);
+  const incoming = (b.rows || []).slice(0, 400).filter((r) => r && r.admNo);
+  const have = new Map((await all(env, `SELECT * FROM unit_marks WHERE class_code=? AND unit_code=? AND adm_no IN ${IN}`, cls, unit,
+    JSON.stringify(incoming.map((r) => String(r.admNo).trim())))).map((r) => [lower(r.adm_no), r]));
+  let held = 0;
+  const writes = [];
+  for (const r of incoming) {
+    const adm = String(r.admNo).trim(), old = have.get(lower(adm));
+    const at = String(r.updatedAt || now) > now ? now : String(r.updatedAt || now);
+    if (old && String(old.updated_at || '') > at) continue;
+    const meta = metaOf(old), locked = new Set(old ? lockedCells(old, term.id, open, cls, unit) : []);
+    const vals = MARK_COLS.map((c) => {
+      const v = markOf(r[c]), was = old ? old[c] ?? null : null;
+      if (v === was) return was;
+      if (locked.has(c)) { held++; return was; }
+      meta[c] = { term: term.id, by: me.code, at: now };
+      return v;
+    });
+    writes.push([cls, unit, adm, ...vals, JSON.stringify(meta), at, me.code, now]);
+  }
+  const sql = `INSERT INTO unit_marks (class_code,unit_code,adm_no,${MARK_COLS.join(',')},meta,updated_at,updated_by,synced_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(class_code,unit_code,adm_no) DO UPDATE SET ${MARK_COLS.map((c) => `${c}=excluded.${c}`).join(', ')}, meta=excluded.meta, updated_at=excluded.updated_at,
+    updated_by=excluded.updated_by, synced_at=excluded.synced_at`;
+  for (let i = 0; i < writes.length; i += 50) await many(env, ...writes.slice(i, i + 50).map((w) => [sql, ...w]));
+  if (writes.length) await audit(env, me, 'marks', `${cls} ${unit}: ${writes.length} student(s)${held ? `, ${held} locked mark(s) kept` : ''}`);
+  return { ...(await marksPull(env, b, me)), held };
 }
 /** CDACC registration numbers, from any sheet with admission numbers and registration codes (a marksheet works). */
 async function importRegCodes(env, b, me) {
