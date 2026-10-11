@@ -142,5 +142,8 @@
 <script src="scanner.js"></script>
 <script src="poe-student.js"></script>
 <script src="student.js"></script>
+<!-- Design notes: for pointing at parts of this screen and saying what should change.
+     Nothing is loaded unless the address ends in ?notes=1 (see design-notes.js). -->
+<script>if (/[?&]notes=1(&|$)/.test(location.search)) { const s = document.createElement('script'); s.src = 'design-notes.js'; document.head.appendChild(s); }</script>
 </body>
 </html>

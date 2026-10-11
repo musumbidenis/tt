@@ -323,3 +323,36 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
 - Load tests and their results are in [`loadtest/`](loadtest/README.md).
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.2`) so phones fetch the new version.
 - **Testing the Worker on a computer** (for developers): `npx wrangler dev` with `worker/dev.js` as the main file and a local D1 binding called `DB` adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.
+
+## Asking for a change to a screen
+
+Describing a button in words is slow, and easy to get wrong. Instead, add **`?notes=1`** to the address of either app:
+
+- https://musumbidenis.github.io/tt/?notes=1 — the trainer / HOD / MIS app
+- https://musumbidenis.github.io/tt/student.html?notes=1 — the student app
+
+A strip appears at the top. While **Pick** is on, whatever you touch is outlined, and tapping it opens a box: type what you want changed there and **Save**. A row of one-tap phrases (*Bigger*, *Move it up*, *Another colour*, *Easier to tap*…) is there too, so a note need not be typed out in full on a phone — tap a few, then add anything else in your own words. The app itself does nothing while you are picking, so a tap on *Sync* leaves a note instead of syncing. Turn **Pick** off to move around the app as usual — open a register, switch tabs, open the lesson QR — then turn it back on and carry on. **Esc** does the same on a computer.
+
+Notes are kept in that browser, so they survive a reload and build up as you go round several screens. **Copy** then gives you one block to paste wherever you are asking for the work:
+
+```
+Design notes — 2 changes asked for
+
+## index.html (trainer / HOD / MIS app)
+
+1. `#netBadge` — “Online”
+   index.html:69, app.js:1635
+   → make this bigger, and red when the phone is offline
+
+2. `button[data-tab="reports"]` — “Report(s)”
+   index.html:76
+   → put Reports before Attendance Register(s)
+```
+
+Each note already says which element it is on, the words that were on it, and the lines in this project's own files that mention it — so whoever does the work starts at the right line instead of hunting for it.
+
+Anything you have typed into a box is never taken, so a PIN or an admission number cannot travel in a note. The words *printed* on the screen are, though: if you leave a note on a register row, that row's student name goes with it — trim it out of the paste, or leave the note on the column heading instead.
+
+**Close** puts the page back exactly as a trainer or student sees it; your notes are kept, and `?notes=1` picks them up again. **Clear** forgets them.
+
+This is for the people building the app. [`design-notes.js`](design-notes.js) is loaded **only** when `?notes=1` is in the address, so trainers and students never download it, and it is not part of what the app keeps for offline use — so the first time on a given phone it needs internet.
