@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.0.0';
+export const VERSION = '6.1.0';
 const SCHEMA_VERSION = '7';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -1451,9 +1451,17 @@ async function studentOf(env, b) {
 const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class_code).includes(cls) || u.class_code === cls);
 async function classUnits(env, cls) {
   if (!cls) fail('Choose a class');
-  const [loading, url] = await many(env, [`SELECT class_code, unit_code, unit_name FROM loading WHERE term_id=${ACTIVE_TERM}`], ["SELECT value FROM meta WHERE key='drive_url'"]);
-  const seen = new Set(), units = [];
-  for (const u of unitsForClass(loading, cls)) if (!seen.has(u.unit_code)) { seen.add(u.unit_code); units.push({ code: u.unit_code, name: u.unit_name || u.unit_code }); }
+  // Every unit the class has had in any term (a unit can span terms): this term's first, then the earlier ones.
+  const [loading, url, now] = await many(env, [`SELECT l.class_code, l.unit_code, l.unit_name, l.term_id FROM loading l LEFT JOIN terms t ON t.id=l.term_id ORDER BY t.start_date DESC`],
+    ["SELECT value FROM meta WHERE key='drive_url'"], [TERM_SQL]);
+  const activeId = now[0]?.id || '', seen = new Map(), units = [];
+  for (const u of unitsForClass(loading, cls)) {
+    const current = u.term_id === activeId, had = seen.get(u.unit_code);
+    if (had) { if (current && !had.current) { had.current = true; had.name = u.unit_name || had.name; } continue; }
+    const x = { code: u.unit_code, name: u.unit_name || u.unit_code, current };
+    seen.set(u.unit_code, x); units.push(x);
+  }
+  units.sort((a, b) => (b.current - a.current) || a.name.localeCompare(b.name));
   return { ok: true, classCode: cls, units, items: ITEMS, driveReady: !!url[0], pushReady: !!env.VAPID_PRIVATE_KEY };
 }
 const evidenceOut = (r) => ({ id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
@@ -1465,10 +1473,10 @@ const STUDENT_ACTIONS = {
     const item = String(b.item || '').toUpperCase();
     if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
     if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
-    const [loading, ver, url] = await many(env, [`SELECT unit_code, unit_name, class_code FROM loading WHERE term_id=${ACTIVE_TERM} AND unit_code=?`, String(b.unitCode || '')],
+    const [loading, ver, url] = await many(env, [`SELECT l.unit_code, l.unit_name, l.class_code FROM loading l LEFT JOIN terms t ON t.id=l.term_id WHERE l.unit_code=? ORDER BY t.start_date DESC`, String(b.unitCode || '')],
       ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item], ["SELECT value FROM meta WHERE key='drive_url'"]);
     const unit = unitsForClass(loading, t.class_code)[0];
-    if (!unit) fail('That unit is not taught to your class this term');
+    if (!unit) fail('That unit has not been taught to your class');
     if (!url[0]) fail('Evidence uploads are not switched on yet (the Google Drive link is not set up). Your scan is kept on this phone.');
     const v = (Number(ver[0]?.v) || 0) + 1, unitName = unit.unit_name || unit.unit_code;
     const fileName = `${safeName(unitName)} - ${item} - v${v}.pdf`;
@@ -1564,9 +1572,15 @@ async function poeList(env, b, me) {
 async function evidenceFor(env, id, me, decide) {
   const r = await one(env, 'SELECT * FROM evidence WHERE id=?', String(id || ''));
   if (!r) fail('That submission no longer exists');
-  const { pairs } = await myUnitPairs(env, me);
+  const { pairs, loading } = await myUnitPairs(env, me);
   const key = r.class_code + '|' + r.unit_code;
-  const ok = pairs.has(key) || me.roles.includes('HOD') || (!decide && (me.roles.includes('MIS') || (await everTaught(env, me)).has(key)));
+  let ok = pairs.has(key) || me.roles.includes('HOD') || (!decide && (me.roles.includes('MIS') || (await everTaught(env, me)).has(key)));
+  if (!ok && decide && !unitsForClass(loading.filter((u) => u.unit_code === r.unit_code), r.class_code).length) {
+    // The unit is not taught this term (it has ended or pauses): the trainer who had it last decides.
+    const past = await all(env, 'SELECT l.class_code, l.trainer_code FROM loading l LEFT JOIN terms t ON t.id=l.term_id WHERE l.unit_code=? ORDER BY t.start_date DESC', r.unit_code);
+    const last = unitsForClass(past, r.class_code)[0];
+    ok = !!last && lower(last.trainer_code) === lower(me.code);
+  }
   if (!ok) fail('Only the trainer of this unit or the HOD can do that');
   return r;
 }

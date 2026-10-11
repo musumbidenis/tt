@@ -37,7 +37,7 @@ const POE = (() => {
     if (!st.profile) { card.hidden = true; $('#poeListCard').hidden = true; return; }
     card.hidden = false;
     const sel = $('#poeUnit');
-    sel.innerHTML = ps.units.length ? ps.units.map((u) => `<option value="${esc(u.code)}">${esc(u.code)} — ${esc(u.name)}</option>`).join('')
+    sel.innerHTML = ps.units.length ? ps.units.map((u) => `<option value="${esc(u.code)}">${esc(u.code)} — ${esc(u.name)}${u.current === false ? ' (earlier term)' : ''}</option>`).join('')
       : '<option value="">Connect once to load your units</option>';
     if (!ps.unit || !ps.units.some((u) => u.code === ps.unit)) ps.unit = ps.units[0]?.code || '';
     sel.value = ps.unit;
