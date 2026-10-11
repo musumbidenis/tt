@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.8.0';
+const APP_VERSION = '4.9.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -41,7 +41,7 @@ const state = {
   auth: null,             // { token, staff: { code, name, roles }, mustChange }
   deviceId: '',
   classes: [], units: [], trainees: [], addreqs: [],
-  meta: { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {} },
+  meta: { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {}, terms: [], unlocks: [], archived: [] },
   current: null,          // session document open in the Mark tab
   dirty: false,           // unsaved changes in the open register
   editSeq: 0,             // bumps on every edit, so a save never swallows a newer edit
@@ -161,7 +161,7 @@ async function loadRoster() {
   state.trainees = (await byPrefix('trainee:')).sort((a, b) => a.name.localeCompare(b.name));
   state.addreqs = await byPrefix('addreq:');
   const { _id, _rev, ...meta } = await getLocal('meta', { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {} });
-  state.meta = { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {}, ...meta };
+  state.meta = { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {}, terms: [], unlocks: [], archived: [], ...meta };
   renderClassSelects();
   $('#emptyRoster').hidden = markableUnits().length > 0;
   $('#rosterInfo').textContent = state.classes.length
@@ -179,6 +179,43 @@ function markableUnits() {
 const markClasses = () => { const set = new Set(markableUnits().map((u) => u.classCode)); return state.classes.filter((c) => set.has(c.code)); };
 /** Units whose reports this person may open: their own, or all for the HOD and MIS Officer. */
 function reportUnits() { return hasRole('HOD') || hasRole('MIS') ? state.units : markableUnits(); }
+/** The units the Reports choices offer: this term's, or (looking back) the chosen earlier term's. */
+const reportUnitList = () => (state.reportTerm ? state.pastUnits || [] : reportUnits());
+/** Earlier terms, newest first; the running one is the first choice. */
+function fillTermSelect() {
+  const box = $('#rTermBox'); if (!box) return;
+  const now = state.meta.term?.id || '';
+  const past = (state.meta.terms || []).filter((t) => t.id !== now);
+  box.hidden = !past.length;
+  const sel = $('#rTerm'), keep = state.reportTerm || '';
+  sel.innerHTML = `<option value="">${esc(state.meta.term ? `${state.meta.term.duration || state.meta.term.name} (current)` : 'Current term')}</option>`
+    + past.map((t) => `<option value="${esc(t.id)}">${esc(t.duration || t.name)}</option>`).join('');
+  sel.value = past.some((t) => t.id === keep) ? keep : '';
+}
+async function chooseReportTerm(termId) {
+  state.reportTerm = termId || '';
+  state.pastUnits = null;
+  if (state.reportTerm) {
+    if (!navigator.onLine) { toast('Earlier terms need internet', 'err'); state.reportTerm = ''; $('#rTerm').value = ''; }
+    else {
+      try {
+        const res = await api('termUnits', { termId: state.reportTerm });
+        if (!res.ok) throw new Error(res.error);
+        state.pastUnits = res.units || [];
+      } catch (e) { toast(e.message, 'err'); state.reportTerm = ''; $('#rTerm').value = ''; }
+    }
+  }
+  Tables.reset('report');
+  fillReportClasses();
+  renderReport();
+}
+function fillReportClasses() {
+  const list = reportUnitList();
+  const codes = [...new Set(list.map((u) => u.classCode))].sort();
+  const rep = codes.map((code) => { const c = state.classes.find((x) => x.code === code); return { value: code, label: c ? classLabel(c) : code }; });
+  fillSelect($('#rClass'), rep, undefined, rep.length ? null : 'No classes');
+  renderReportUnitSelect();
+}
 const isMyUnit = (u) => !!u && (!u.trainerCode || lower(u.trainerCode) === lower(me()?.code));
 
 function normaliseRoster(input) {
@@ -272,11 +309,9 @@ const classLabel = (c) => c.misClass && c.misClass !== c.code ? `${c.code} (${c.
 function renderClassSelects() {
   const mark = markClasses().map((c) => ({ value: c.code, label: classLabel(c) }));
   fillSelect($('#fClass'), mark, undefined, mark.length ? null : 'No classes');
-  const rset = new Set(reportUnits().map((u) => u.classCode));
-  const rep = state.classes.filter((c) => rset.has(c.code)).map((c) => ({ value: c.code, label: classLabel(c) }));
-  fillSelect($('#rClass'), rep, undefined, rep.length ? null : 'No classes');
+  fillTermSelect();
+  if (!state.reportTerm) fillReportClasses();
   renderUnitSelect();
-  renderReportUnitSelect();
   applyWantedReport();
 }
 /* A report asked for (e.g. from the HOD's approval list) before the class lists finished downloading
@@ -293,6 +328,7 @@ function applyWantedReport() {
   return true;
 }
 function openReport(classCode, unitCode) {
+  if (state.reportTerm) { state.reportTerm = ''; state.pastUnits = null; fillTermSelect(); fillReportClasses(); }
   state.wantReport = { classCode, unitCode };
   switchTab('reports');
   if (!applyWantedReport()) $('#reportSummary').innerHTML = '<p class="empty">Loading the class lists…</p>';
@@ -529,6 +565,12 @@ function rosterForCurrent() {
   return list.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** A register of a term that has ended stays as it is, unless the HOD or MIS Officer unlocked its class and unit. */
+const endedTerm = (s) => !!(s?.termId && state.meta.term?.id && s.termId !== state.meta.term.id);
+const isUnlocked = (s) => (state.meta.unlocks || []).some((u) => u.termId === s.termId && u.classCode === s.classCode && u.unitCode === s.unitCode);
+const termLocked = (s) => endedTerm(s) && !isUnlocked(s);
+function stampMark(s, adm, at = nowISO()) { s.marksAt = { ...(s.marksAt || {}), [adm]: at }; }
+
 function isLocked(s) {
   if (!s?._rev) return false;
   return (Date.now() - new Date(s.createdAt).getTime()) / 36e5 >= Number(state.settings.lockHours || 48);
@@ -541,7 +583,7 @@ function renderRegister() {
   $('#regTitle').textContent = s.classCode;
   const wk = s.week ? `Week ${s.week} ` : '';
   const day = fmtDate(s.date).replace(/, (?=[0-9]{4}$)/, ' ');
-  $('#regSub').textContent = `${s.unitName} — ${wk}(${day})${isLocked(s) ? ' · locked' : ''}`;
+  $('#regSub').textContent = `${s.unitName} — ${wk}(${day})${termLocked(s) ? ' · term ended, locked' : isLocked(s) ? ' · locked' : ''}`;
   $('#register').dataset.kind = kindOf(s);
   const q = $('#regSearch').value.trim().toLowerCase();
   const all = rosterForCurrent().map((t, i) => ({ ...t, sn: i + 1 })).filter((t) => !q || t.name.toLowerCase().includes(q) || t.admNo.toLowerCase().includes(q));
@@ -587,6 +629,7 @@ function renderCounts() {
 
 async function ensureEditable() {
   const s = state.current;
+  if (termLocked(s)) { toast('This register is from a term that has ended, so it is locked. The HOD or MIS Officer can unlock it.', 'err'); return false; }
   if (!isLocked(s) || state.editReasonGiven) return true;
   const reason = prompt(`This register is more than ${state.settings.lockHours} hours old and is locked.\nType a reason for changing it (it will be recorded):`);
   if (!reason || !reason.trim()) { toast('No changes made — a reason is required for locked registers'); return false; }
@@ -600,6 +643,7 @@ async function setMark(adm, status, { rerender = true } = {}) {
   if (!(await ensureEditable())) return false;
   s.marks[adm] = status;
   s.explicit = { ...(s.explicit || {}), [adm]: true };
+  stampMark(s, adm);
   if (!s.names[adm]) s.names[adm] = rosterForCurrent().find((t) => t.admNo === adm)?.name || adm;
   const row = $(`.trow[data-adm="${CSS.escape(adm)}"]`);
   if (row) $$('.seg button', row).forEach((b) => { const on = b.dataset.s === status; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
@@ -611,7 +655,7 @@ async function setMark(adm, status, { rerender = true } = {}) {
 async function setAll(status) {
   if (!state.current) return;
   if (!(await ensureEditable())) return;
-  for (const t of rosterForCurrent()) { state.current.marks[t.admNo] = status; state.current.names[t.admNo] = t.name; }
+  for (const t of rosterForCurrent()) { state.current.marks[t.admNo] = status; state.current.names[t.admNo] = t.name; stampMark(state.current, t.admNo); }
   state.current.explicit = {}; // "All present/absent" sets the default; QR check-ins can still change it
   renderRegister();
   markDirty();
@@ -696,6 +740,7 @@ async function saveAddStudent(e) {
   state.addreqs = await byPrefix('addreq:');
   s.marks[adm] = $('#asMark').value;
   s.names[adm] = name;
+  stampMark(s, adm);
   s.explicit = { ...(s.explicit || {}), [adm]: true };
   $('#addStudentDialog').close();
   renderRegister();
@@ -798,23 +843,24 @@ async function openSessionById(id) {
 
 /* ---------------- Reports: the term register ---------------- */
 function renderReportUnitSelect() {
-  const opts = unitsFor($('#rClass').value, reportUnits()).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
+  const opts = unitsFor($('#rClass').value, reportUnitList()).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
   fillSelect($('#rUnit'), opts, undefined, opts.length ? null : 'No units');
 }
 
 /** Lessons for one class and unit this term: this device's registers, plus the server's copy when online. */
 async function reportSource(classCode, unitCode) {
-  const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
-  const range = termRange();
+  const tid = state.reportTerm || '';
+  const unit = reportUnitList().find((u) => u.classCode === classCode && u.code === unitCode);
+  const range = tid ? null : termRange();
   const local = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
-    && (!range || (s.date >= range.from && s.date <= range.to)))
+    && (tid ? s.termId === tid : (!range || (s.date >= range.from && s.date <= range.to))))
     .map((s) => ({ id: s._id, date: s.date, period: sessionLabel(s), slots: Number(s.slots) === 2 ? 2 : 1, kind: kindOf(s), title: s.title || '',
       marks: s.marks || {}, names: s.names || {}, updatedAt: s.updatedAt, local: true }));
-  const key = `report:${classCode}|${unitCode}`;
+  const key = `report:${tid ? tid + '|' : ''}${classCode}|${unitCode}`;
   let server = null;
   if (navigator.onLine && state.auth) {
     try {
-      const res = await api('report', { classCode, unitCode });
+      const res = await api('report', tid ? { classCode, unitCode, termId: tid } : { classCode, unitCode });
       if (res.ok) { server = res; await updateLocal(key, (d) => { d.data = res; d.at = nowISO(); }); }
     } catch { /* use the cached copy */ }
   }
@@ -844,7 +890,8 @@ async function renderReport() {
   const src = await reportSource(classCode, unitCode);
   if (token !== renderReport.seq) return; // a newer choice was made meanwhile
   const unit = src.unit || {};
-  const mine = isMyUnit(unit) && (hasRole('TRAINER') || hasRole('HOD'));
+  const mine = !state.reportTerm && isMyUnit(unit) && (hasRole('TRAINER') || hasRole('HOD'));
+  renderReportLock(src.server, classCode, unitCode);
   const trainer = mine ? { latePct: state.settings.latePct, excusedPct: state.settings.excusedPct }
     : (state.meta.staff?.[unit.trainerCode] || { latePct: 50, excusedPct: 100 });
   const aliases = {};
@@ -885,6 +932,28 @@ async function renderReport() {
   drawReportBody();
   renderSignoff();
   renderCats(src.assessments, rosterFor(classCode));
+}
+
+/** An earlier term's register is read only; the HOD and MIS Officer can unlock one class and unit for a week. */
+function renderReportLock(server, classCode, unitCode) {
+  const box = $('#reportLock'); if (!box) return;
+  if (!server?.ended) { box.hidden = true; box.innerHTML = ''; return; }
+  const can = hasRole('HOD') || hasRole('MIS');
+  box.hidden = false;
+  box.dataset.term = server.term?.id || ''; box.dataset.cls = classCode; box.dataset.unit = unitCode;
+  box.innerHTML = server.unlocked
+    ? `<span><b>Unlocked.</b> ${esc(server.term?.duration || server.term?.name || 'This term')} has ended, but this register can be changed for now.</span>${can ? '<button type="button" class="btn small" data-lock="relock">Lock again</button>' : ''}`
+    : `<span><b>Locked.</b> ${esc(server.term?.duration || server.term?.name || 'This term')} has ended, so this register can be looked at but not changed.</span>${can ? '<button type="button" class="btn small" data-lock="unlock">Unlock for 7 days</button>' : ''}`;
+}
+async function toggleReportLock(action) {
+  const box = $('#reportLock');
+  try {
+    const res = await api(action, { termId: box.dataset.term, classCode: box.dataset.cls, unitCode: box.dataset.unit, days: 7 });
+    if (!res.ok) throw new Error(res.error);
+    toast(action === 'unlock' ? 'Unlocked for 7 days. The trainer can correct this term\'s registers and marks.' : 'Locked again', 'ok');
+    await pullRoster({ silent: true });
+    renderReport();
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 /** CATs and extra CAT attendance for this class and unit (not part of the term register's hours). */
@@ -1090,6 +1159,84 @@ function markSent(fn) {
     fn(d.map);
   }, { map: {} });
 }
+/* ---------- one trainer, several devices ----------
+ * Each device sends its registers up and brings down the ones the trainer made elsewhere. Every mark carries
+ * the time it was set; when two copies of a register meet, each student keeps the latest mark, so neither
+ * device undoes the other. */
+const CODE_OF = Object.fromEntries(Object.entries(STATUSES).map(([k, v]) => [v, k]));
+function fromServer(x, local) {
+  const marks = {}, names = {}, explicit = {}, marksAt = {};
+  for (const m of x.marks || []) {
+    const k = CODE_OF[m.status]; if (!k) continue;
+    marks[m.admNo] = k; names[m.admNo] = m.name || m.admNo;
+    if (m.explicit) explicit[m.admNo] = true;
+    if (m.at) marksAt[m.admNo] = m.at;
+  }
+  const parts = String(x.sessionId).split(':');
+  return { ...(local || {}), _id: x.sessionId, type: 'session', date: x.date, classCode: x.classCode, className: x.className || x.classCode,
+    unitCode: x.unitCode, unitName: x.unitName || x.unitCode, period: parts[4] || local?.period || '', slots: Number(x.slots) === 2 ? 2 : 1,
+    kind: x.kind || 'lesson', title: x.title || '', periodLabel: x.period || local?.periodLabel || '', termId: x.termId || '', week: x.week || '',
+    trainerId: x.trainerId || '', trainerName: x.trainerName || '', deviceId: x.deviceId || local?.deviceId || '',
+    marks, names, explicit, marksAt, notes: x.notes || '', createdAt: x.createdAt || '', updatedAt: x.updatedAt || '',
+    editLog: x.editLog || [], viaQr: x.viaQr || {}, ...(x.qr ? { qr: { ...(local?.qr || {}), secret: x.qr.secret, intervals: x.qr.intervals || [] } } : {}) };
+}
+function mergeDocs(a, b) {
+  const newer = String(b.updatedAt || '') >= String(a.updatedAt || '') ? b : a, older = newer === b ? a : b;
+  const at = (s, k) => s.marksAt?.[k] || s.createdAt || '';
+  const out = { ...older, ...newer, marks: {}, names: { ...(older.names || {}), ...(newer.names || {}) }, explicit: {}, marksAt: {} };
+  for (const k of new Set([...Object.keys(older.marks || {}), ...Object.keys(newer.marks || {})])) {
+    const inN = k in (newer.marks || {}), inO = k in (older.marks || {});
+    const src = !inO ? newer : !inN ? older : at(older, k) > at(newer, k) ? older : newer;
+    out.marks[k] = src.marks[k];
+    if (src.explicit?.[k]) out.explicit[k] = true;
+    if (src.marksAt?.[k]) out.marksAt[k] = src.marksAt[k];
+  }
+  const logs = new Map();
+  for (const l of [...(a.editLog || []), ...(b.editLog || [])]) logs.set(`${l.at}|${l.device || ''}|${l.reason || ''}`, l);
+  out.editLog = [...logs.values()].sort((x, y) => String(x.at).localeCompare(String(y.at)));
+  out.viaQr = { ...(older.viaQr || {}), ...(newer.viaQr || {}) };
+  out.createdAt = [a.createdAt, b.createdAt].filter(Boolean).sort()[0] || '';
+  return out;
+}
+const sameRegister = (a, b) => JSON.stringify([Object.entries(a.marks || {}).sort(), a.notes || ''])
+  === JSON.stringify([Object.entries(b.marks || {}).sort(), b.notes || '']);
+/** Brings one register from the server into this device, combined with whatever this device has of it. */
+async function takeServerCopy(x) {
+  if (!x?.sessionId) return false;
+  if (state.current?._id === x.sessionId && state.dirty) await saveCurrent();
+  let local = null;
+  try { local = await db.get(x.sessionId); } catch (e) { if (e.status !== 404) throw e; }
+  const srv = fromServer(x, local);
+  if (!local) { const { _rev, ...fresh } = srv; const r = await db.put(fresh); await markSent((m) => { m[fresh._id] = r.rev; }); return true; }
+  if (sameRegister(local, srv)) return false;
+  const merged = { ...mergeDocs(local, srv), _id: local._id, _rev: local._rev };
+  if (sameRegister(merged, local)) return false;          // this device already has everything; it sends it next
+  const r = await db.put(merged);
+  if (sameRegister(merged, srv)) await markSent((m) => { m[merged._id] = r.rev; });
+  return true;
+}
+/** The trainer's registers that reached the server from their other devices since the last time. */
+async function pullMine({ force = false } = {}) {
+  if (!state.auth || state.auth.mustChange || !navigator.onLine || !(hasRole('TRAINER') || hasRole('HOD'))) return 0;
+  if (!force && Date.now() - (pullMine.at || 0) < 2 * 60e3) return 0;
+  pullMine.at = Date.now();
+  const key = `${serverUrl()}|${me()?.code || ''}`;
+  let cursor = (await getLocal('pullLog')).cursors?.[key] || null, changed = 0;
+  for (let page = 0; page < 60; page++) {
+    const res = await api('mySessions', { cursor });
+    if (!res.ok) throw new Error(res.error || 'Could not fetch your registers');
+    for (const raw of res.sessions || []) {
+      let x; try { x = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { continue; }
+      if (await takeServerCopy(x)) changed++;
+    }
+    cursor = res.cursor;
+    await updateLocal('pullLog', (d) => { d.cursors = { ...(d.cursors || {}), [key]: cursor }; });
+    if (!res.more) break;
+  }
+  if (changed) renderTimetable();
+  return changed;
+}
+
 async function pendingSessions() {
   const [sessions, map] = await Promise.all([byPrefix('session:'), sheetsSyncMap()]);
   return sessions.filter((s) => map[s._id] !== s._rev);
@@ -1138,9 +1285,9 @@ function toSheetSession(s) {
     trainerId: s.trainerId || '', trainerName: s.trainerName || '', deviceId: s.deviceId || '',
     termId: s.termId || '', week: s.week || '',
     notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
-    edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E },
+    edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E }, editLog: s.editLog || [], viaQr: s.viaQr || {},
     marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
-      .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo] })),
+      .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo], at: s.marksAt?.[admNo] || '' })),
     ...(s.qr ? { qr: { secret: s.qr.secret, intervals: s.qr.intervals } } : {}),
   };
 }
@@ -1163,18 +1310,26 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
   if (state.dirty) await saveCurrent();
   state.syncing = true;
   $('#syncBtn')?.classList.add('syncing');
-  let sent = 0;
+  let sent = 0, locked = 0;
   const pushPending = async () => {
     for (const batch of chunk((await pendingSessions()).filter((s) => force || !heldBack(s)), 20)) {
       const res = await api('push', { deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
       if (!res.ok) throw new Error(res.error || 'The server rejected the upload');
       await markSent((map) => { for (const s of batch) map[s._id] = s._rev; });
+      // The server combined this register with marks from another device: keep the combined copy here too.
+      for (const r of res.results || []) {
+        if (r.status === 'merged' && r.session) await takeServerCopy(r.session);
+        if (r.status === 'locked') locked++;
+      }
       for (const s of batch) qrSentAt[s._id] = Date.now();
       sent += batch.length;
     }
   };
   try {
+    // Registers this trainer made on another device come down first, so nothing here is sent over them.
+    const fromOthers = await pullMine({ force: !silent }).catch((e) => { console.warn('pull', e); return 0; });
     await pushPending();
+    if (locked) toast(`${locked} register(s) from a term that has ended were not changed: they are locked. The HOD or MIS Officer can unlock them.`, 'err');
     await Marks.syncAll({ quiet: true }).catch(() => {});
     const reqs = await pushRequests();
     const qrUpdated = pull ? await pullCheckins() : 0; // uploads alone skip fetching; the live pulse handles that
@@ -1184,6 +1339,7 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
     if (!silent) {
       const parts = [];
       if (sent) parts.push(`Sent ${sent} register(s)`);
+      if (fromOthers) parts.push(`${fromOthers} register(s) brought in from your other devices`);
       if (reqs) parts.push(`${reqs} added student(s) sent to the MIS Officer`);
       if (qrUpdated) parts.push(`QR check-ins added to ${qrUpdated} register(s)`);
       toast(parts.join(' · ') || 'Everything is already sent', 'ok');
@@ -1223,7 +1379,8 @@ async function pullRoster({ silent = false } = {}) {
     if (!(res.trainees || []).length && state.trainees.length) throw new Error('the server has no students yet — kept the class lists already on this device');
     const r = await replaceRoster(res);
     await updateLocal('meta', (d) => {
-      Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {} });
+      Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {},
+        terms: res.terms || [], unlocks: res.unlocks || [], archived: res.archived || [] });
     });
     // Students this device added: done once the MIS Officer has decided (on the list, rejected or merged).
     const stillPending = new Set((res.pending || []).map((p) => `${p.classCode}|${lower(p.admNo)}`));
@@ -1335,7 +1492,7 @@ async function openLessonQR() {
   if (!s.qr) {
     s.qr = { secret: randomHex(16), intervals: [] };
     // In a QR lesson, trainees who do not scan count as absent unless the trainer marks them.
-    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; }
+    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; stampMark(s, t.admNo); }
     renderRegister();
     toast('Trainees who don\'t scan are marked absent unless you mark them yourself');
   }
@@ -1458,7 +1615,7 @@ async function pullCheckins() {
     for (const c of list) {
       if (doc.viaQr[c.admNo]) continue;
       doc.viaQr[c.admNo] = c.scannedAt || nowISO();
-      if (!doc.explicit?.[c.admNo]) doc.marks[c.admNo] = 'P';
+      if (!doc.explicit?.[c.admNo]) { doc.marks[c.admNo] = 'P'; stampMark(doc, c.admNo, c.scannedAt); }
       if (!doc.names[c.admNo]) doc.names[c.admNo] = c.name || c.admNo;
       added++;
     }
@@ -1718,6 +1875,8 @@ function wire() {
 
   // Reports
   Tables.on('report', () => drawReportBody());
+  $('#rTerm').addEventListener('change', (e) => chooseReportTerm(e.target.value));
+  $('#reportLock').addEventListener('click', (e) => { const b = e.target.closest('[data-lock]'); if (b) toggleReportLock(b.dataset.lock); });
   $('#rClass').addEventListener('change', () => { Tables.reset('report'); renderReportUnitSelect(); renderReport(); });
   $('#rUnit').addEventListener('change', () => { Tables.reset('report'); renderReport(); });
   $('#rThreshold').addEventListener('change', async () => { await saveSettings({ threshold: Number($('#rThreshold').value) || 75 }); renderReport(); });
