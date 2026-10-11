@@ -72,7 +72,6 @@
 
 <nav class="tabs" role="tablist">
   <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Mark Attendance</button>
-  <button data-tab="sessions" role="tab"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg>Attendance Register(s)</button>
   <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Report(s)</button>
   <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE<span id="poeCount" class="dot" hidden></span></button>
   <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
@@ -146,19 +145,6 @@
     </div>
   </section>
 
-  <!-- REGISTERS -->
-  <section id="tab-sessions" class="tab">
-    <div class="card filters">
-      <select id="sClass" aria-label="Filter by class"><option value="">All classes</option></select>
-      <select id="sSync" aria-label="Filter by sync status">
-        <option value="">All registers</option>
-        <option value="pending">Waiting to sync</option>
-        <option value="synced">Sent</option>
-      </select>
-    </div>
-    <div id="sessionList" class="session-list"></div>
-  </section>
-
   <!-- REPORTS -->
   <section id="tab-reports" class="tab">
     <div id="reportMode" class="view-tabs report-mode" role="group" aria-label="Show">
@@ -180,7 +166,7 @@
         <button type="button" class="chipbtn" data-filter="pending" id="chipPending">Pending</button>
       </div>
       <div class="chips">
-        <select id="rSort" aria-label="Sort"><option value="name">Sort by name</option><option value="pct">Lowest % first</option><option value="list">Admission number</option></select>
+        <select id="rSort" aria-label="Sort"><option value="list">Sort by admission number</option><option value="name">Sort by name</option><option value="pct">Lowest % first</option></select>
         <button type="button" class="btn small" id="viewToggle"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Sheet view</span></button>
       </div>
     </div>
@@ -194,8 +180,7 @@
     <div class="row-actions report-actions">
       <button class="btn primary" id="exportXlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel register</button>
       <button class="btn" id="printReg"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg>Print or save PDF</button>
-      <button class="btn ghost" id="exportRaw">Export all records CSV</button>
-      <button class="btn ghost" id="printQR">Print QR ID cards</button>
+      <button class="btn ghost" id="printQR" disabled title="Not available right now">Print QR ID cards</button>
     </div>
   </section>
 
@@ -210,6 +195,7 @@
     <div class="card profile-card">
       <div>
         <h2 id="meName"></h2>
+        <p id="meRoles" class="role-line muted small"></p>
       </div>
       <div class="row-actions">
         <button type="button" class="btn" id="changePin">Change PIN</button>
@@ -248,7 +234,7 @@
     <div class="card">
       <h2>Backup and transfer</h2>
       <p class="muted">For long periods with no network: export a backup file.</p>
-      <div class="row-actions">
+      <div class="row-actions backup-actions">
         <button class="btn file-btn" id="exportBackup">Export backup</button>
         <label class="btn file-btn">Import backup<input type="file" id="importBackup" accept=".json,application/json"></label>
         <button class="btn file-btn danger" id="wipeData">Erase this device</button>
@@ -316,6 +302,7 @@
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/jszip.min.js"></script>
 <script src="xlsx.js"></script>
+<script src="tables.js"></script>
 <script src="imports.js"></script>
 <script src="report.js"></script>
 <script src="app.js"></script>

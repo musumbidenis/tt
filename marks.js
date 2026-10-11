@@ -106,14 +106,13 @@ const Marks = (() => {
     const roster = rosterFor(cls).sort((a, b) => String(a.admNo).localeCompare(String(b.admNo)));
     // Students who have marks but left the list stay visible so nothing is lost.
     for (const r of Object.values(d.rows)) if (!roster.some((t) => lower(t.admNo) === lower(r.admNo))) roster.push({ admNo: r.admNo, name: r.admNo, gone: true });
-    const term = state.meta.term || {};
-    const done = roster.filter((t) => COLS.some((c) => d.rows[lower(t.admNo)]?.[c] != null)).length;
     $('#marksCard').innerHTML = `
       <div class="marks-head">
-        <div><h2>${esc(u.name)}</h2><p class="muted small">${esc(cls)} · ${esc(u.code)}${term.series ? ' · ' + esc(term.series) : ''} · ${done} of ${roster.length} with marks</p></div>
+        <div><h2>${esc(u.name)}</h2></div>
         <span id="marksStatus" class="save-state"></span>
       </div>
-      ${edit ? '<p class="muted small">Marks are percentages (0–100). Each one is saved on this phone as you type and sent when there is internet. Enter moves down the column.</p>'
+      ${!roster.length ? '<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the marks sheet shows up here.</span></div>' : `
+      ${edit ? '<p class="muted small">Marks are percentages (0–100). Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.</p>'
         : '<p class="muted small">Only the trainer of this unit can change these marks.</p>'}
       <div class="marks-wrap"><table class="marks-table">
         <thead><tr><th rowspan="2" class="mt-name">Student</th><th colspan="4" class="mt-grp">Oral / Theory (100%)</th><th colspan="4" class="mt-grp prac">Practical (100%)</th></tr>
@@ -123,7 +122,7 @@ const Marks = (() => {
       <div class="row-actions marks-actions">
         <button type="button" class="btn primary" id="marksExport"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel marksheet</button>
         ${edit ? '<button type="button" class="btn" id="marksSend">Send now</button>' : ''}
-      </div>`;
+      </div>`}`;
     status();
   }
   function rowHtml(t, i, r, edit, dirty) {
@@ -152,8 +151,8 @@ const Marks = (() => {
     const el = $('#marksStatus'); if (!el || !ms.doc) return;
     const n = pendingFor(ms.doc);
     el.className = 'save-state' + (n ? ' pending' : ' ok');
-    el.textContent = n ? (navigator.onLine ? `Sending ${n}…` : `${n} saved on this phone`) : ms.doc.sentAt || ms.doc.pulledAt ? 'All sent' : 'Saved';
-    if (ms.pullError && !n) { el.textContent = 'Saved on this phone'; el.title = ms.pullError; }
+    el.textContent = n ? (navigator.onLine ? `Sending ${n}…` : `${n} saved on this device`) : ms.doc.sentAt || ms.doc.pulledAt ? 'All sent' : 'Saved';
+    if (ms.pullError && !n) { el.textContent = 'Saved on this device'; el.title = ms.pullError; }
   }
 
   async function onInput(inp) {
@@ -168,7 +167,7 @@ const Marks = (() => {
     tr.querySelector('[data-avg=cat]').textContent = show(avg(row, ['cat1', 'cat2', 'cat3']));
     tr.querySelector('[data-avg=prac]').textContent = show(avg(row, ['prac1', 'prac2', 'prac3']));
     // Saved straight away (one save after another), so closing the app a moment later loses nothing.
-    ms.saving = Promise.resolve(ms.saving).then(() => saveLocal(cls, unit)).catch((e) => toast('Could not save on this phone: ' + e.message, 'err'));
+    ms.saving = Promise.resolve(ms.saving).then(() => saveLocal(cls, unit)).catch((e) => toast('Could not save on this device: ' + e.message, 'err'));
     status();
   }
   async function saveLocal(cls, unit) {

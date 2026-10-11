@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.6.1';
+const APP_VERSION = '4.7.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -226,13 +226,9 @@ async function replaceRoster(incoming) {
   return { classes: norm.classes.length, units: norm.units.length, trainees: norm.trainees.length };
 }
 
-/* ---------------- CSV ---------------- */
-function toCSV(rows) {
-  const cell = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  return rows.map((r) => r.map(cell).join(',')).join('\r\n');
-}
-function download(filename, content, type = 'text/csv') {
-  const blob = content instanceof Blob ? content : new Blob([type === 'text/csv' ? '﻿' + content : content], { type });
+/* ---------------- downloads ---------------- */
+function download(filename, content, type = 'application/octet-stream') {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
@@ -276,7 +272,6 @@ const classLabel = (c) => c.misClass && c.misClass !== c.code ? `${c.code} (${c.
 function renderClassSelects() {
   const mark = markClasses().map((c) => ({ value: c.code, label: classLabel(c) }));
   fillSelect($('#fClass'), mark, undefined, mark.length ? null : 'No classes');
-  fillSelect($('#sClass'), mark, undefined, 'All classes');
   const rset = new Set(reportUnits().map((u) => u.classCode));
   const rep = state.classes.filter((c) => rset.has(c.code)).map((c) => ({ value: c.code, label: classLabel(c) }));
   fillSelect($('#rClass'), rep, undefined, rep.length ? null : 'No classes');
@@ -313,10 +308,10 @@ const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDa
 /** Weeks to choose from: the term's 12 teaching weeks, or (no term yet) the last few weeks. */
 function weekOptions() {
   const weeks = state.meta.weeks || [], cats = state.meta.term?.catWeeks || [];
-  const range = (m) => `${fmtShort(m)} – ${fmtShort(addDays(m, 4))}`;
-  if (weeks.length) return weeks.map((m, i) => ({ value: m, label: `Week ${i + 1} · ${range(m)}${cats.includes(i + 1) ? ' · CAT week' : ''}` }));
+  const range = (m) => `${fmtShort(m)} - ${fmtShort(addDays(m, 4))}`;
+  if (weeks.length) return weeks.map((m, i) => ({ value: m, label: `Week ${i + 1} (${range(m)})${cats.includes(i + 1) ? ' · CAT week' : ''}` }));
   const now = TermReport.mondayOf(todayISO());
-  return [0, 1, 2, 3, 4, 5].map((k) => addDays(now, -7 * k)).map((m) => ({ value: m, label: `Week of ${range(m)}` }));
+  return [0, 1, 2, 3, 4, 5].map((k) => addDays(now, -7 * k)).map((m) => ({ value: m, label: `Week of (${range(m)})` }));
 }
 /** The current teaching week, or the nearest one before it (break weeks), or week 1 before the term starts. */
 function currentWeek() {
@@ -366,26 +361,31 @@ async function renderTimetable() {
   const p = state.pick;
   const sel = p && p.monday === monday && (!p.classCode || (p.classCode === classCode && p.unitCode === unitCode)) ? p : null;
   const today = todayISO();
-  let html = '<div class="tt-corner"></div>' + days.map((d) => `<div class="tt-day${d.date === today ? ' today' : ''}"><b>${d.name}</b><span>${esc(fmtShort(d.date))}</span></div>`).join('');
-  SLOTS.forEach(([a, b], i) => {
-    const n = i + 1;
-    if (n === LUNCH_AFTER + 1) html += `<div class="tt-lunch">Lunch ${SLOTS[LUNCH_AFTER - 1][1]}–${a}</div>`;
-    html += `<div class="tt-time"><b>${a}</b><span>${b}</span></div>`;
-    for (const d of days) {
-      const key = `${d.date}|${n}`, have = mineHere[key], other = elsewhere[key];
-      const picked = sel && sel.date === d.date && n >= sel.slot && n < sel.slot + sel.slots;
-      const future = d.date > today;
-      if (have) {
-        const k = kindOf(have.doc);
-        const c = countMarks(have.doc);
-        html += `<button type="button" class="tt-cell have ${k}${have.first ? '' : ' cont'}" data-open="${esc(have.doc._id)}" title="Open this register">
-          <b>${have.first ? esc(k === 'lesson' ? (Number(have.doc.slots) === 2 ? 'Double' : 'Marked') : (have.doc.title || KIND_LABEL[k])) : '↑'}</b>${have.first ? `<span>${c.P + c.L}/${c.P + c.L + c.A + c.E}</span>` : ''}</button>`;
-      } else {
-        html += `<button type="button" class="tt-cell${picked ? ' picked' : ''}${picked && n > sel.slot ? ' cont' : ''}${future ? ' future' : ''}" data-date="${d.date}" data-slot="${n}" ${future ? 'disabled' : ''}
-          aria-pressed="${picked}">${other ? `<span class="other">${esc(other.map((o) => o.classCode.split(' ').pop() + ' ' + o.unitCode).join(', '))}</span>` : ''}</button>`;
-      }
+  // Days run down the side and the six lessons across the top, with lunch as a thin column between them.
+  const cellFor = (d, n) => {
+    const key = `${d.date}|${n}`, have = mineHere[key], other = elsewhere[key];
+    const picked = sel && sel.date === d.date && n >= sel.slot && n < sel.slot + sel.slots;
+    const future = d.date > today;
+    if (have) {
+      const k = kindOf(have.doc);
+      const c = countMarks(have.doc);
+      return `<button type="button" class="tt-cell have ${k}${have.first ? '' : ' cont'}" data-open="${esc(have.doc._id)}" title="Open this register">
+        <b>${have.first ? esc(k === 'lesson' ? (Number(have.doc.slots) === 2 ? 'Double' : 'Marked') : (have.doc.title || KIND_LABEL[k])) : '←'}</b>${have.first ? `<span>${c.P + c.L}/${c.P + c.L + c.A + c.E}</span>` : ''}</button>`;
     }
+    return `<button type="button" class="tt-cell${picked ? ' picked' : ''}${picked && n > sel.slot ? ' cont' : ''}${future ? ' future' : ''}" data-date="${d.date}" data-slot="${n}" ${future ? 'disabled' : ''}
+      aria-pressed="${picked}">${other ? `<span class="other">${esc(other.map((o) => o.classCode.split(' ').pop() + ' ' + o.unitCode).join(', '))}</span>` : ''}</button>`;
+  };
+  let html = '<div class="tt-corner"></div>';
+  SLOTS.forEach(([a, b], i) => {
+    if (i === LUNCH_AFTER) html += `<div class="tt-lunch" title="Lunch ${SLOTS[LUNCH_AFTER - 1][1]}–${a}"><span>Lunch</span></div>`;
+    html += `<div class="tt-time"><b>${a}</b><span>${b}</span></div>`;
   });
+  for (const d of days) {
+    html += `<div class="tt-day${d.date === today ? ' today' : ''}"><b>${d.name}</b><span>${esc(fmtShort(d.date))}</span></div>`;
+    SLOTS.forEach((_, i) => {
+      html += cellFor(d, i + 1);
+    });
+  }
   box.innerHTML = html;
   // The button says exactly what will open.
   const btn = $('#openBtn');
@@ -762,28 +762,6 @@ function stopScan() {
   if ($('#scanDialog').open) $('#scanDialog').close();
 }
 
-/* ---------------- Registers tab ---------------- */
-async function renderSessions() {
-  const [sessions, map] = await Promise.all([byPrefix('session:'), sheetsSyncMap()]);
-  const cls = $('#sClass').value, sync = $('#sSync').value;
-  const list = sessions
-    .filter((s) => (!cls || s.classCode === cls))
-    .filter((s) => { const done = map[s._id] === s._rev; return !sync || (sync === 'synced' ? done : !done); })
-    .sort((a, b) => (b.date + b.period).localeCompare(a.date + a.period));
-  $('#sessionList').innerHTML = list.length ? list.map((s) => {
-    const c = countMarks(s);
-    const synced = map[s._id] === s._rev;
-    return `<button class="sitem" data-id="${esc(s._id)}">
-      <span class="s-title">${esc(s.classCode)} · ${esc(s.unitCode)} — ${esc(sessionLabel(s))}</span>
-      <span class="s-badges">
-        <span class="pill ${synced ? 'synced' : 'pending'}">${synced ? 'Sent' : 'Waiting to sync'}</span>
-        ${isLocked(s) ? '<span class="pill locked">Locked</span>' : ''}
-      </span>
-      <span class="s-meta">${s.week ? `Week ${s.week}, ` : ''}${esc(fmtDate(s.date))} · P ${c.P} · A ${c.A} · L ${c.L} · E ${c.E}</span>
-    </button>`;
-  }).join('') : '<p class="empty">No registers yet. Marked registers appear here.</p>';
-}
-
 async function openSessionById(id) {
   if (state.dirty) await saveCurrent();
   const doc = await db.get(id);
@@ -864,6 +842,12 @@ async function renderReport() {
     ? (src.server.cached ? `From the server as of ${fmtTime(src.server.cached)}` : 'Up to date with the server')
       + (src.localCount ? ` · includes this device's ${src.localCount} register(s)` : '')
     : src.localCount ? 'From the registers on this device (connect to include other devices)' : (mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.');
+  if (!r.list.length) {
+    $('#reportSummary').innerHTML = `<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the register shows up here.</span></div>`;
+    $('#reportControls').hidden = true; $('#reportLegend').hidden = true; $('#signoffCard').hidden = true; $('#catCard').hidden = true;
+    body.innerHTML = '';
+    return;
+  }
   $('#reportSummary').innerHTML = `
     <div class="stat"><b>${r.lessonsHeld}</b><span>Lessons recorded</span></div>
     <div class="stat"><b>${r.list.length}</b><span>Trainees</span></div>
@@ -908,7 +892,7 @@ function drawReportBody() {
   if (state.reportFilter === 'pending') list = list.filter((x) => x.pending);
   const sort = $('#rSort').value;
   list = [...list].sort(sort === 'pct' ? (a, b) => (a.pct ?? 101) - (b.pct ?? 101) || a.name.localeCompare(b.name)
-    : sort === 'list' ? (a, b) => a.admNo.localeCompare(b.admNo, undefined, { numeric: true }) : (a, b) => a.name.localeCompare(b.name));
+    : sort === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.admNo.localeCompare(b.admNo, undefined, { numeric: true }));
   const view = reportView();
   const tgl = $('#viewToggle');
   tgl.querySelector('use').setAttribute('href', view === 'sheet' ? '#i-rows' : '#i-grid');
@@ -916,15 +900,15 @@ function drawReportBody() {
   const warn = r.overflow.length
     ? `<p class="card warn-banner">${r.overflow.length} lesson(s) are not on the register: ${r.overflow.slice(0, 3).map((l) => esc(fmtShort(l.date) + ' ' + l.period)).join(', ')}${r.overflow.length > 3 ? '…' : ''}. They fall outside the term's 12 weeks or go past 3 lessons in one week (a double counts as two).</p>` : '';
   if (view === 'sheet') {
-    $('#reportBody').innerHTML = warn + `<div class="card sheet-wrap">${TermReport.sheetTable({ ...r, list }, esc)}</div>`;
+    $('#reportBody').innerHTML = warn + `<div class="card sheet-wrap">${TermReport.sheetTable({ ...r, list: Tables.slice('report', list) }, esc)}</div>${Tables.bar('report', list)}`;
     return;
   }
-  $('#reportBody').innerHTML = warn + (list.length ? `<ul class="card rlist">${list.map((x) => `
+  $('#reportBody').innerHTML = warn + (list.length ? `<ul class="card rlist">${Tables.slice('report', list).map((x) => `
     <li class="rrow${x.below ? ' below' : ''}">
       <div class="rinfo"><b>${esc(x.name)}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</b>
         <span class="tadm">${esc(x.admNo)}</span>${TermReport.strip(x.cells)}</div>
       <div class="rpct"><b>${x.pct === null ? '–' : x.pct + '%'}</b><span>${x.actual}/${x.possible} h</span></div>
-    </li>`).join('')}</ul>` : '<p class="empty">Nobody matches this filter.</p>');
+    </li>`).join('')}</ul>${Tables.bar('report', list)}` : '<p class="empty">Nobody matches this filter.</p>');
 }
 
 /* Sign-off: the trainer submits the term register; the HOD approves or returns it. */
@@ -1005,15 +989,6 @@ function printRegister() {
   const done = () => { document.body.classList.remove('printing', 'print-register'); window.removeEventListener('afterprint', done); };
   window.addEventListener('afterprint', done);
   setTimeout(() => window.print(), 80);
-}
-
-async function exportRaw() {
-  const sessions = (await byPrefix('session:')).sort((a, b) => (a.date + a.period).localeCompare(b.date + b.period));
-  const rows = [['Date', 'Week', 'Lesson', 'ClassCode', 'UnitCode', 'UnitName', 'AdmNo', 'Name', 'Status', 'Trainer', 'SessionID', 'UpdatedAt']];
-  for (const s of sessions) for (const [adm, st] of Object.entries(s.marks || {})) {
-    rows.push([s.date, s.week || '', periodLabel(s.period), s.classCode, s.unitCode, s.unitName, adm, s.names?.[adm] || '', STATUSES[st] || '', s.trainerName, s._id, s.updatedAt]);
-  }
-  download(`attendance_all_records_${todayISO()}.csv`, toCSV(rows));
 }
 
 function printQRCards() {
@@ -1199,7 +1174,6 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
     state.syncing = false;
     $('#syncBtn')?.classList.remove('syncing');
     refreshPending();
-    if (state.activeTab === 'sessions') renderSessions();
   }
 }
 
@@ -1309,7 +1283,6 @@ const onDbChange = debounce(async () => {
       if (fresh._rev !== cur._rev) { state.current = fresh; renderRegister(); toast('This register was updated from another device'); }
     } catch { /* deleted */ }
   }
-  if (state.activeTab === 'sessions') renderSessions();
 }, 400);
 
 /* ---------------- QR check-in: students scan a code the trainer shows ----------------
@@ -1609,7 +1582,6 @@ function switchTab(name) {
   state.tabSeq = (state.tabSeq || 0) + 1;
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
-  if (name === 'sessions') renderSessions();
   if (name === 'reports') renderReport();
   if (name === 'manage') window.Admin?.render();
   if (name === 'poe') PoeStaff.render();
@@ -1620,7 +1592,6 @@ function switchTab(name) {
 function applyRoles() {
   const marks = hasRole('TRAINER') || hasRole('HOD');
   $('.tabs button[data-tab="mark"]').hidden = !marks;
-  $('.tabs button[data-tab="sessions"]').hidden = !marks;
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
   if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : 'reports');
@@ -1638,16 +1609,19 @@ function updateNet() {
 }
 
 const ROLE_NAMES = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
+const ROLE_ORDER = ['HOD', 'MIS', 'TRAINER'];
+/** "HOD, MIS Officer, Trainer": the biggest responsibility first, whatever order the server lists them in. */
+const roleText = (s) => ROLE_ORDER.filter((r) => s.roles.includes(r)).map((r) => ROLE_NAMES[r]).join(', ');
 function renderIdentity() {
   const s = me();
-  const roles = s ? s.roles.map((r) => ROLE_NAMES[r]).join(', ') || 'no role yet' : '';
-  $('#trainerLabel').textContent = !s ? 'Not signed in' : s.name === roles ? s.name : `${s.name} · ${roles}`;
+  $('#trainerLabel').textContent = !s ? 'Not signed in' : `${s.name} - ${roleText(s) || 'no role yet'}`;
 }
 function renderMe() {
   const s = me();
   $('#meName').textContent = s?.name || 'Not signed in';
+  $('#meRoles').textContent = s ? roleText(s) || 'No role yet' : '';
   const meta = $('#meMeta');
-  if (meta) meta.textContent = s ? `Staff code ${s.code} · ${s.roles.map((r) => ROLE_NAMES[r]).join(', ') || 'No role yet — ask the MIS Officer'}` : '';
+  if (meta) meta.textContent = s ? `Staff code ${s.code} · ${roleText(s) || 'No role yet — ask the MIS Officer'}` : '';
 }
 
 function fillSettingsForms() {
@@ -1660,6 +1634,11 @@ function fillSettingsForms() {
 }
 
 function wire() {
+  // On wide screens the tabs become a side bar that starts just under the header, so it needs the header's height.
+  const bar = $('.topbar');
+  const measureBar = () => document.documentElement.style.setProperty('--top-h', bar.offsetHeight + 'px');
+  measureBar(); window.addEventListener('resize', measureBar);
+  if (window.ResizeObserver) new ResizeObserver(measureBar).observe(bar);
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   PoeStaff.wire();
   Marks.wire();
@@ -1705,17 +1684,13 @@ function wire() {
   $('#stopScan').addEventListener('click', stopScan);
   $('#scanDialog').addEventListener('close', stopScan);
 
-  // Registers
-  $('#sClass').addEventListener('change', renderSessions);
-  $('#sSync').addEventListener('change', renderSessions);
-  $('#sessionList').addEventListener('click', (e) => { const it = e.target.closest('.sitem'); if (it) openSessionById(it.dataset.id); });
-
   // Reports
-  $('#rClass').addEventListener('change', () => { renderReportUnitSelect(); renderReport(); });
-  $('#rUnit').addEventListener('change', renderReport);
+  Tables.on('report', () => drawReportBody());
+  $('#rClass').addEventListener('change', () => { Tables.reset('report'); renderReportUnitSelect(); renderReport(); });
+  $('#rUnit').addEventListener('change', () => { Tables.reset('report'); renderReport(); });
   $('#rThreshold').addEventListener('change', async () => { await saveSettings({ threshold: Number($('#rThreshold').value) || 75 }); renderReport(); });
-  $('#rSort').addEventListener('change', drawReportBody);
-  $$('.chipbtn').forEach((b) => b.addEventListener('click', () => { state.reportFilter = b.dataset.filter; $$('.chipbtn').forEach((x) => x.classList.toggle('on', x === b)); drawReportBody(); }));
+  $('#rSort').addEventListener('change', () => { Tables.reset('report'); drawReportBody(); });
+  $$('.chipbtn').forEach((b) => b.addEventListener('click', () => { Tables.reset('report'); state.reportFilter = b.dataset.filter; $$('.chipbtn').forEach((x) => x.classList.toggle('on', x === b)); drawReportBody(); }));
   $('#viewToggle').addEventListener('click', async () => { await saveSettings({ reportView: reportView() === 'sheet' ? 'list' : 'sheet' }); drawReportBody(); });
   $('#signoffCard').addEventListener('click', (e) => {
     if (e.target.closest('#soSubmit')) submitSignoff();
@@ -1724,7 +1699,6 @@ function wire() {
   });
   $('#exportXlsx').addEventListener('click', exportXlsx);
   $('#printReg').addEventListener('click', printRegister);
-  $('#exportRaw').addEventListener('click', exportRaw);
   $('#printQR').addEventListener('click', printQRCards);
 
   // Me
@@ -1832,4 +1806,7 @@ async function init() {
   try { sessionStorage.removeItem('rvnp_repair'); } catch { /* private mode */ }
 }
 
-init().catch(repairAndReload);
+// Start once every script on the page has run: admin.js, poe-staff.js and marks.js load after this file, and
+// starting sooner could reach wire() before they exist (a fresh device, with nothing cached, hit that).
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => init().catch(repairAndReload));
+else init().catch(repairAndReload);

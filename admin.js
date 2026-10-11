@@ -9,6 +9,8 @@ const Admin = (() => {
   const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
   let cache = { signoffs: [], requests: [], overview: null, staff: [] };
   let loadingPreview = null;
+  const secOpen = new Set();   // which folded-away sections the person has opened, so a refresh keeps them as they were
+  const fold = (key, label, inner) => `<details class="fold" data-sec="${key}"${secOpen.has(key) ? ' open' : ''}><summary>${label}</summary>${inner}</details>`;
   const classImports = [];
 
   const section = (id, title, inner, extra = '') => `<section class="card msec" id="${id}">
@@ -67,15 +69,21 @@ const Admin = (() => {
   async function loadOverview() {
     try {
       const o = cache.overview = need(await api('overview'));
-      if (!o.term) { fill('m-overview', '<p class="muted">The MIS Officer has not set up the term yet.</p>'); return; }
-      const rows = o.rows.sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
-      const behind = rows.filter((r) => r.lessons < r.due - 1).length;
-      fill('m-overview', `<p class="muted">${esc(o.term.name)} · week ${o.week} of 12 · ${rows.length} class units${behind ? ` · <b class="warn-text">${behind} behind on registers</b>` : ''}</p>
-        <div class="table-wrap"><table class="report-table overview-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Marked</th><th class="num">Due</th><th>Last</th><th class="num">Att.</th><th>HOD</th></tr></thead>
-        <tbody>${rows.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
-          <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
-          <td>${r.last ? fmtShort(r.last) : '–'}</td><td class="num">${r.pct === null ? '–' : r.pct + '%'}</td><td>${r.signoff ? esc(r.signoff) : ''}</td></tr>`).join('')}</tbody></table></div>`);
+      Tables.reset('overview');
+      drawOverview();
     } catch (e) { fill('m-overview', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  function drawOverview() {
+    const o = cache.overview; if (!o) return;
+    if (!o.term) { fill('m-overview', '<p class="muted">The MIS Officer has not set up the term yet.</p>'); return; }
+    const rows = o.rows.sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
+    const behind = rows.filter((r) => r.lessons < r.due - 1).length;
+    const page = Tables.slice('overview', rows);
+    fill('m-overview', `<p class="muted">${esc(o.term.name)} · week ${o.week} of 12 · ${rows.length} class units${behind ? ` · <b class="warn-text">${behind} behind on registers</b>` : ''}</p>`
+      + fold('overview', `Show the class units (${rows.length})`, `<div class="table-wrap"><table class="report-table overview-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Marked</th><th class="num">Due</th><th>Last</th><th class="num">Att.</th><th>HOD</th></tr></thead>
+        <tbody>${page.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
+          <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
+          <td>${r.last ? fmtShort(r.last) : '–'}</td><td class="num">${r.pct === null ? '–' : r.pct + '%'}</td><td>${r.signoff ? esc(r.signoff) : ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('overview', rows)}`));
   }
 
   function openReport(key) {
@@ -126,7 +134,7 @@ const Admin = (() => {
   function termHtml() {
     const t = state.meta.term;
     const weeks = state.meta.weeks || [];
-    return `${t ? `<p><b>${esc(t.name)}</b> <span class="muted">· ${esc(t.duration || '')} · code ${esc(t.id)}</span></p>
+    return `${t ? `<p class="term-now">Current term: <b>${esc(t.duration || t.name)}</b></p>
       <ol class="weeks">${weeks.map((w, i) => `<li${(t.catWeeks || []).includes(i + 1) ? ' class="catwk"' : ''}><b>Week ${i + 1}</b> ${fmtShort(w)}${(t.catWeeks || []).includes(i + 1) ? ' · CAT' : ''}</li>`).join('')}</ol>` : '<p class="muted">No term is set up. Trainers can mark, but registers are not tied to weeks until you set the term.</p>'}
       <details ${t ? '' : 'open'}><summary>${t ? 'Change the term or start a new one' : 'Set up the term'}</summary>
       <form id="termForm" class="termform">
@@ -222,9 +230,13 @@ const Admin = (() => {
       <div class="regcodes"><p class="small"><b>CDACC registration codes</b> for the marksheets: upload any Excel or CSV with admission numbers and registration codes (a filled marksheet works). Trainers can enter marks before this.</p>
         <label class="btn small file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Upload registration codes<input type="file" id="regFiles" accept=".xlsx,.xlsm,.csv" multiple></label>
         <span id="regResult" class="small"></span></div>
-      ${groups.size ? `<ul class="mlist">${[...groups.entries()].sort().map(([g, codes]) => `<li><button type="button" class="mrow" data-group="${esc(g)}">
-        <span><b>${esc(g)}</b><small>${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</small></span>
-        <span class="pill synced">${codes.reduce((a, c) => a + count(c), 0)} students</span></button></li>`).join('')}</ul>` : ''}
+      ${groups.size ? (() => {
+        const all = [...groups.entries()].sort().map(([g, codes]) => ({ g, codes, n: codes.reduce((a, c) => a + count(c), 0) }));
+        const page = Tables.slice('classes', all);
+        return fold('classes', `Show the classes (${all.length})`, `<div class="table-wrap"><table class="report-table class-table"><thead><tr><th>Class</th><th>Streams</th><th class="num">Students</th></tr></thead>
+          <tbody>${page.map(({ g, codes, n }) => `<tr data-group="${esc(g)}" tabindex="0" role="button"><td><b>${esc(g)}</b></td>
+            <td class="muted small">${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</td><td class="num">${n}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('classes', all)}`);
+      })() : ''}
       ${(() => {
         const empty = state.classes.filter((c) => state.units.some((u) => u.classCode === c.code) && !/[,/]/.test(c.code) && !count(c.code)).map((c) => c.code).sort();
         return empty.length ? `<details class="mdone"><summary>${empty.length} classes in the loading have no students yet</summary><p class="small">${empty.map(esc).join(' · ')}</p>
@@ -364,12 +376,12 @@ const Admin = (() => {
       cache.staff = need(await api('staff')).staff.sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
       const noPin = cache.staff.filter((s) => s.active && !s.hasPin).length;
       fill('m-staff', `${noPin ? `<p class="warn-text">${noPin} staff member(s) can't sign in yet. Tap Issue PIN and give them the PIN privately.</p>` : ''}
-        <input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
+        ${fold('staff', `Show the staff (${cache.staff.length})`, `<input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
         <ul class="mlist staff">${cache.staff.map((s) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
           <span><b>${esc(s.name)}</b><small>${esc(s.code)}${s.responsibility ? ' · ' + esc(s.responsibility) : ''} · ${s.hasPin ? (s.mustChange ? 'PIN issued, not used yet' : 'signed in before') : 'no PIN yet'}</small></span>
           <span class="roles">${['TRAINER', 'HOD', 'MIS'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : 'Issue PIN'}</button>
-          <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>
+          <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>`)}
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
           <button class="btn primary">Add and issue PIN</button></form></details>`);
@@ -391,7 +403,7 @@ const Admin = (() => {
   /* ---------- MIS: one-time move from the Google Sheet ---------- */
   const MOVE_ORDER = ['Staff', 'Terms', 'Classes', 'Units', 'Loading', 'Trainees', 'Requests', 'Devices', 'CheckIns', 'SessionData', 'SignOffs', 'AuditLog'];
   const MOVE_LABEL = { Staff: 'staff', Terms: 'terms', Classes: 'classes', Units: 'units', Loading: 'loading rows', Trainees: 'students', Requests: 'added students',
-    Devices: 'student phones', CheckIns: 'QR check-ins', SessionData: 'registers', SignOffs: 'sign-offs', AuditLog: 'history entries' };
+    Devices: 'student devices', CheckIns: 'QR check-ins', SessionData: 'registers', SignOffs: 'sign-offs', AuditLog: 'history entries' };
   function moveHtml() {
     return `<details class="mdone"><summary>Only needed once, if you used the Google Sheet before</summary>
       <ol class="steps small">
@@ -492,7 +504,7 @@ const Admin = (() => {
         : '<b class="err-text">It asks for a sign-in. Redeploy the web app with Who has access: Anyone, then run sync().</b>';
     } catch (e) {
       // A Google sign-in page on another site also ends here: the browser blocks it before the app can read it.
-      out.innerHTML = '<b class="err-text">The phone could not read an answer. Open the address above in a private (incognito) window: a Google sign-in page means the web app is not open to Anyone; "unable to open the file" means the address is out of date.</b>';
+      out.innerHTML = '<b class="err-text">The device could not read an answer. Open the address above in a private (incognito) window: a Google sign-in page means the web app is not open to Anyone; "unable to open the file" means the address is out of date.</b>';
     } finally { btn.disabled = false; }
   }
 
@@ -583,6 +595,16 @@ const Admin = (() => {
       const list = t.id === 'grpSearch' ? $$('#adminDialog .students li') : $$('#m-staff .staff li');
       list.forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
     }
+  });
+  document.addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (d.matches?.('details.fold[data-sec]')) { if (d.open) secOpen.add(d.dataset.sec); else secOpen.delete(d.dataset.sec); }
+  }, true);
+  Tables.on('overview', drawOverview);
+  Tables.on('classes', () => { const el = $('#m-classes'); if (el) replaceBody(el, classesHtml()); });
+  document.addEventListener('keydown', (e) => {
+    const row = e.target.closest?.('tr[data-group]');
+    if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click(); }
   });
   document.addEventListener('submit', (e) => {
     if (e.target.id === 'termForm') saveTerm(e);

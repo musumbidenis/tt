@@ -150,7 +150,6 @@ const PoeStaff = (() => {
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
         ${modeToggle()}
-        <p class="muted small">Each student's units and items as the student sees them: ✓ approved, • with the trainer, ↺ returned, – not sent. Tap a mark to open the file.</p>
         <div class="chips poe-chips" role="group" aria-label="Show">${chips}</div>
         <div class="poe-filters">
           <select id="poeSClass" aria-label="Class">${ps.classes.map((c) => `<option${c === ps.sCls ? ' selected' : ''}>${esc(c)}</option>`).join('') || '<option value="">No classes this term</option>'}</select>
@@ -158,26 +157,48 @@ const PoeStaff = (() => {
         </div>
       </div>
       <div id="poeStudents">
-      <p class="muted small poe-sum">${esc(ps.sCls)} · ${r.students.length} students · ${r.units.length} units · ${rows.reduce((n, x) => n + x.sent, 0)} items sent</p>
-      ${show.length ? show.map(studentHtml).join('') : `<div class="card notice"><h2>Nobody here</h2><p class="muted">${r.students.length ? 'Try another filter.' : 'This class has no students on its list.'}</p></div>`}
+      <p class="muted small poe-sum">${esc(ps.sCls)} (${r.students.length} students, ${r.units.length} units)</p>
+      ${show.length ? studentTable(show) : `<div class="card notice"><h2>Nobody here</h2><p class="muted">${r.students.length ? 'Try another filter.' : 'This class has no students on its list.'}</p></div>`}
       </div>`;
+    ps.shown = show;
   }
-  function studentHtml({ st, got, units, c }) {
+  const SYM = { approved: '✓', returned: '↺', submitted: '•' };
+  /** The table's rows as plain text, for Excel and the printed copy. */
+  function studentSheet(show) {
+    const head = ['Admission no.', 'Name', 'Items sent', 'Approved', 'With trainer', 'Returned', 'Details'];
+    const rows = show.map(({ st, got, units, c, sent }) => [st.admNo, st.name, sent, c.approved, c.submitted, c.returned,
+      units.map((u) => {
+        const mine = [...got.values()].filter((e) => e.unitCode === u.code).sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
+        return mine.length ? `${u.code}: ${mine.map((e) => `${e.item} ${STATUS[e.status]?.[1] || e.status}`).join(', ')}` : '';
+      }).filter(Boolean).join('; ')]);
+    return { head, rows };
+  }
+  function studentTable(show) {
+    const rows = Tables.slice('poeStu', show);
+    return `<div class="card table-card"><div class="table-wrap"><table class="report-table poe-table">
+      <thead><tr><th>Student</th><th>Admission no.</th><th class="num">Sent</th><th class="num">Approved</th><th class="num">With trainer</th><th class="num">Returned</th></tr></thead>
+      <tbody>${rows.map(studentHtml).join('')}</tbody></table></div>
+      ${Tables.bar('poeStu', show)}
+      <div class="row-actions table-actions">
+        <button type="button" class="btn" data-act="stu-xlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel</button>
+        <button type="button" class="btn" data-act="stu-pdf"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg>Save as PDF</button>
+      </div></div>`;
+  }
+  function studentHtml({ st, got, units, c, sent }) {
     const used = ITEMS.filter((it) => [...got.values()].some((e) => e.item === it));
     const cols = used.length ? ITEMS.filter((it) => ITEMS.indexOf(it) <= Math.max(...used.map((u) => ITEMS.indexOf(u))) || it === 'CAT1' || it === 'PRAC1') : ['CAT1', 'CAT2', 'PRAC1'];
     const mark = (e) => {
       if (!e) return '<td class="pm none">–</td>';
-      const sym = e.status === 'approved' ? '✓' : e.status === 'returned' ? '↺' : '•';
-      return `<td class="pm"><button type="button" class="pm-btn ${e.status}${e.receivedAt ? ' received' : ''}" data-open="${esc(e.id)}" data-adm="${esc(st.admNo)}"
-        aria-label="${esc(e.unitName)} ${e.item} ${STATUS[e.status]?.[1] || e.status}">${sym}${e.version > 1 ? `<small>v${e.version}</small>` : ''}</button></td>`;
+      return `<td class="pm"><button type="button" class="pm-btn ${e.status}${e.receivedAt ? ' received' : ''}" data-open="${esc(e.id)}" data-adm="${esc(st.admNo)}" title="${STATUS[e.status]?.[1] || e.status}"
+        aria-label="${esc(e.unitName)} ${e.item} ${STATUS[e.status]?.[1] || e.status}">${SYM[e.status] || '•'}${e.version > 1 ? `<small>v${e.version}</small>` : ''}</button></td>`;
     };
-    const tally = [c.approved && `<span class="pill synced">✓ ${c.approved}</span>`, c.submitted && `<span class="pill pending">• ${c.submitted}</span>`,
-      c.returned && `<span class="pill rejected">↺ ${c.returned}</span>`].filter(Boolean).join('') || '<span class="pill locked">Nothing sent</span>';
-    return `<details class="card poe-stu" data-adm="${esc(st.admNo)}"${ps.openStu === st.admNo ? ' open' : ''}>
-      <summary><span class="poe-who"><b>${esc(st.name)}</b><span class="muted small">${esc(st.admNo)}</span></span><span class="poe-tally">${tally}</span></summary>
-      <div class="table-wrap"><table class="poe-matrix"><thead><tr><th>Unit</th>${cols.map((it) => `<th>${it}</th>`).join('')}</tr></thead>
-      <tbody>${units.map((u) => `<tr><th scope="row">${esc(u.name)}</th>${cols.map((it) => mark(got.get(u.code + '|' + it))).join('')}</tr>`).join('')}</tbody></table></div>
-    </details>`;
+    const open = ps.openStu === st.admNo;
+    const n = (v, cls) => `<td class="num">${v ? `<span class="pill ${cls}">${v}</span>` : '–'}</td>`;
+    return `<tr class="stu-row${open ? ' open' : ''}" data-adm="${esc(st.admNo)}" tabindex="0" role="button" aria-expanded="${open}">
+        <td><b>${esc(st.name)}</b></td><td class="tadm">${esc(st.admNo)}</td>
+        <td class="num">${sent || '–'}</td>${n(c.approved, 'synced')}${n(c.submitted, 'pending')}${n(c.returned, 'rejected')}</tr>
+      ${open ? `<tr class="stu-detail"><td colspan="6"><div class="table-wrap"><table class="poe-matrix"><thead><tr><th>Unit</th>${cols.map((it) => `<th>${it}</th>`).join('')}</tr></thead>
+        <tbody>${units.map((u) => `<tr><th scope="row">${esc(u.name)}</th>${cols.map((it) => mark(got.get(u.code + '|' + it))).join('')}</tr>`).join('')}</tbody></table></div></td></tr>` : ''}`;
   }
 
   /* ---------- preview ---------- */
@@ -289,12 +310,14 @@ const PoeStaff = (() => {
       const t = e.target;
       const s = t.closest('[data-status]'); if (s && t.closest('#poe')) { ps.status = s.dataset.status; ps.picked.clear(); draw(); return; }
       const m = t.closest('[data-mode]'); if (m && t.closest('#poe')) { ps.mode = m.dataset.mode; ps.q = ''; ps.seq++; draw(); return; }
-      const sf = t.closest('[data-sfilter]'); if (sf) { ps.sFilter = sf.dataset.sfilter; draw(); return; }
+      const sf = t.closest('[data-sfilter]'); if (sf) { ps.sFilter = sf.dataset.sfilter; Tables.reset('poeStu'); draw(); return; }
+      const row = t.closest('.stu-row');
+      if (row && t.closest('#poe')) { ps.openStu = ps.openStu === row.dataset.adm ? '' : row.dataset.adm; draw(); return; }
       const o = t.closest('[data-open]');
       if (o && o.dataset.adm) {
         // By student: previous / next go through that student's files, unit by unit.
         ps.openStu = o.dataset.adm;
-        const ids = [...o.closest('.poe-stu').querySelectorAll('[data-open]')].map((b) => b.dataset.open);
+        const ids = [...o.closest('.stu-detail').querySelectorAll('[data-open]')].map((b) => b.dataset.open);
         openViewer(o.dataset.open, ids); return;
       }
       if (o) { openViewer(o.dataset.open, filtered().map((x) => x.id)); return; }
@@ -304,25 +327,31 @@ const PoeStaff = (() => {
       if (a?.dataset.act === 'close') $('#poeDialog').close();
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; render(); }
       if (a?.dataset.act === 'receive') receive(a);
+      if (a?.dataset.act === 'stu-xlsx' || a?.dataset.act === 'stu-pdf') {
+        const { head, rows } = studentSheet(ps.shown || []);
+        const title = `Evidence ${ps.sCls}`;
+        if (a.dataset.act === 'stu-xlsx') Tables.exportXlsx(title, head, rows); else Tables.print(title, `${rows.length} students`, head, rows);
+      }
     });
     document.addEventListener('change', (e) => {
       const t = e.target;
       if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; draw(); }
       if (t.id === 'poeUnitF') { ps.unit = t.value; draw(); }
-      if (t.id === 'poeSClass') { ps.sCls = t.value; ps.openStu = ''; ps.seq++; draw(); }
+      if (t.id === 'poeSClass') { ps.sCls = t.value; ps.openStu = ''; ps.seq++; Tables.reset('poeStu'); draw(); }
       if (t.dataset?.pick) { if (t.checked) ps.picked.add(t.dataset.pick); else ps.picked.delete(t.dataset.pick); draw(); }
       if (t.id === 'poeAll') { for (const x of filtered()) if (x.status === 'approved' && !x.receivedAt) { if (t.checked) ps.picked.add(x.id); else ps.picked.delete(x.id); } draw(); }
     });
     document.addEventListener('input', (e) => {
       if (e.target.id !== 'poeSearch') return;
-      ps.q = e.target.value;
+      ps.q = e.target.value; Tables.reset('poeStu');
       clearTimeout(ps.qt); ps.qt = setTimeout(() => { const pos = e.target.selectionStart; draw(); const s = $('#poeSearch'); s.focus(); s.setSelectionRange(pos, pos); }, 200);
     });
     $('#poeDialog').addEventListener('close', () => { ps.open = null; });
-    document.addEventListener('toggle', (e) => {
-      const d = e.target;
-      if (d.matches?.('details.poe-stu')) { if (d.open) ps.openStu = d.dataset.adm; else if (ps.openStu === d.dataset.adm) ps.openStu = ''; }
-    }, true);
+    document.addEventListener('keydown', (e) => {
+      const row = e.target.closest?.('.stu-row');
+      if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click(); }
+    });
+    Tables.on('poeStu', () => draw());
   }
   /** After sign-in: count what is waiting, for the tab's dot (one small request). */
   async function refreshBadge() {
