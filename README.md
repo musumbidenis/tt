@@ -407,3 +407,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Screenshots in the guides** come from `docs/make-screenshots.py`, which rebuilds them from the current code with an invented demo department.
 - 4.13.1: smaller text on phones (a 14 px base instead of 16 px; typing boxes stay at 16 px so iPhones do not zoom).
 - 4.13.2: text on phones smaller again (13 px base), in both the staff and student apps.
+
+## Changes in 4.14
+
+- **Scan ID cards** starts everyone who is not already marked by hand as **Absent**; each card scanned marks that student Present (or Late).
+- The **Mark Attendance** tab is now called **Att Register(s)**.

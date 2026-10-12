@@ -1,7 +1,7 @@
 # The Ark — User Guide
 
 **RVNP ICT Department attendance, marks and POE system**
-Applies to app version 4.13 (server 6.2, Drive bridge 1.3). The screenshots show an invented demo department.
+Applies to app version 4.14 (server 6.2, Drive bridge 1.3). The screenshots show an invented demo department.
 
 The Ark is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -89,7 +89,7 @@ One person can hold several roles, for example an HOD who also teaches.
 
 | Tab | Who sees it | What it is for |
 |---|---|---|
-| **Mark Attendance** | Trainers and HODs | Choose a lesson on the weekly timetable and mark the register. |
+| **Att Register(s)** | Trainers and HODs | Choose a lesson on the weekly timetable and mark the register. |
 | **Report(s)** | Everyone | Term registers (Attendance) and marksheets (Marks). |
 | **POE** | Everyone | Students' evidence: review, approve, return, receive. |
 | **Absences** | HOD and MIS Officer | Students who have missed more lessons than the limit you set. |
@@ -124,7 +124,7 @@ All long tables behave the same way:
 
 ### 3.1 Choose the lesson
 
-Open **Mark Attendance**.
+Open **Att Register(s)**.
 
 1. **Class** and **Unit**: only the ones in your loading are offered.
 2. **Week**: starts on the current teaching week, written like *Week 5 (Oct 5 - Oct 9)*. A CAT week says *· CAT week*.
@@ -229,7 +229,7 @@ A student from another class is refused on their own device. In a combined lesso
 Every student's QR ID is shown in their Student-POE app (on their profile).
 
 1. In the register, tap **Scan ID cards**.
-2. Choose **Mark scanned trainees as** Present or Late.
+2. Everyone not already marked by hand starts as **Absent**. Choose **Mark scanned trainees as** Present or Late.
 3. Point the camera at each student's QR ID. Each one is marked as it is read.
 4. Tap **Done**.
 

@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.13.2';
+const APP_VERSION = '4.14.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -779,9 +779,18 @@ let scanStream = null, scanning = false;
 async function startScan() {
   if (!state.current) { toast('Open a register first', 'err'); return; }
   if (!navigator.mediaDevices?.getUserMedia) { toast('This browser cannot use the camera', 'err'); return; }
+  if (!(await ensureEditable())) return;
   try {
     scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
   } catch (e) { toast('Camera not available: ' + e.message, 'err'); return; }
+  // Scanning ID cards: everyone starts absent, and only the cards scanned (or students marked by hand) count as here.
+  const s = state.current;
+  if (!s.idScan) {
+    s.idScan = true;
+    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; stampMark(s, t.admNo); }
+    renderRegister(); markDirty();
+    toast('Everyone starts absent; each card scanned marks that student');
+  }
   const video = $('#scanVideo');
   video.srcObject = scanStream;
   $('#scanDialog').showModal();

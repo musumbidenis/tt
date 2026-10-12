@@ -1,7 +1,7 @@
 # The Ark — Technical Documentation
 
 For whoever sets up, runs and maintains the RVNP ICT attendance system.
-Describes app **4.13.2**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
+Describes app **4.14.0**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
