@@ -1,7 +1,7 @@
 # The Ark — User Guide
 
 **RVNP ICT Department attendance, marks and POE system**
-Applies to app version 4.14 (server 6.2, Drive bridge 1.3). The screenshots show an invented demo department.
+Applies to app version 4.15 (server 6.3, Drive bridge 1.3). The screenshots show an invented demo department.
 
 The Ark is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -402,6 +402,26 @@ When a new term starts, every register and mark from the previous term is **lock
 
 The unlock lasts 7 days, then the register locks again by itself. Registers that a device had not sent before the term ended are still accepted: only changes are locked.
 
+### 9.4 Student phones (HOD and MIS Officer)
+
+A student checks in and sends evidence only from the phone they set up, and only in the browser they set it up in. Another browser on the same phone counts as another phone. If a student:
+
+- gets a new phone, or loses theirs,
+- resets their phone or clears the browser's data, or
+- needs to use a different browser,
+
+they see *"already registered on another phone or browser"*. To free them:
+
+1. Open **Manage → Student phones** and tap **Show registered phones**.
+2. **Search** by name, admission number or class (tap a heading to sort).
+3. Tap **Reset phone** on the student's row and confirm.
+
+The next phone or browser the student sets up becomes theirs. Their old phone stops checking in. Their check-ins, evidence and attendance stay. Each reset is recorded with who did it and when.
+
+<p align="center">
+<img src="images/manage-phones.png" width="280" alt="Student phones, with the Reset phone button">
+</p>
+
 ---
 
 ## 10. MIS Officer tasks
@@ -511,7 +531,7 @@ Setting up the Drive link is a one-off job described in the Technical Documentat
 2. Choose your **class** (as on the MIS class list, for example *CSCL6-25-S-RS*), then your **name**.
 3. Tap **Register this device** and confirm.
 
-Your device is now **registered to you**: it checks in only you, and you check in only from this device. A registered device cannot be switched to another student; if you change devices, ask your trainer to reset your registration.
+Your device is now **registered to you**: it checks in only you, and you check in only from this device. A registered device cannot be switched to another student. Another browser on the same phone counts as another device. If you change phones, clear the browser's data or need another browser, ask the HOD or MIS Officer to reset your phone.
 
 The header shows **Student-POE**, your name and class (for example *Adaki Bwire Ryan - ICT L6CS-24M*), whether you are online, and **Send** with the number of check-ins waiting.
 
@@ -535,7 +555,7 @@ If a check-in is refused, the app says why:
 | Not your class | The code is for another class. |
 | Code not valid | The code was expired or not from your trainer. |
 | This device is registered to another student | Only the registered student can check in on this device. |
-| You are registered on another device | See your trainer. |
+| You are registered on another phone or browser | Ask the HOD or MIS Officer to reset your phone (Manage → Student phones). |
 | You are not on the class list any more | See your trainer. |
 
 ### 12.3 Send POE evidence
@@ -609,7 +629,7 @@ The **Submissions** tab has three blocks. Tap a heading to open or close it; eac
 | **A slot cannot be chosen** | It is a future day, lunch for a lesson, or outside the teaching weeks; or the unit already has 3 lessons that week. |
 | **The app looks old after an update** | Close the app completely and open it again while online. It updates itself. |
 | **A student's check-in says "waiting for trainer to sync"** | It is confirmed once the trainer's device has sent the lesson. |
-| **A student changed phones** | The student's registration must be reset (see the Technical Documentation, *Operations*). |
+| **A student changed phones, or wants another browser** | The HOD or MIS Officer taps **Reset phone** for them in **Manage → Student phones** ([9.4](#94-student-phones-hod-and-mis-officer)). |
 | **"Unable to complete previous operation due to low memory"** | Chrome closed while the phone's camera app was open. Update the app (it now uses its own camera, which avoids this) and take the pages with **Take photo of a page**. |
 | **POE says it needs internet** | Evidence lives in Google Drive; connect and try again. |
 

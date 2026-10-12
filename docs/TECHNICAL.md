@@ -1,7 +1,7 @@
 # The Ark — Technical Documentation
 
 For whoever sets up, runs and maintains the RVNP ICT attendance system.
-Describes app **4.14.0**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
+Describes app **4.15.0**, server (Worker) **6.3.0**, database schema **8**, Drive bridge **1.3.0**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -183,7 +183,7 @@ Bump these with every release:
 4. **Edit code**, replace everything with `worker/worker.js`, **Deploy** (or connect Workers Builds, step 8).
 5. **Bindings → Add binding → D1 database**: variable `DB`, database `rvnp-attendance`.
 6. **Settings → Variables and Secrets → Add**: Secret `ADMIN_PIN`, a 6-digit PIN.
-7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.2.0",…}`. Put the address in `config.js` as `serverUrl`.
+7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.3.0",…}`. Put the address in `config.js` as `serverUrl`.
 8. Recommended:
    - **Settings → General → Placement → Smart**, so the Worker runs next to the database.
    - **Workers Builds**: put the D1 database ID in `wrangler.toml`, then **Settings → Builds → Connect** → GitHub → `tt`, branch `main`, build command empty, deploy command `npx wrangler deploy`, root directory `/`. Every push then deploys the Worker in a minute or two.
@@ -408,6 +408,7 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `uploadLoading` | MIS | Replace the term's loading and create staff accounts. |
 | `importClassList` | MIS | Apply (or preview with `dryRun`) one MIS class register across its streams. |
 | `students`, `updateStudent` | MIS (HOD reads) | A class group's students; move, withdraw or restore one. |
+| `phones`, `resetPhone` | HOD, MIS | Students with a registered device (archived classes left out); `resetPhone` deletes the student's `devices` row(s) and their device's `push_subs`, and is audited. |
 | `requests`, `decideRequest` | MIS (HOD reads) | Students added by trainers; approve, merge or reject. |
 | `staff`, `updateStaff` | MIS | Staff list (with whether a first-time PIN is set); roles, switch on/off, `resetPin` (one-off PIN or `toDefault`), Drive folder. |
 | `setDefaultPin` | MIS | Set or remove the first-time PIN. |
@@ -560,11 +561,11 @@ The Playwright suites, mocks (Drive bridge, Apps Script, push service) and fixtu
 | **Look at data** | Cloudflare → D1 → `rvnp-attendance` → **Explore Data**, or **Console** for SQL. |
 | **Undo a mistake** | D1 → **Time Travel** restores the whole database to any minute in the last 7 days. |
 | **MIS locked out** | D1 Console: `DELETE FROM staff WHERE code = 'MIS';`, then sign in as `MIS` with `ADMIN_PIN` (change the secret first if forgotten). |
-| **A student changed device** | D1 Console: delete that student's row from `devices` (`DELETE FROM devices WHERE adm_no = '…';`). They then set up the new device. |
+| **A student changed device** | The HOD or MIS Officer taps **Reset phone** in Manage → Student phones. (By hand: `DELETE FROM devices WHERE adm_no = '…';`.) They then set up the new device. |
 | **Worker logs** | Cloudflare → the Worker → **Logs** (live), and **Deployments** for build logs. |
 | **Bridge logs** | Apps Script → **Executions**; **Triggers** should show one hourly `sync` (plus at most one pending `syncOnce`). |
 | **Check versions** | `?action=ping` on the Worker; GET on the bridge's `/exec`; Profile in the app shows `app vX.Y.Z`. |
-| **Audit** | The `audit` table records sign-offs, staff and PIN changes, term saves, imports, unlocks, archives, deletions and evidence decisions. |
+| **Audit** | The `audit` table records sign-offs, staff and PIN changes, phone resets, term saves, imports, unlocks, archives, deletions and evidence decisions. |
 
 ---
 
@@ -572,7 +573,7 @@ The Playwright suites, mocks (Drive bridge, Apps Script, push service) and fixtu
 
 - **No secrets in the repository.** `config.js` holds only public addresses and the VAPID public key. Secrets live in Cloudflare and in Apps Script Script Properties. `.clasp.json` and clasp credentials are git-ignored.
 - **Staff actions** need a signed token; roles are checked on the server for every action.
-- **Student actions** are limited to the registered device-student pair. One device belongs to one student and one student to one device.
+- **Student actions** are limited to the registered device-student pair. One device belongs to one student and one student to one device. The device ID is random and kept in that browser's storage (IndexedDB and `localStorage`), so each browser on a phone is a separate device; web pages cannot read a hardware ID that all browsers share. A reset (Manage → Student phones) frees the student for a new one.
 - **QR codes** cannot be forged or reused: they are HMACs that change every 20 seconds and are checked against the trainer's record.
 - **Drive access** is only through tickets the Worker signs (upload 6 hours, view 10 minutes), so the bridge's open web address cannot read or write anything else.
 - **The first-time PIN** is shared by everyone without their own PIN; treat it like a password and give it out privately. It is stored only as a salted hash.

@@ -9,7 +9,7 @@ const sdb = new PouchDB('rvnp_student', { auto_compaction: true });
 const REASONS = {
   'wrong-class': 'Not your class',
   'device-other-student': 'This device is registered to another student',
-  'student-other-device': 'You are registered on another device — see your trainer',
+  'student-other-device': 'You are registered on another phone or browser. Ask the HOD or MIS Officer to reset it',
   'invalid-code': 'Code not valid (expired, or not from your trainer)',
   'unknown-student': 'You are not on the class list any more — see your trainer',
 };

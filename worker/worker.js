@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.2.0';
+export const VERSION = '6.3.0';
 const SCHEMA_VERSION = '8';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -251,6 +251,8 @@ const ACTIONS = {
   importClassList: { role: ['MIS'], fn: (env, b, me) => importClassList(env, b, me) },
   students: { role: ['MIS', 'HOD'], fn: (env, b) => studentsOf(env, b.misClass || '', b.classCode || '') },
   updateStudent: { role: ['MIS'], fn: (env, b, me) => updateStudent(env, b, me) },
+  phones: { role: ['HOD', 'MIS'], fn: (env) => listPhones(env) },
+  resetPhone: { role: ['HOD', 'MIS'], fn: (env, b, me) => resetPhone(env, b, me) },
   requests: { role: ['MIS', 'HOD'], fn: (env) => listRequests(env) },
   decideRequest: { role: ['MIS'], fn: (env, b, me) => decideRequest(env, b, me) },
   staff: { role: ['MIS'], fn: (env) => listStaff(env) },
@@ -527,12 +529,32 @@ async function registerDevice(env, b) {
   const t = tRows[0], dev = devRows[0], byAdm = admRows[0];
   if (!t || !active(t)) return { ok: false, error: 'That student is not on the class list' };
   if (!b.deviceId) return { ok: false, error: 'Missing phone ID' };
-  if (dev && lower(dev.adm_no) !== lower(t.adm_no)) return { ok: false, error: `This phone is already registered to ${dev.tname || dev.adm_no}. Ask your trainer to reset it.` };
-  if (byAdm && byAdm.device_id !== b.deviceId) return { ok: false, error: `${t.name} is already registered on another phone. Ask your trainer to reset it.` };
+  if (dev && lower(dev.adm_no) !== lower(t.adm_no)) return { ok: false, error: `This phone is already registered to ${dev.tname || dev.adm_no}. Ask the HOD or MIS Officer to reset it.` };
+  if (byAdm && byAdm.device_id !== b.deviceId) return { ok: false, error: `${t.name} is already registered on another phone or browser. Ask the HOD or MIS Officer to reset it.` };
   const now = nowIso();
   await run(env, 'INSERT INTO devices (device_id,adm_no,name,class_code,registered_at,last_seen) VALUES (?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET last_seen=excluded.last_seen',
     b.deviceId, t.adm_no, t.name, t.class_code, now, now);
   return { ok: true, admNo: t.adm_no, name: t.name, classCode: t.class_code, className: t.class_name || t.class_code };
+}
+
+/** HOD and MIS: the students whose phone is registered (classes not archived), newest first. */
+async function listPhones(env) {
+  const rows = await all(env, `SELECT d.adm_no, COALESCE(t.name, d.name) AS name, COALESCE(t.class_code, d.class_code) AS class_code, d.registered_at, d.last_seen
+    FROM devices d LEFT JOIN trainees t ON t.adm_no=d.adm_no LEFT JOIN classes c ON c.code=COALESCE(t.class_code, d.class_code)
+    WHERE COALESCE(c.status,'') <> 'archived' ORDER BY d.registered_at DESC`);
+  return { ok: true, phones: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code || '', registeredAt: r.registered_at || '', lastSeen: r.last_seen || '' })) };
+}
+
+/** HOD and MIS: frees a student from their registered phone (lost, changed or reset phone, another browser).
+ *  The next phone they set up becomes theirs. Their check-ins, evidence and attendance stay. */
+async function resetPhone(env, b, me) {
+  const adm = String(b.admNo || '').trim();
+  const rows = await all(env, 'SELECT * FROM devices WHERE adm_no=?', adm);
+  if (!rows.length) return { ok: true, reset: 0 };
+  const ids = JSON.stringify(rows.map((r) => r.device_id));
+  await many(env, ['DELETE FROM devices WHERE adm_no=?', adm], [`DELETE FROM push_subs WHERE device_id IN (SELECT value FROM json_each(?))`, ids]);
+  await audit(env, me, 'reset phone', `${rows[0].adm_no} ${rows[0].name || ''}`.trim());
+  return { ok: true, reset: rows.length };
 }
 
 /* ---------- class lists (MIS Officer) ---------- */

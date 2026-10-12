@@ -1,5 +1,5 @@
 /* Manage tab — sections shown by role.
- *   HOD:  registers waiting for approval, department overview, students waiting for the MIS Officer
+ *   HOD:  registers waiting for approval, department overview, students waiting for the MIS Officer, student phones
  *   MIS:  term, trainer loading, class lists, student requests, staff
  * Everything here talks to the server, so it needs internet (marking does not). */
 'use strict';
@@ -7,7 +7,7 @@
 const Admin = (() => {
   const box = () => $('#manage');
   const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
-  let cache = { signoffs: [], requests: [], overview: null, staff: [] };
+  let cache = { signoffs: [], requests: [], overview: null, staff: [], phones: [] };
   let loadingPreview = null;
   let ovSort = { key: 'classCode', dir: 1 };
   const secOpen = new Set();   // which folded-away sections the person has opened, so a refresh keeps them as they were
@@ -34,13 +34,14 @@ const Admin = (() => {
       parts.push(section('m-term', 'Term', termHtml()));
       parts.push(section('m-loading', 'Trainer loading', loadingHtml()));
       parts.push(section('m-classes', 'Class lists', classesHtml()));
+      parts.push(section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
-    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'));
+    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'));
     box().innerHTML = parts.join('');
     const jobs = [];
     if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
-    jobs.push(loadRequests());
+    jobs.push(loadRequests(), loadPhones());
     if (hasRole('MIS')) jobs.push(loadStaff().then(loadDrive));
     await Promise.allSettled(jobs);
     refreshBadge();
@@ -451,6 +452,45 @@ const Admin = (() => {
     } catch (e) { toast(e.message, 'err'); }
   }
 
+  /* ---------- HOD and MIS: student phones ----------
+   * Each student checks in from one registered phone (one browser on it). Reset frees them to set up another:
+   * a new or lost phone, a reset phone, cleared browser data, or a different browser. */
+  let phoneQuery = '';
+  async function loadPhones() {
+    try {
+      cache.phones = need(await api('phones')).phones;
+      fill('m-phones', `<p class="muted">A student checks in only from the phone (and browser) they set up. If they change phones, clear the browser's data, or need a different browser, reset their phone here; the next one they set up becomes theirs. Their check-ins and evidence stay.</p>
+        ${fold('phones', `Show registered phones (${cache.phones.length})`, `<input type="search" id="phoneSearch" placeholder="Search name, admission no. or class" aria-label="Search student phones"><div id="phoneList"></div>`)}`);
+      $('#phoneSearch').value = phoneQuery;
+      drawPhones();
+    } catch (e) { fill('m-phones', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  function drawPhones() {
+    const box = $('#phoneList'); if (!box) return;
+    const q = phoneQuery.trim().toLowerCase();
+    const hit = (p) => !q || [p.name, p.admNo, p.classCode].some((x) => String(x || '').toLowerCase().includes(q));
+    const list = Tables.sort('phones', (cache.phones || []).filter(hit),
+      { name: (p) => p.name, cls: (p) => p.classCode, seen: (p) => p.lastSeen }, 'name');
+    if (!list.length) { box.innerHTML = `<p class="muted">${q ? 'Nothing matches that search.' : 'No student phones are registered yet.'}</p>`; return; }
+    const page = Tables.slice('phones', list), first = list.indexOf(page[0]);
+    box.innerHTML = `<div class="table-wrap"><table class="report-table phone-table"><thead><tr><th class="num">S/N</th>${Tables.th('phones', 'name', 'Student')}<th></th>${Tables.th('phones', 'cls', 'Class')}${Tables.th('phones', 'seen', 'Last used')}</tr></thead>
+      <tbody>${page.map((p, i) => `<tr data-adm="${esc(p.admNo)}"><td class="num">${first + i + 1}</td><td><b>${esc(p.name)}</b><br><small class="muted">${esc(p.admNo)}</small></td>
+        <td><button type="button" class="btn small danger" data-resetphone>Reset phone</button></td><td>${esc(p.classCode)}</td>
+        <td class="small" title="Set up ${esc(fmtShort(p.registeredAt))}">${esc(fmtShort(p.lastSeen))}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('phones', list)}`;
+  }
+  async function resetPhone(btn) {
+    const tr = btn.closest('tr'), adm = tr.dataset.adm, p = (cache.phones || []).find((x) => x.admNo === adm), who = p ? `${p.name} (${p.admNo})` : adm;
+    if (!confirm(`Reset the phone for ${who}?\n\nTheir current phone stops checking in. The next phone or browser they set up becomes theirs. Their check-ins and evidence stay.`)) return;
+    busy(btn, true, 'Resetting…');
+    try {
+      need(await api('resetPhone', { admNo: adm }));
+      cache.phones = cache.phones.filter((x) => x.admNo !== adm);
+      const sum = $('#m-phones summary'); if (sum) sum.textContent = `Show registered phones (${cache.phones.length})`;
+      drawPhones();
+      toast(`${p ? p.name : adm} can now set up a new phone`, 'ok');
+    } catch (e) { busy(btn, false); toast(e.message, 'err'); }
+  }
+
   /* ---------- MIS: staff ---------- */
   async function loadStaff() {
     if (!hasRole('MIS')) return;
@@ -639,6 +679,7 @@ const Admin = (() => {
     }
     if (card && t.closest('[data-remove]')) { classImports.splice(Number(card.dataset.i), 1); $('#classImports').innerHTML = classImports.map(importCard).join(''); return; }
     const grp = t.closest('[data-group]'); if (grp) { showGroup(grp.dataset.group); return; }
+    const rp = t.closest('[data-resetphone]'); if (rp) { resetPhone(rp); return; }
     const st = t.closest('.students [data-status]'); if (st) { updateStudent(st.closest('li'), { status: st.dataset.status }); return; }
     const pin = t.closest('.staff [data-pin]');
     if (pin) {
@@ -673,6 +714,7 @@ const Admin = (() => {
       const q = t.value.trim().toLowerCase();
       t.closest('.placement').querySelectorAll('.pl-list li').forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
     }
+    if (t.id === 'phoneSearch') { phoneQuery = t.value; Tables.reset('phones'); drawPhones(); return; }
     if (t.id === 'soSearch') { soQuery = t.value; Tables.reset('signoffs'); Tables.reset('signoffsDone'); drawSignoffs(); return; }
     if (t.id === 'grpSearch' || t.id === 'staffSearch') {
       const q = t.value.trim().toLowerCase();
@@ -686,6 +728,7 @@ const Admin = (() => {
   }, true);
   Tables.on('overview', drawOverview);
   Tables.on('signoffs', drawSignoffs);
+  Tables.on('phones', drawPhones);
   Tables.on('signoffsDone', drawSignoffs);
   Tables.defaults('signoffsDone', 30);
   Tables.on('classes', () => { const el = $('#m-classes'); if (el) replaceBody(el, classesHtml()); });

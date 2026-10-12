@@ -412,3 +412,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **Scan ID cards** starts everyone who is not already marked by hand as **Absent**; each card scanned marks that student Present (or Late).
 - The **Mark Attendance** tab is now called **Att Register(s)**.
+
+## Changes in 4.15
+
+- **Reset phone** in **Manage → Student phones** (HOD and MIS Officer): frees a student whose phone was changed, lost or reset, or who needs another browser. The next phone they set up becomes theirs; their records stay. Each reset is audited.
+- Messages to students now say a phone or browser is already registered, and to ask the HOD or MIS Officer.
