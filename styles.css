@@ -937,3 +937,12 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .profile .inst { display: flex; flex-direction: column; align-items: center; gap: .2rem; flex-shrink: 0; text-align: center; }
 .profile .inst img { width: 52px; height: 52px; display: block; }
 .profile .inst span { font-size: .75rem; font-weight: 600; color: var(--ink-2); }
+
+/* ---------- the camera for evidence pages, inside the app ---------- */
+.doc-cam { width: min(560px, 96vw); }
+.doc-video { aspect-ratio: 3 / 4; max-height: 68vh; margin: 0 auto; }
+.doc-video .page-frame { position: absolute; inset: 6% 8%; border: 2px dashed rgba(255, 255, 255, .85); border-radius: 6px; pointer-events: none; }
+.cam-actions { display: flex; justify-content: center; padding: .5rem 0 .25rem; }
+.shutter { width: 68px; height: 68px; border-radius: 50%; border: 4px solid var(--surface); background: var(--p); box-shadow: 0 0 0 3px var(--p); cursor: pointer; }
+.shutter:active { transform: scale(.94); }
+.shutter:disabled { opacity: .5; }

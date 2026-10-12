@@ -1,7 +1,7 @@
 # The Ark — Technical Documentation
 
 For whoever sets up, runs and maintains the RVNP ICT attendance system.
-Describes app **4.12.3**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
+Describes app **4.13.0**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -475,7 +475,7 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 - the JPEG header is read first (size and EXIF orientation) and the photo is decoded already shrunk to at most 2400 px on its long side (`createImageBitmap` with `resizeWidth`); the decoded bitmap is closed at once;
 - straightening reads only the part of the photo the page is in, and the page is kept at most 1800 px (about A4 at 200 dpi), saved as JPEG with a 320 px thumbnail beside it (`t-<page>` attachment), which is what the list of pages shows;
 - every canvas is emptied (`Scanner.release`) as soon as it is used, and the PDF is built one page at a time;
-- **Keep and take the next page** opens the camera only after the page is saved and its memory let go;
+- pages are taken with a **camera inside the page** (`getUserMedia`, the rear camera at up to 2560×1920; `ImageCapture.takePhoto()` where the browser has it, else the video frame). Opening the phone's camera app through `<input capture>` sends the browser to the background, where Android often closes it ("unable to complete previous operation due to low memory") and the photo is lost. The camera is stopped while a page is adjusted and reopened for the next page. If it cannot start, the device falls back to the camera app on the next tap;
 - the student app does not reload for a new version while the crop screen is open, a page is being saved, or the camera may be up (`POE.busy()`); it waits until the student is idle.
 
 1. The student device asks `poeTicket` for a signed upload ticket (6 hours), then posts the PDF to the bridge with it.
@@ -543,7 +543,11 @@ npx wrangler dev --config worker/wrangler.test.toml --local --port 8090 --persis
 
 Serve the repository root (for example `python -m http.server 8080`) and open `http://localhost:8080/`. Point the app at the local Worker in the browser console with `saveSettings({ serverUrl: 'http://localhost:8090/exec' })`.
 
-### 11.3 Browser tests
+### 11.3 Screenshots for the guides
+
+`python docs/make-screenshots.py` (from the repository folder) rebuilds every image in `docs/images/` from the current code: it starts the Worker locally with a throw-away database, serves the apps, creates an invented demo department (term, loading, a class of 24 students, registers, marks, evidence, a pending student, a submitted register), and photographs both apps in Chromium at phone size, plus one desktop view. The student's camera is fed a picture of a written page, so the in-app camera and the multi-page flow run too. Needs Node.js and Python with `playwright`, `reportlab` and `Pillow`. Run it after any change to a screen, and add a step for any new screen the guides describe.
+
+### 11.4 Browser tests
 
 The Playwright suites, mocks (Drive bridge, Apps Script, push service) and fixture generator live in `../dev-tests`, **outside this repository**. `bash runw.sh <test>.py …` runs them against the local Worker; `all2.sh` runs the lot. They need Node, Python with `playwright`, `openpyxl` and `reportlab`, and Chromium. They have not been updated for every change since app 4.8.
 

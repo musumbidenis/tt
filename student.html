@@ -135,6 +135,17 @@
   <p class="scan-result">Point the camera at the code on your trainer's screen</p>
 </dialog>
 
+<!-- The camera for evidence pages, inside the app: leaving for the phone's camera app lets Android close the browser. -->
+<dialog id="docCamDialog" class="scan-dialog doc-cam" aria-label="Take the pages">
+  <div class="scan-head">
+    <strong id="docCamTitle">Page 1</strong>
+    <button type="button" class="btn small ghost" id="docCamDone">Done</button>
+  </div>
+  <div class="video-wrap doc-video"><video id="docCamVideo" playsinline muted></video><div class="page-frame"></div></div>
+  <p class="muted small center">Hold the page flat inside the frame, in good light, then tap the button.</p>
+  <div class="cam-actions"><button type="button" class="shutter" id="docCamShot" aria-label="Take this page"></button></div>
+</dialog>
+
 <dialog id="cropDialog" class="crop-dialog" aria-label="Adjust the page">
   <div class="scan-head">
     <strong>Drag the corners to the page edges</strong>

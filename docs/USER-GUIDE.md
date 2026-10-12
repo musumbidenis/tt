@@ -1,7 +1,7 @@
 # The Ark — User Guide
 
 **RVNP ICT Department attendance, marks and POE system**
-Applies to app version 4.12 (server 6.2, Drive bridge 1.3).
+Applies to app version 4.13 (server 6.2, Drive bridge 1.3). The screenshots show an invented demo department.
 
 The Ark is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -66,6 +66,11 @@ Installing matters: the browser then keeps the app's data permanently, and on iP
 | Changing your PIN | **Profile → Change PIN** at any time. |
 | Forgot your PIN | Only the **MIS Officer** can reset a PIN. |
 
+
+<p align="center">
+<img src="images/staff-signin.png" width="280" alt="The sign-in screen">
+</p>
+
 ### 1.3 Who can do what
 
 | Role | What they can do |
@@ -94,6 +99,13 @@ One person can hold several roles, for example an HOD who also teaches.
 A **red dot** on a tab shows how many things are waiting for you (evidence to review, students over the absence limit, requests in Manage).
 
 On a **phone** the tabs run along the bottom of the screen. On a **computer or a tablet held sideways** they become a side bar on the left.
+<p align="center">
+<img src="images/desktop-register.png" width="760" alt="The staff app on a computer, with the side bar and the term register">
+</p>
+
+<p align="center"><em>On a computer: the side bar, and a term register in sheet view.</em></p>
+
+
 
 The header shows **The Ark**, your name and your roles (for example *ICT MUSUMBI .D - HOD, MIS Officer, Trainer*), and whether the device is **Online** or **Offline**.
 
@@ -139,6 +151,13 @@ Open **Mark Attendance**.
    - Days that have not come yet cannot be chosen.
 6. Tap **Open register**.
 
+
+<p align="center">
+<img src="images/mark-timetable.png" width="280" alt="Choosing a lesson on the weekly timetable">
+</p>
+
+<p align="center"><em>Two lessons already marked; a free slot chosen, ready to open.</em></p>
+
 **Rules the timetable follows**
 
 - A unit can have up to **3 lessons a week**; a double counts as two. This matches the register's 3 cells per week.
@@ -157,6 +176,10 @@ Open **Mark Attendance**.
 | Long classes | 30 students to a page, each with a serial number (S/N). |
 | Notes | Type what was covered or any remarks. |
 | Finish | **Save register**, then **Close**. |
+
+<p align="center">
+<img src="images/register.png" width="280" alt="Marking a register">
+</p>
 
 The box at the top right of the register says whether it is **Saved on this device** and the counts show how many are present, absent, late and excused.
 
@@ -191,6 +214,11 @@ You can sign in on several devices, for example a phone and a laptop.
 3. Students scan it with the Student-POE app or their normal camera. Each check-in appears on your register within seconds once the student's device is online.
 4. In a QR lesson, students who do not scan count as **absent** unless you mark them yourself.
 5. Tap **Close** when you are done.
+
+<p align="center">
+<img src="images/lesson-qr.png" width="280" alt="The lesson QR code on the trainer's phone">
+</p>
+
 
 Neither you nor the students need internet during the lesson. The server checks every check-in against your record of which codes were shown and when; a forged, old or other-lesson code is refused, even if it arrives months later.
 
@@ -228,6 +256,11 @@ Open **Report(s)** and choose **Attendance** at the top.
 - A class with no students says **No trainees in this class yet** instead of showing an empty table.
 
 **How hours are counted.** Possible hours count only the lessons a student was on the register for, so someone who joined mid-term is not penalised. Each lesson's length is the **hours per lesson** the MIS Officer set for the term (or, if not set, the unit's hours per week ÷ lessons per week). A Late or Excused mark counts for the share shown in the legend.
+
+
+<p align="center">
+<img src="images/report-list.png" width="280" alt="The term register on a phone">
+</p>
 
 ### 5.3 CAT registers
 
@@ -268,6 +301,10 @@ Open **Report(s) → Marks** and choose the class and unit.
 - **Export Excel marksheet** gives RVNP's *Continuous Assessment Marks Sheet per Unit of Competency*.
 - **Send now** sends straight away instead of waiting.
 
+<p align="center">
+<img src="images/marks.png" width="280" alt="Entering marks">
+</p>
+
 **One marksheet for the unit's whole life.** A unit that runs over several terms, even with different trainers, keeps CAT 1–3 and PRAC 1–3 on one sheet. Each mark remembers the term it was entered in.
 
 **Locked marks.** Marks entered in a term that has ended show with a dashed border and cannot be changed. A notice above the table says which term they belong to; the HOD or MIS Officer can unlock them for 7 days from there.
@@ -288,6 +325,11 @@ Students send scanned CATs and practicals from their app; the files are stored i
 4. Choose **Approve**, or write a note and choose **Return to student** (a note is needed when returning).
 5. After each decision the next waiting submission opens. **‹ Previous** and **Next ›** move through the list; **Open in Drive** opens the original file.
 
+<p align="center">
+<img src="images/poe-list.png" width="280" alt="Evidence waiting for review">
+<img src="images/poe-preview.png" width="280" alt="Previewing a submission">
+</p>
+
 Previews open faster the second time: files you have opened are kept on the device, and the next submission is fetched while you read the current one.
 
 You also see evidence for units you taught in earlier terms, read-only. Only the unit's current trainer (or, if it is not taught this term, the trainer who had it last) and the HOD can approve or return.
@@ -305,6 +347,10 @@ Tap **By student** to see one class at a time as a table:
 - Tap a student to open their units and items: **✓** approved, **•** with the trainer, **↺** returned, **–** not sent. Tap a mark to open that file.
 - **Export Excel** and **Save as PDF** under the table give the whole filtered list.
 
+<p align="center">
+<img src="images/poe-by-student.png" width="280" alt="Evidence by student, with one student opened">
+</p>
+
 ---
 
 ## 8. Absences (HOD and MIS Officer)
@@ -318,9 +364,18 @@ The **Absences** tab lists students who have missed more lessons of a unit than 
 5. Choose an earlier **term** to look back.
 6. **Export Excel** or **Save as PDF** to share or print the list.
 
+<p align="center">
+<img src="images/absences.png" width="280" alt="The Absences list">
+</p>
+
+
 ---
 
 ## 9. HOD tasks
+
+<p align="center">
+<img src="images/manage.png" width="280" alt="The Manage tab">
+</p>
 
 ### 9.1 Registers to approve
 
@@ -364,6 +419,10 @@ Sign in with your staff code and PIN. Everything below is under **Manage**. The 
 
 The app makes the **12 teaching weeks** and skips the breaks. The card then reads, for example, *Current term: SEP-DEC 2026*, with the weeks listed and CAT weeks marked *- CAT(s)*.
 
+<p align="center">
+<img src="images/manage-term.png" width="280" alt="The current term in Manage">
+</p>
+
 > **Saving a new code starts a new term and closes the old one.** All registers and marks of the old term are locked from that moment (see [9.3](#93-unlocking-an-earlier-terms-registers-and-marks)).
 
 **Trainer loading**
@@ -402,6 +461,11 @@ Tap **Show the staff** to open the list. Each row shows the staff code and name,
 | **Switch an account off** | **Switch off** signs them out on every device. **Switch on** restores the account. |
 | **Add a staff member** | **Add a staff member**: staff code and name, then **Add and issue PIN**. |
 
+
+<p align="center">
+<img src="images/manage-staff.png" width="280" alt="Staff, roles and the first-time PIN">
+</p>
+
 ### 10.4 Archive or delete a class
 
 When a class has finished:
@@ -433,6 +497,10 @@ Setting up the Drive link is a one-off job described in the Technical Documentat
 | **Class lists** | When registers were last sent, and when class lists were last downloaded. **Download class lists** fetches the latest now. **Student app link** shows a QR code and link for students to set up their app. |
 | **Backup and transfer** | **Export backup** saves everything on the device to a file (useful before a long time offline or before changing phones). **Import backup** loads such a file on another device. **Erase this device** removes all data from this device (it warns you if any registers have not been sent). |
 
+<p align="center">
+<img src="images/profile.png" width="280" alt="Your Profile">
+</p>
+
 ---
 
 ## 12. Students: the Student-POE app
@@ -448,6 +516,12 @@ Your device is now **registered to you**: it checks in only you, and you check i
 The header shows **Student-POE**, your name and class (for example *Adaki Bwire Ryan - ICT L6CS-24M*), whether you are online, and **Send** with the number of check-ins waiting.
 
 Your **profile** shows your name, admission number, the college crest, and your **Student QR ID**: your trainer can scan it to mark your attendance.
+
+<p align="center">
+<img src="images/student-setup.png" width="280" alt="Setting up a student device">
+<img src="images/student-checkin.png" width="280" alt="The Check-in tab with the student's QR ID">
+</p>
+
 
 ### 12.2 Check in to a lesson
 
@@ -471,13 +545,20 @@ On the **Evidence (POE)** tab:
 1. Choose the **Unit**. Units from earlier terms are marked *(earlier term)*.
 2. Tap one or more **items** (CAT1–CAT4, PRAC1–PRAC3). An item already sent shows ✓ approved, • with your trainer, or ↺ returned.
 3. For each item, add the pages. **Every submission needs at least 2 pages.**
-   - **Take photo of a page**: the app finds the page edges (drag the corners if needed). Use **Rotate** or **Whole photo** if needed.
-   - **Keep page** adds it; **Keep and take the next page** saves the page and then opens the camera for the next one. On a slower phone it may instead say *Page added*: tap **Add another page** to carry on.
+   - **Take photo of a page** opens the camera **inside the app** (allow the camera the first time). Hold the page flat inside the dashed frame, in good light, and tap the round button.
+   - The app finds the page edges; drag the corners if needed, or use **Rotate** or **Whole photo**. **Retake** goes back to the camera.
+   - **Keep and take the next page** saves the page and goes straight back to the camera for the next one. **Keep page** saves it and stops; **Done** closes the camera.
    - **From gallery or PDF**: choose photos, or a PDF of at least 2 pages.
    - Move pages with **↑ ↓** or delete one with **✕**.
+
+<p align="center">
+<img src="images/student-camera.png" width="240" alt="The camera inside the app">
+<img src="images/student-crop.png" width="240" alt="Adjusting the page corners">
+<img src="images/student-evidence.png" width="240" alt="Two pages ready to send">
+</p>
 4. Tap **Save and send**. The PDF is saved on your device first and sent to the college Drive when you have internet.
 
-Files can be up to 20 MB.
+Files can be up to 20 MB. If the camera inside the app cannot start on a device, the app says so and the next tap on **Take photo of a page** uses the phone's own camera app instead.
 
 **Get told when your evidence is decided.** Under the Save button, turn on **Notify me about my evidence**. Your device then tells you when your trainer approves your work or sends it back, with their comment; tapping the message opens the app on Submissions.
 - **Android**: works straight away.
@@ -493,6 +574,10 @@ The **Submissions** tab has three blocks. Tap a heading to open or close it; eac
 | **My POE submissions** | Each piece of evidence with its unit, item, version and status: *Saved on device — sends when online*, *With your trainer*, *Approved* or *Returned*. A returned item shows **Comment(s):** with your trainer's note, and **Scan again** to send a new version (v2, v3…). **Save a copy** saves the PDF to your device. |
 | **My scanned check-in(s)** | Your QR check-ins and whether each is *Confirmed*, *Sent — waiting for trainer to sync*, *Saved on device* or not accepted. |
 | **My attendance** | Every lesson your trainers marked, with your mark, and a summary of lessons present, late, absent and excused with your percentage. It is updated whenever you are online, and kept on your device as your own copy. |
+
+<p align="center">
+<img src="images/student-submissions.png" width="280" alt="Submissions: evidence, check-ins and attendance">
+</p>
 
 ---
 
@@ -525,6 +610,7 @@ The **Submissions** tab has three blocks. Tap a heading to open or close it; eac
 | **The app looks old after an update** | Close the app completely and open it again while online. It updates itself. |
 | **A student's check-in says "waiting for trainer to sync"** | It is confirmed once the trainer's device has sent the lesson. |
 | **A student changed phones** | The student's registration must be reset (see the Technical Documentation, *Operations*). |
+| **"Unable to complete previous operation due to low memory"** | Chrome closed while the phone's camera app was open. Update the app (it now uses its own camera, which avoids this) and take the pages with **Take photo of a page**. |
 | **POE says it needs internet** | Evidence lives in Google Drive; connect and try again. |
 
 ---

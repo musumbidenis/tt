@@ -196,10 +196,64 @@ const POE = (() => {
       $('#cropKeep').textContent = 'Keep page';
     }
   }
-  /** Opens the camera for the next page of an item (remembered, so the app does not update itself meanwhile). */
+  /** The phone's own camera app (only when the camera inside the app cannot be used). */
   function openCamera(item) { ps.target = item; ps.cameraAt = Date.now(); $('#poeCamera').click(); }
-  /** True while a page is being taken: the crop screen is open, a page is being saved, or the camera may be up. */
-  const busy = () => !!($('#cropDialog').open || ps.keeping || (ps.cameraAt && Date.now() - ps.cameraAt < 3 * 60e3));
+  /** True while a page is being taken: the camera or crop screen is open, a page is being saved, or the camera app may be up. */
+  const busy = () => !!($('#docCamDialog').open || $('#cropDialog').open || ps.keeping || (ps.cameraAt && Date.now() - ps.cameraAt < 3 * 60e3));
+
+  /* ---------- the camera inside the app ----------
+   * Opening the phone's camera app sends the browser to the background, and Android often closes it to make room
+   * ("unable to complete previous operation due to low memory"), so the page taken is lost. A live camera inside
+   * the page never leaves the browser, and goes straight back to the next page. */
+  let camStream = null;
+  const camOk = () => !!navigator.mediaDevices?.getUserMedia;
+  async function openDocCam(item) {
+    ps.target = item;
+    if (!camOk() || ps.useCameraApp) return openCamera(item);   // still inside the tap, so the camera app can open
+    const d = ps.drafts[item], n = (d?.pdfOnly ? 0 : (d?.pages || []).length) + 1;
+    $('#docCamTitle').textContent = `${item} · page ${n}`;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ audio: false,
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } } });
+    } catch (e) {
+      if (e && e.name === 'NotAllowedError') { toast('Allow the camera for this app (browser settings), or use "From gallery or PDF".', 'err'); return; }
+      ps.useCameraApp = true;     // from now on this device uses the phone's camera app
+      toast('The camera could not be opened inside the app. Tap "Take photo of a page" again to use the camera app.', 'err');
+      return;
+    }
+    const video = $('#docCamVideo');
+    video.srcObject = camStream;
+    if (!$('#docCamDialog').open) $('#docCamDialog').showModal();
+    await video.play().catch(() => {});
+  }
+  function stopDocCam() {
+    camStream?.getTracks().forEach((t) => t.stop());
+    camStream = null;
+    $('#docCamVideo').srcObject = null;
+    if ($('#docCamDialog').open) $('#docCamDialog').close();
+  }
+  /** Takes the page: a full photo from the camera when the browser can (sharper), else the frame on screen. */
+  async function shootPage() {
+    const video = $('#docCamVideo'), btn = $('#docCamShot'), track = camStream?.getVideoTracks()[0];
+    if (!track || btn.disabled) return;
+    btn.disabled = true;
+    let blob = null;
+    try {
+      if (window.ImageCapture) { try { blob = await new ImageCapture(track).takePhoto(); } catch { blob = null; } }
+      if (!blob && video.videoWidth) {
+        const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext('2d').drawImage(video, 0, 0);
+        blob = await Scanner.toJpeg(c, 0.9);
+        Scanner.release(c);
+      }
+    } finally { btn.disabled = false; }
+    if (!blob) { toast('That page could not be taken. Try again.', 'err'); return; }
+    const item = ps.target;
+    stopDocCam();                  // the camera is let go while the page is adjusted (less memory)
+    ps.fromCam = true;
+    $('#cropCancel').textContent = 'Retake';
+    await openCrop(blob, item);
+  }
 
   /* ---------- saving: one PDF per item, kept on the device ---------- */
   async function saveAll() {
@@ -389,7 +443,7 @@ const POE = (() => {
     $('#poeDocs').addEventListener('click', async (e) => {
       const card = e.target.closest('[data-doc]'); if (!card) return;
       const item = card.dataset.doc;
-      if (e.target.closest('[data-camera]')) { openCamera(item); return; }
+      if (e.target.closest('[data-camera]')) { openDocCam(item); return; }
       if (e.target.closest('[data-gallery]')) { ps.target = item; ps.cameraAt = Date.now(); $('#poeGallery').click(); return; }
       const d = await draft(item);
       const li = e.target.closest('[data-page]');
@@ -404,9 +458,12 @@ const POE = (() => {
         [d.pages[i], d.pages[j]] = [d.pages[j], d.pages[i]]; await saveDraft(d); return render();
       }
     });
-    $('#poeCamera').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; ps.cameraAt = 0; if (f) openCrop(f, ps.target); });
+    $('#poeCamera').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; ps.cameraAt = 0; ps.fromCam = false; $('#cropCancel').textContent = 'Cancel'; if (f) openCrop(f, ps.target); });
+    $('#docCamShot').addEventListener('click', shootPage);
+    $('#docCamDone').addEventListener('click', stopDocCam);
+    $('#docCamDialog').addEventListener('close', () => { camStream?.getTracks().forEach((t) => t.stop()); camStream = null; });
     $('#poeGallery').addEventListener('change', async (e) => {
-      const files = [...e.target.files]; e.target.value = ''; ps.cameraAt = 0;
+      const files = [...e.target.files]; e.target.value = ''; ps.cameraAt = 0; ps.fromCam = false; $('#cropCancel').textContent = 'Cancel';
       const pdf = files.find((f) => f.type === 'application/pdf');
       if (pdf) {
         const text = new TextDecoder('latin1').decode(new Uint8Array(await pdf.arrayBuffer()));
@@ -422,7 +479,8 @@ const POE = (() => {
       }
     });
     $('#cropHandles').addEventListener('pointerdown', dragHandle);
-    $('#cropCancel').addEventListener('click', () => closeCrop());
+    // From the camera inside the app, Cancel is "Retake": back to the live camera for the same page.
+    $('#cropCancel').addEventListener('click', () => { const item = ps.crop?.item; const again = ps.fromCam && item; closeCrop(); if (again) openDocCam(item); });
     $('#cropDialog').addEventListener('close', () => { if (!ps.keeping && ps.crop) { Scanner.release(ps.crop.canvas); ps.crop = null; } });
     $('#cropRotate').addEventListener('click', () => { ps.crop.canvas = Scanner.rotate(ps.crop.canvas); ps.crop.quad = Scanner.findCorners(ps.crop.canvas); drawCrop(); });
     $('#cropWhole').addEventListener('click', () => { const c = ps.crop.canvas; ps.crop.quad = [[0, 0], [c.width, 0], [c.width, c.height], [0, c.height]]; drawCrop(); });
@@ -432,8 +490,10 @@ const POE = (() => {
     $('#cropNext').addEventListener('click', async () => {
       const item = ps.crop?.item, started = Date.now();
       if (!item || !(await keepPage())) return;
-      // The browser lets a tap open the camera for a few seconds only; after that the student taps again.
-      if (Date.now() - started < 4000) openCamera(item);
+      // The camera inside the app opens again at once. The phone's camera app can only be opened for a few
+      // seconds after a tap, so with that one the student may need to tap "Add another page".
+      if (camOk() && !ps.useCameraApp) openDocCam(item);
+      else if (Date.now() - started < 4000) openCamera(item);
       else toast('Page added. Tap "Add another page" for the next one.', 'ok');
     });
     $('#poeSort').addEventListener('change', () => render());
