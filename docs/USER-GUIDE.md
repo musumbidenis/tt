@@ -1,13 +1,13 @@
-# The Ark — User Guide
+# The ARK — User Guide
 
-**RVNP ICT Department attendance, marks and POE system**
+**The ARK: Academic Records Keeper.** The RVNP ICT Department's system for attendance, marks and POE evidence.
 Applies to app version 4.15 (server 6.3, Drive bridge 1.3). The screenshots show an invented demo department.
 
-The Ark is two apps that work on any phone, tablet or computer with a modern browser:
+The ARK is two apps that work on any phone, tablet or computer with a modern browser:
 
 | App | Address | Who uses it |
 |---|---|---|
-| **The Ark** (staff app) | https://musumbidenis.github.io/tt/ | Trainers, HODs and the MIS Officer |
+| **The ARK** (staff app) | https://musumbidenis.github.io/tt/ | Trainers, HODs and the MIS Officer |
 | **Student-POE** (student app) | https://musumbidenis.github.io/tt/student.html | Students |
 
 Both apps keep working with **no internet**. Everything you do is saved on the device straight away and sent to the college database the next time the device is online.
@@ -43,7 +43,7 @@ Do this once, **while you have internet**.
 **Android (Chrome, Edge or Samsung Internet)**
 1. Open the app's address (see the table above).
 2. Open the browser menu (**⋮**) and choose **Add to Home screen** or **Install app**.
-3. From now on, open The Ark from its icon on the home screen.
+3. From now on, open The ARK from its icon on the home screen.
 
 **iPhone or iPad (Safari)**
 1. Open the address in **Safari**.
@@ -54,7 +54,7 @@ Installing matters: the browser then keeps the app's data permanently, and on iP
 
 ### 1.2 Sign in (staff)
 
-1. Open The Ark. The sign-in screen asks for your **staff code** (for example `ICT020`) and **PIN**.
+1. Open The ARK. The sign-in screen asks for your **staff code** (for example `ICT020`) and **PIN**.
 2. Use the PIN the MIS Officer gave you, or the department's **first-time PIN** if you have not chosen your own yet.
 3. The first time, the app asks you to **choose your own PIN**: 4 to 8 digits. Easy PINs such as `1234`, `0000` or `9876` are refused.
 4. Your classes and class lists download straight away. After that, marking works with or without network.
@@ -115,7 +115,7 @@ On a **phone** the tabs run along the bottom of the screen. On a **computer or a
 
 
 
-The header shows **The Ark**, your name and your roles (for example *ICT MUSUMBI .D - HOD, MIS Officer, Trainer*), and whether the device is **Online** or **Offline**.
+The header shows **The ARK**, your name and your roles (for example *ICT MUSUMBI .D - HOD, MIS Officer, Trainer*), and whether the device is **Online** or **Offline**.
 
 ### 2.2 Tables
 

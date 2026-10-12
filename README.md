@@ -1,4 +1,6 @@
-# RVNP Attendance Register (ICT Department)
+# The ARK: Academic Records Keeper (RVNP ICT Department)
+
+The ARK keeps the department's academic records: attendance registers, marks and POE evidence.
 
 Trainers mark attendance on their phones **with no internet**. Whenever a phone is online, its registers go straight into an **online database**. Class lists, trainer loading and term dates come back from the same database.
 
@@ -419,3 +421,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Reset phone** in **Manage → Student phones** (HOD and MIS Officer): frees a student whose phone was changed, lost or reset, or who needs another browser. The next phone they set up becomes theirs; their records stay. Each reset is audited.
 - Messages to students now say a phone or browser is already registered, and to ask the HOD or MIS Officer.
 - **Demo copy** for showing trainers and students: the same apps and server at their own address with their own database of invented data (3 classes, 2 units each, 10 trainers). `python demo/demo.py setup` makes it, `reset` refills it before each demo. See [demo/README.md](demo/README.md).
+
+## Changes in 4.15.1
+
+- **The ARK now stands for Academic Records Keeper.** The sign-in screen shows the full name under the title, and the app names on phones are now *The ARK* (staff) and *Student-POE* (students). Apps already on a home screen keep their old name until they are added again.

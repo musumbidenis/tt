@@ -446,6 +446,7 @@ body.locked { overflow: hidden; }
 .signin-card { width: min(400px, 100%); text-align: center; }
 .signin-card > img { display: block; margin: 0 auto .75rem; background: #fff; border-radius: 12px; padding: 4px; }
 .signin-card h1 { font-size: 1.625rem; margin: 0; }
+.signin-tag { margin: .1rem 0 .35rem; font-family: var(--display); font-weight: 600; letter-spacing: .02em; color: var(--p); }
 .signin-card form { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1.25rem; margin: 1.25rem 0 1rem; }
 .signin-card form h2 { margin-top: 0; }
 .signin-card #siCode { text-transform: uppercase; }

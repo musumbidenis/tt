@@ -1,6 +1,6 @@
 # The demo copy
 
-A practice copy of The Ark for showing trainers and students how it works. It runs the **same code** as the real app, at its own address, with its **own database** full of invented data. Nothing in it touches the real department, and the real app's data never appears in it.
+A practice copy of The ARK (Academic Records Keeper) for showing trainers and students how it works. It runs the **same code** as the real app, at its own address, with its **own database** full of invented data. Nothing in it touches the real department, and the real app's data never appears in it.
 
 - Staff app: `https://rvnp-attendance-demo.<subdomain>.workers.dev/`
 - Student app: `https://rvnp-attendance-demo.<subdomain>.workers.dev/student.html`

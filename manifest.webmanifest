@@ -1,7 +1,7 @@
 {
-  "name": "RVNP Attendance Register",
-  "short_name": "Attendance",
-  "description": "Offline-first attendance register that syncs to Google Sheets",
+  "name": "The ARK - Academic Records Keeper",
+  "short_name": "The ARK",
+  "description": "Academic Records Keeper for the RVNP ICT Department: attendance registers, marks and POE evidence, working offline",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

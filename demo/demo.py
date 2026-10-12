@@ -1,4 +1,4 @@
-"""The demo copy of The Ark: the same apps and server with invented data, for showing trainers and students.
+"""The demo copy of The ARK (Academic Records Keeper): the same apps and server with invented data, for showing trainers and students.
 
     python demo/demo.py setup  --pin 1234 --mis-pin 9876    first time: makes the database, deploys, fills it
     python demo/demo.py deploy                              sends the current code to the demo (after app changes)

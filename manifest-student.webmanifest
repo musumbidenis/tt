@@ -1,8 +1,8 @@
 {
   "id": "student",
-  "name": "RVNP Attendance Check-in",
-  "short_name": "Check-in",
-  "description": "Scan your trainer's lesson QR to record attendance — works offline",
+  "name": "Student-POE (The ARK)",
+  "short_name": "Student-POE",
+  "description": "The ARK student app: check in to lessons, send POE evidence and see your attendance, working offline",
   "start_url": "./student.html",
   "scope": "./",
   "display": "standalone",
