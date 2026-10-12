@@ -4,8 +4,8 @@
  * a device, apart from the real ones. Nothing here changes how the real app works. */
 import server from './worker.js';
 
-const CONFIG = (origin, vapid) => `/* The demo copy (served by worker/demo.js, not the config.js file). */
-window.ATTENDANCE_CONFIG = { serverUrl: ${JSON.stringify(origin + '/exec')}, sheetsUrl: '', vapidPublicKey: ${JSON.stringify(vapid || '')}, demo: true };
+const CONFIG = (origin, vapid, env) => `/* The demo copy (served by worker/demo.js, not the config.js file). */
+window.ATTENDANCE_CONFIG = { serverUrl: ${JSON.stringify(origin + '/exec')}, sheetsUrl: '', vapidPublicKey: ${JSON.stringify(vapid || '')}, googleClientId: ${JSON.stringify(env.GOOGLE_CLIENT_ID || '')}, googleDomain: ${JSON.stringify(env.GOOGLE_DOMAIN || '')}, demo: true };
 document.addEventListener('DOMContentLoaded', () => {
   document.title = 'Demo · ' + document.title;
   const t = document.querySelector('.topbar .brand strong');
@@ -18,7 +18,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/exec') return server.fetch(request, env, ctx);
     if (url.pathname === '/config.js') {
-      return new Response(CONFIG(url.origin, env.VAPID_PUBLIC_KEY), { headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' } });
+      return new Response(CONFIG(url.origin, env.VAPID_PUBLIC_KEY, env), { headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' } });
     }
     if (url.pathname === '/') return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
     return env.ASSETS.fetch(request);

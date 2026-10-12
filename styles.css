@@ -956,3 +956,9 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
   body { font-size: 13px; }
   input, select, textarea { font-size: 16px; }
 }
+
+/* ---------- Google Drive (students' own Drive) ---------- */
+.google-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; justify-content: space-between; padding: .6rem .75rem; margin: .5rem 0 .75rem; border: 1px solid var(--line); border-radius: var(--r, 10px); background: var(--surface); }
+.poe-changed { margin: .5rem 0; padding: .5rem .75rem; border-radius: 8px; background: #fef3c7; color: #78350f; font-weight: 600; }
+.archive-email { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem; margin-top: .75rem; }
+.archive-email label { flex: 1 1 260px; }

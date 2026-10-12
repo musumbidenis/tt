@@ -425,3 +425,10 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Changes in 4.15.1
 
 - **The ARK now stands for Academic Records Keeper.** The sign-in screen shows the full name under the title, and the app names on phones are now *The ARK* (staff) and *Student-POE* (students). Apps already on a home screen keep their old name until they are added again.
+
+## Changes in 4.16 (Worker 6.4.0)
+
+- **Students save POE evidence in their own college Google Drive.** They connect Google once (college accounts only); each document goes to *The ARK - POE* in their Drive and is shared, view only, with the unit's trainer, the HOD, the MIS Officer and the backup account. A new trainer is added automatically; earlier ones keep access.
+- **Fingerprints.** The server checks each file with Google and keeps its md5; if a student changes a file after sending it, trainers see *changed after sending*.
+- **Staff connect Google** in Profile to open students' documents. The MIS Officer sets the **Backup account** in Manage → Google Drive.
+- Uploads no longer go through the Drive bridge, so busy moments (everyone sending after a CAT) are no longer limited by Apps Script. Documents sent earlier still open through the bridge.

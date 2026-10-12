@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.15.1';
+const APP_VERSION = '4.16.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1836,7 +1836,33 @@ function renderIdentity() {
   const s = me();
   $('#trainerLabel').textContent = !s ? 'Not signed in' : `${s.name} - ${roleText(s) || 'no role yet'}`;
 }
+/* ---------- the trainer's college Google account ----------
+ * Students share their POE documents (in their own Drive) with this address, and the app opens them with it. */
+async function connectGoogle(choose = false) {
+  if (!navigator.onLine) { toast('Connecting Google needs internet', 'err'); return false; }
+  try {
+    const g = await Google.signIn('staff', { choose });
+    const res = await api('setGoogle', { accessToken: g.token });
+    if (!res.ok) throw new Error(res.error);
+    await saveAuth({ ...state.auth, staff: { ...state.auth.staff, email: res.email } });
+    renderMe();
+    toast(`Connected: ${res.email}. Students' documents are shared with this address.`, 'ok');
+    return true;
+  } catch (e) { toast(e.message, 'err'); return false; }
+}
+function renderGoogleCard() {
+  const card = $('#googleCard'); if (!card) return;
+  card.hidden = !(typeof Google !== 'undefined' && Google.on() && me());
+  if (card.hidden) return;
+  const mail = me().email || '';
+  $('#googleInfo').innerHTML = mail
+    ? `Connected: <b>${esc(mail)}</b>. Students' POE documents are shared with this address, and you open them with it.`
+    : 'Connect your college Google account, so the POE documents students save in their own Drive are shared with you and you can open them.';
+  $('#googleConnect').textContent = mail ? 'Use another account' : 'Connect Google';
+}
+
 function renderMe() {
+  renderGoogleCard();
   const s = me();
   $('#meName').textContent = s?.name || 'Not signed in';
   $('#meRoles').textContent = s ? roleText(s) || 'No role yet' : '';
@@ -1855,6 +1881,7 @@ function fillSettingsForms() {
 }
 
 function wire() {
+  $('#googleConnect')?.addEventListener('click', () => connectGoogle(!!me()?.email));
   // On wide screens the tabs become a side bar that starts just under the header, so it needs the header's height.
   const bar = $('.topbar');
   const measureBar = () => document.documentElement.style.setProperty('--top-h', bar.offsetHeight + 'px');

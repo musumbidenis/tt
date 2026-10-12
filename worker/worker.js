@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.3.0';
-const SCHEMA_VERSION = '8';
+export const VERSION = '6.4.0';
+const SCHEMA_VERSION = '9';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -65,7 +65,11 @@ CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);`;
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
   'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT',
   'ALTER TABLE evidence ADD COLUMN seen_at TEXT', 'ALTER TABLE classes ADD COLUMN status TEXT', 'ALTER TABLE classes ADD COLUMN archived_at TEXT',
-  'ALTER TABLE classes ADD COLUMN archived_by TEXT', 'ALTER TABLE terms ADD COLUMN lesson_hours REAL'];
+  'ALTER TABLE classes ADD COLUMN archived_by TEXT', 'ALTER TABLE terms ADD COLUMN lesson_hours REAL',
+  // Evidence kept in the student's own Google Drive (source 'drive'), checked by its fingerprint (md5).
+  'ALTER TABLE staff ADD COLUMN email TEXT', 'ALTER TABLE trainees ADD COLUMN email TEXT', 'ALTER TABLE evidence ADD COLUMN source TEXT',
+  'ALTER TABLE evidence ADD COLUMN owner_email TEXT', 'ALTER TABLE evidence ADD COLUMN md5 TEXT', 'ALTER TABLE evidence ADD COLUMN modified_at TEXT',
+  'ALTER TABLE evidence ADD COLUMN shared TEXT', 'ALTER TABLE evidence ADD COLUMN changed_at TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -259,6 +263,9 @@ const ACTIONS = {
   updateStaff: { role: ['MIS'], fn: (env, b, me) => updateStaff(env, b, me) },
   poeList: { fn: (env, b, me) => poeList(env, b, me) },
   poeView: { fn: (env, b, me) => poeView(env, b, me) },
+  poeChanged: { fn: (env, b, me) => poeChanged(env, b, me) },
+  setGoogle: { fn: (env, b, me) => setGoogle(env, b, me) },
+  setArchiveEmail: { role: ['MIS'], fn: (env, b, me) => setArchiveEmail(env, b, me) },
   poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me, pre, ctx) => poeDecide(env, b, me, ctx) },
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
@@ -280,7 +287,7 @@ const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poe
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
   return { code: r.code, name: r.name, roles: rolesList(r.roles), responsibility: r.responsibility || '', active: !!r.active,
-    hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100, driveFolder: r.drive_folder || '' };
+    hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100, driveFolder: r.drive_folder || '', email: r.email || '' };
 }
 const getStaff = (env, code) => one(env, 'SELECT * FROM staff WHERE code=?', String(code || '').trim());
 
@@ -1549,7 +1556,46 @@ async function classUnits(env, cls) {
 }
 const evidenceOut = (r) => ({ id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
   version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.status,
-  decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at });
+  decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at,
+  source: r.source || 'bridge', ownerEmail: r.owner_email || '', changedAt: r.changed_at || '' });
+
+/* ---------- evidence in the student's own Google Drive ----------
+ * The student's phone saves the PDF in the student's college Drive and shares it (view only) with the unit's trainer,
+ * the HOD(s), the MIS Officer(s) and the backup account. The Worker checks the file with Google itself, using the
+ * student's short-lived Google access (never stored), and keeps its fingerprint (md5) so a later change shows. */
+const GOOGLE_API = 'https://www.googleapis.com';
+async function google(env, path, token) {
+  // GOOGLE_API_TEST points the local test harness at a stand-in for Google; never set on Cloudflare.
+  const res = await fetch((env.GOOGLE_API_TEST || GOOGLE_API) + path, { headers: { Authorization: 'Bearer ' + String(token || '') } });
+  if (res.status === 401) fail('Your Google sign-in has expired. Sign in to Google again.');
+  if (!res.ok) fail(`Google said no (${res.status}). Try again.`);
+  return res.json();
+}
+const okDomain = (env, email) => !env.GOOGLE_DOMAIN || lower(String(email || '').split('@')[1]) === lower(env.GOOGLE_DOMAIN);
+/** Signed with the database's own key (no Drive bridge needed): what the phone may save, and as which version. */
+async function signPlan(env, payload) { const body = b64u(JSON.stringify(payload)); return body + '.' + (await hmacHex('plan|' + body, await authSecret(env))); }
+async function readPlan(env, plan) {
+  const [body, sig] = String(plan || '').split('.');
+  if (!body || !sig || (await hmacHex('plan|' + body, await authSecret(env))) !== sig) fail('That upload plan is not valid');
+  return JSON.parse(unb64u(body));
+}
+/** Who should see a student's file: the unit's trainer now (earlier ones are never removed), HODs, MIS Officers and
+ *  the backup account. Only people who have connected Google in the staff app have an address to share with. */
+async function shareTargets(env, classCode, unitCode, ctx = {}) {
+  const [loading, staff, archive] = ctx.loading ? [ctx.loading, ctx.staff, ctx.archive] : await many(env,
+    ['SELECT l.class_code, l.unit_code, l.trainer_code, l.term_id FROM loading l LEFT JOIN terms t ON t.id=l.term_id ORDER BY t.start_date DESC'],
+    ["SELECT code, roles, email FROM staff WHERE active=1 AND email IS NOT NULL AND email<>''"], ["SELECT value FROM meta WHERE key='archive_email'"]);
+  Object.assign(ctx, { loading, staff, archive });
+  const byCode = new Map(staff.map((s) => [lower(s.code), s]));
+  // The trainer this term; if the unit is not taught this term, whoever had it last.
+  const trainer = unitsForClass(loading.filter((u) => u.unit_code === unitCode), classCode)[0];
+  const out = new Set();
+  if (trainer && byCode.get(lower(trainer.trainer_code))) out.add(lower(byCode.get(lower(trainer.trainer_code)).email));
+  for (const s of staff) if (hasRole(s.roles, 'HOD') || hasRole(s.roles, 'MIS')) out.add(lower(s.email));
+  if (archive[0]?.value) out.add(lower(archive[0].value));
+  return [...out];
+}
+const sharedOf = (r) => { try { return JSON.parse(r.shared || '[]') || []; } catch { return []; } };
 const STUDENT_ACTIONS = {
   /** Every lesson of this student's class with their mark, so the student keeps a copy of their own attendance. */
   async myAttendance(env, b) {
@@ -1593,7 +1639,61 @@ const STUDENT_ACTIONS = {
   },
   async poeMine(env, b) {
     const t = await studentOf(env, b);
-    return { ok: true, evidence: (await all(env, 'SELECT * FROM evidence WHERE adm_no=? ORDER BY submitted_at DESC', t.adm_no)).map(evidenceOut) };
+    const rows = await all(env, 'SELECT * FROM evidence WHERE adm_no=? ORDER BY submitted_at DESC', t.adm_no);
+    // For files in the student's Drive: anyone who should see it but has not been given access yet (a new trainer,
+    // a new HOD). The phone shares it and reports back; nobody is ever removed.
+    const ctx = {};
+    const out = [];
+    for (const r of rows) {
+      const e = evidenceOut(r);
+      if (r.source === 'drive') { const have = new Set(sharedOf(r)); e.share = (await shareTargets(env, r.class_code, r.unit_code, ctx)).filter((x) => !have.has(x) && x !== lower(r.owner_email)); }
+      out.push(e);
+    }
+    return { ok: true, evidence: out };
+  },
+  /** Before saving to the student's Drive: the file name, the version, and who to share it with. */
+  async poeDrivePlan(env, b) {
+    const t = await studentOf(env, b);
+    const item = String(b.item || '').toUpperCase();
+    if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
+    if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
+    const [loading, ver] = await many(env, [`SELECT l.unit_code, l.unit_name, l.class_code FROM loading l LEFT JOIN terms t ON t.id=l.term_id WHERE l.unit_code=? ORDER BY t.start_date DESC`, String(b.unitCode || '')],
+      ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item]);
+    const unit = unitsForClass(loading, t.class_code)[0];
+    if (!unit) fail('That unit has not been taught to your class');
+    const v = (Number(ver[0]?.v) || 0) + 1, unitName = unit.unit_name || unit.unit_code;
+    const fileName = `${safeName(unitName)} - ${item} - v${v}.pdf`;
+    const plan = await signPlan(env, { id: crypto.randomUUID(), adm: t.adm_no, sname: t.name, cls: t.class_code, unit: unit.unit_code, unitName, item, v, name: fileName,
+      pages: Number(b.pages) || 0, exp: Date.now() + 24 * 3600e3 });
+    return { ok: true, plan, fileName, version: v, folder: 'The ARK - POE', subfolder: safeName(unitName),
+      description: `POE evidence ${item} for ${unitName}, ${t.name} (${t.adm_no}), sent from The ARK`, share: await shareTargets(env, t.class_code, unit.unit_code) };
+  },
+  /** After the phone saved the file: the Worker reads it from Google with the student's access and records it. */
+  async poeDriveDone(env, b) {
+    const t = await studentOf(env, b);
+    const p = await readPlan(env, b.plan);
+    if (lower(p.adm) !== lower(t.adm_no)) fail('That upload plan is for another student');
+    const f = await google(env, `/drive/v3/files/${encodeURIComponent(String(b.fileId || ''))}?fields=id,name,mimeType,size,md5Checksum,modifiedTime,trashed,owners(emailAddress)`, b.accessToken);
+    const owner = lower(f.owners?.[0]?.emailAddress || '');
+    if (f.trashed) fail('That file is in the bin in Google Drive');
+    if (f.mimeType !== 'application/pdf') fail('Only PDF files can be sent');
+    if (!okDomain(env, owner)) fail(`Use your college Google account (@${env.GOOGLE_DOMAIN}), not ${owner}.`);
+    if (Number(f.size) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB');
+    const now = nowIso(), shared = (b.shared || []).map((x) => lower(String(x))).filter(Boolean).slice(0, 50);
+    await many(env, [`INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at,source,owner_email,md5,modified_at,shared)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,'drive',?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.id, t.adm_no, t.name, t.class_code, p.unit, p.unitName, p.item, p.v,
+    f.id, f.name || p.name, Number(f.size) || 0, p.pages, now, now, owner, f.md5Checksum || '', f.modifiedTime || '', JSON.stringify(shared)],
+    ['UPDATE trainees SET email=? WHERE adm_no=?', owner, t.adm_no], changedStmt());
+    return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', p.id)) };
+  },
+  /** The phone shared a file with more people (a new trainer or HOD): remember them, so they are not asked for again. */
+  async poeShared(env, b) {
+    const t = await studentOf(env, b);
+    const r = await one(env, "SELECT * FROM evidence WHERE id=? AND adm_no=? AND source='drive'", String(b.id || ''), t.adm_no);
+    if (!r) fail('That submission no longer exists');
+    const all2 = [...new Set([...sharedOf(r), ...(b.emails || []).map((x) => lower(String(x))).filter(Boolean)])].slice(0, 100);
+    await run(env, 'UPDATE evidence SET shared=? WHERE id=?', JSON.stringify(all2), r.id);
+    return { ok: true };
   },
   /** The student turned notifications on. The address comes from the browser and is only an address:
    *  nothing private is kept, and only this student's registered phone can add or remove one. */
@@ -1682,9 +1782,38 @@ async function evidenceFor(env, id, me, decide) {
 }
 async function poeView(env, b, me) {
   const r = await evidenceFor(env, b.id, me, false);
+  // In the student's Drive: the trainer's own Google sign-in opens it; the fingerprint shows if it changed since.
+  if (r.source === 'drive') return { ok: true, source: 'drive', fileId: r.file_id, fileName: r.file_name, md5: r.md5 || '', ownerEmail: r.owner_email || '' };
   const url = await getMeta(env, 'drive_url');
   if (!url) fail('The Google Drive link is not set up yet');
   return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
+}
+/** A trainer's device found the file in the student's Drive no longer matches what was sent. */
+async function poeChanged(env, b, me) {
+  const r = await evidenceFor(env, b.id, me, false);
+  if (r.source !== 'drive' || !b.md5 || b.md5 === r.md5 || r.changed_at) return { ok: true };
+  const now = nowIso();
+  await many(env, ['UPDATE evidence SET changed_at=?, updated_at=? WHERE id=?', now, now, r.id], changedStmt());
+  await audit(env, me, 'evidence changed', `${r.adm_no} ${r.unit_code} ${r.item} v${r.version}: the file in the student's Drive changed after it was sent`);
+  return { ok: true, changedAt: now };
+}
+/** Connect Google in the staff app: the address students' files are shared with. Checked with Google, never typed in. */
+async function setGoogle(env, b, me) {
+  if (b.clear) { await run(env, 'UPDATE staff SET email=NULL, updated_at=? WHERE code=?', nowIso(), me.code); return { ok: true, email: '' }; }
+  const u = await google(env, '/oauth2/v3/userinfo', b.accessToken);
+  const email = lower(u.email || '');
+  if (!email || u.email_verified === false) fail('Google did not give an email address');
+  if (!okDomain(env, email)) fail(`Use your college Google account (@${env.GOOGLE_DOMAIN}), not ${email}.`);
+  await many(env, ['UPDATE staff SET email=?, updated_at=? WHERE code=?', email, nowIso(), me.code], changedStmt());
+  return { ok: true, email };
+}
+async function setArchiveEmail(env, b, me) {
+  const email = lower(String(b.email || '').trim());
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail('That does not look like an email address');
+  if (email && !okDomain(env, email)) fail(`Use a college Google account (@${env.GOOGLE_DOMAIN})`);
+  await setMeta(env, 'archive_email', email);
+  await audit(env, me, 'backup account', email || '(none)');
+  return { ok: true, email };
 }
 async function poeDecide(env, b, me, ctx) {
   const r = await evidenceFor(env, b.id, me, true);
@@ -1790,8 +1919,8 @@ async function poeClass(env, b) {
   return { ok: true, classes, classCode: cls, units, students };
 }
 async function driveStatus(env) {
-  const r = await getMeta(env, 'drive_report');
-  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r ? JSON.parse(r) : null };
+  const [r, archive] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"]);
+  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', domain: env.GOOGLE_DOMAIN || '' };
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */

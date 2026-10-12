@@ -15,3 +15,7 @@ mode = "smart"              # run next to the database (README step 8)
 binding = "DB"
 database_name = "rvnp-attendance"
 database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
+
+# Only college Google accounts may connect (staff) or own evidence files (students). Not a secret.
+[vars]
+GOOGLE_DOMAIN = "rvnp.ac.ke"

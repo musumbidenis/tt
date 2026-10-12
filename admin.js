@@ -568,10 +568,13 @@ const Admin = (() => {
   /* ---------- MIS: the Google Drive bridge (attendance sheets per trainer, POE files) ---------- */
   async function loadDrive() {
     try {
-      const { secret, report: r } = need(await api('driveStatus'));
+      const { secret, report: r, archiveEmail } = need(await api('driveStatus'));
+      // The backup account sees every document students save in their own Drive (and copies approved ones later).
+      const archiveBox = typeof Google !== 'undefined' && Google.on() ? `<form class="archive-email" id="archiveEmailForm"><label>Backup account <span class="muted small">(sees every POE document students save in their own Drive)</span>
+        <input type="email" id="archiveEmail" value="${esc(archiveEmail || '')}" placeholder="ictpoe@rvnp.ac.ke"></label><button class="btn small">Save</button></form>` : '';
       if (!r) {
         fill('m-drive', `<p class="muted">Not connected yet. Each trainer's attendance sheet and the students' POE files go to the college Google Drive through a small Apps Script in the school account. The README has the steps (about 10 minutes, once).</p>
-          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare → the Worker → Settings → Variables).</p>'}`);
+          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare → the Worker → Settings → Variables).</p>'}${archiveBox}`);
         return;
       }
       const opts = (sel) => `<option value="">Choose their folder…</option>${(r.folders || []).sort((a, b) => a.name.localeCompare(b.name)).map((f) => `<option value="${esc(f.id)}"${f.id === sel ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}`;
@@ -587,7 +590,7 @@ const Admin = (() => {
         <ul class="mlist drive-list">${r.unmatched.map((u) => `<li data-code="${esc(u.code)}"><span><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span></span>
           <span class="drive-pick">${(r.folders || []).length ? `<select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select>` : ''}
           <input type="text" data-drivelink placeholder="or paste folder link" aria-label="Folder link for ${esc(u.name)}"></span></li>`).join('')}</ul>` : '<p>Every trainer with units has a folder and a sheet.</p>'}
-        <p class="muted small">Sheets refresh about every 10 minutes from the registers that have reached the server.</p>`);
+        <p class="muted small">Sheets refresh about every 10 minutes from the registers that have reached the server.</p>${archiveBox}`);
     } catch (e) { fill('m-drive', `<p class="err-text">${esc(e.message)}</p>`); }
   }
   /** Asks the bridge a question the way a phone does. A sign-in page or no answer shows here, not on a student's phone. */
@@ -737,6 +740,15 @@ const Admin = (() => {
     if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click(); }
   });
   document.addEventListener('submit', (e) => {
+    if (e.target.id === 'archiveEmailForm') {
+      e.preventDefault();
+      const btn = e.target.querySelector('button');
+      busy(btn, true, 'Saving…');
+      api('setArchiveEmail', { email: $('#archiveEmail').value.trim() }).then(need)
+        .then((r) => toast(r.email ? `Students' documents are now also shared with ${r.email}` : 'No backup account', 'ok'))
+        .catch((err) => toast(err.message, 'err')).finally(() => busy(btn, false));
+      return;
+    }
     if (e.target.id === 'defaultPinForm') {
       e.preventDefault();
       const pin = $('#defaultPin').value.trim();

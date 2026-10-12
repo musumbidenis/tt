@@ -97,7 +97,7 @@ const PoeStaff = (() => {
       ${pick ? `<input type="checkbox" class="poe-pick" data-pick="${esc(e.id)}" aria-label="Select ${esc(e.name)}"${ps.picked.has(e.id) ? ' checked' : ''}>` : ''}
       <button type="button" class="poe-open" data-open="${esc(e.id)}">
         <span class="poe-who"><b>${esc(e.name)}</b><span class="muted small">${esc(e.admNo)}</span></span>
-        <span class="poe-what"><span class="item-tag">${esc(e.item)}</span><span class="muted tiny">v${e.version} - ${esc(fmtTime(e.submittedAt))}</span></span>
+        <span class="poe-what"><span class="item-tag">${esc(e.item)}</span><span class="muted tiny">v${e.version} - ${esc(fmtTime(e.submittedAt))}${e.changedAt ? ' - <b class="warn-text">changed after sending</b>' : ''}</span></span>
         <span class="pill ${cls}">${label}</span>
       </button></li>`;
   }
@@ -212,22 +212,50 @@ const PoeStaff = (() => {
     try {
       const hit = await (await caches.open(FILE_CACHE)).match(fileKey(id));
       if (!hit) return null;
-      return { bytes: new Uint8Array(await hit.arrayBuffer()), mime: hit.headers.get('Content-Type') || 'application/pdf', name: decodeURIComponent(hit.headers.get('X-Name') || '') };
+      return { bytes: new Uint8Array(await hit.arrayBuffer()), mime: hit.headers.get('Content-Type') || 'application/pdf', name: decodeURIComponent(hit.headers.get('X-Name') || ''), md5: hit.headers.get('X-Md5') || '' };
     } catch { return null; }
   }
   async function keepFile(id, file) {
     try {
       const c = await caches.open(FILE_CACHE);
-      await c.put(fileKey(id), new Response(file.bytes, { headers: { 'Content-Type': file.mime, 'X-Name': encodeURIComponent(file.name || '') } }));
+      await c.put(fileKey(id), new Response(file.bytes, { headers: { 'Content-Type': file.mime, 'X-Name': encodeURIComponent(file.name || ''), 'X-Md5': file.md5 || '' } }));
       const keys = await c.keys();
       for (const k of keys.slice(0, Math.max(0, keys.length - 60))) await c.delete(k);   // the 60 most recent
     } catch { /* storage full or private mode: it is fetched again next time */ }
+  }
+  /* A document in the student's own Drive: opened with the trainer's Google sign-in. Its fingerprint (md5) is
+   * compared with the one recorded when it was sent, so a file changed afterwards is flagged. */
+  const needGoogle = () => Object.assign(new Error('Connect your Google account to open this document.'), { needGoogle: true });
+  async function driveFile(id) {
+    const hit = await cachedFile(id);
+    if (!navigator.onLine) { if (hit) return hit; throw new Error('Connect to the internet to open this document.'); }
+    if (!Google.token('staff')) { if (hit) return hit; throw needGoogle(); }
+    const v = await api('poeView', { id });
+    if (!v.ok) throw new Error(v.error);
+    let m;
+    try { m = await Google.meta('staff', v.fileId); } catch (err) {
+      if (err instanceof Google.NeedSignIn) throw needGoogle();
+      if (err.status === 404 || err.status === 403) throw new Error(`This document has not been shared with ${Google.email() || 'your Google account'} yet. It is shared when the student's phone is next online. Check that the Google account in Profile is your college one.`);
+      throw err;
+    }
+    const changed = !!(v.md5 && m.md5Checksum && m.md5Checksum !== v.md5);
+    if (changed) api('poeChanged', { id, md5: m.md5Checksum }).catch(() => {});
+    if (hit && hit.md5 && hit.md5 === m.md5Checksum) return { ...hit, changed };
+    const file = { bytes: await Google.download('staff', v.fileId), mime: 'application/pdf', name: v.fileName, md5: m.md5Checksum || '', changed };
+    keepFile(id, file);
+    return file;
   }
   const fetching = new Map();
   function fetchFile(id) {
     if (ps.files.has(id)) return Promise.resolve(ps.files.get(id));
     if (fetching.has(id)) return fetching.get(id);
     const job = (async () => {
+      if (ps.list.find((x) => x.id === id)?.source === 'drive') {
+        const file = await driveFile(id);
+        ps.files.set(id, file);
+        if (ps.files.size > 12) ps.files.delete(ps.files.keys().next().value);
+        return file;
+      }
       let file = await cachedFile(id);
       if (!file) {
         const v = await api('poeView', { id });
@@ -281,9 +309,13 @@ const PoeStaff = (() => {
       const file = await fetchFile(id);
       prefetch([order[i + 1], order[i - 1]]);
       if (ps.open !== id) return;
+      if (file.changed || e.changedAt) $('#poePages').insertAdjacentHTML('beforebegin', '<p class="poe-changed">This file was changed in the student\'s Drive after it was sent. Check it carefully before deciding.</p>');
       await showPdf(file);
     } catch (err) {
-      if (ps.open === id) $('#poePages').innerHTML = `<p class="err-text">${esc(err.message)}</p><p class="muted small">You can still open it in Drive.</p>`;
+      if (ps.open !== id) return;
+      $('#poePages').innerHTML = err.needGoogle
+        ? `<p>${esc(err.message)} Students now save their documents in their own college Google Drive and share them with you.</p><button type="button" class="btn primary" data-act="gconnect">${me()?.email ? 'Sign in to Google' : 'Connect Google'}</button>`
+        : `<p class="err-text">${esc(err.message)}</p><p class="muted small">You can still open it in Drive.</p>`;
     }
   }
   async function showPdf(file) {
@@ -360,6 +392,7 @@ const PoeStaff = (() => {
       const d = t.closest('[data-decide]'); if (d) { decide(d.dataset.decide, d); return; }
       const a = t.closest('[data-act]');
       if (a?.dataset.act === 'close') $('#poeDialog').close();
+      if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (ok && id) { ps.files.delete(id); openViewer(id); } }); }
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; render(); }
       if (a?.dataset.act === 'receive') receive(a);
       if (a?.dataset.act === 'stu-xlsx' || a?.dataset.act === 'stu-pdf') {

@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.15.1**, server (Worker) **6.3.0**, database schema **8**, Drive bridge **1.3.0**.
+Describes app **4.16.0**, server (Worker) **6.4.0**, database schema **9**, Drive bridge **1.3.0**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -79,7 +79,8 @@ The git repository is the `app` folder. Everything at its root is published to G
 | `poe-student.js` | Student POE: document scanning, drafts, PDF making, uploads, notification switch. |
 | `scanner.js` | Page detection, perspective correction, the "document" filter, PDF assembly. |
 | `sw.js` | Service worker: precaches every app file under the `CACHE` name; `push` and `notificationclick` handlers. |
-| `config.js` | Where both apps find the server (see [3.1](#31-configjs)). |
+| `config.js` | Where both apps find the server, and the Google sign-in ID (see [3.1](#31-configjs)). |
+| `google.js` | Google sign-in and Drive for both apps: sign-in, folders, resumable upload, sharing, metadata, download. |
 | `styles.css` | All styling, light and dark. |
 | `design-notes.js` | Developer overlay loaded only with `?notes=1`. |
 | `manifest.webmanifest`, `manifest-student.webmanifest` | Install metadata for the two apps. |
@@ -109,6 +110,8 @@ window.ATTENDANCE_CONFIG = {
   serverUrl: 'https://rvnp-attendance.ictpoe.workers.dev/',  // the Worker
   sheetsUrl: 'https://script.google.com/macros/s/…/exec',      // retired Google Sheet backend, used only if serverUrl is empty
   vapidPublicKey: '',                                         // student notifications; empty = the switch is not offered
+  googleClientId: '…apps.googleusercontent.com',              // Google sign-in; empty = evidence goes through the Drive bridge
+  googleDomain: 'rvnp.ac.ke',                                 // only accounts at this domain may sign in
 };
 ```
 
@@ -125,6 +128,7 @@ Set in Cloudflare → the Worker → **Settings → Variables and Secrets**. The
 | `BRIDGE_SECRET` | Secret | For Google Drive | The shared secret printed by the bridge's `setup()`. Signs nudges, tickets and the bridge's own calls. |
 | `VAPID_PRIVATE_KEY` | Secret | For notifications | The VAPID private key: the bare `d` value, or a whole JWK `{"kty":"EC","crv":"P-256","d":…,"x":…,"y":…}`. |
 | `VAPID_PUBLIC_KEY` | Text | With a bare private key | The VAPID public key, same as `config.js`. Not needed when `VAPID_PRIVATE_KEY` is a full JWK. |
+| `GOOGLE_DOMAIN` | Text (in `wrangler.toml`) | With Google sign-in | Only accounts at this domain may connect (staff) or own evidence files (students). |
 | `VAPID_SUBJECT` | Secret | For notifications | A contact for push services, for example `mailto:ict@rvnp.ac.ke`. |
 
 ### 3.3 `wrangler.toml`
@@ -184,7 +188,7 @@ Bump these with every release:
 4. **Edit code**, replace everything with `worker/worker.js`, **Deploy** (or connect Workers Builds, step 8).
 5. **Bindings → Add binding → D1 database**: variable `DB`, database `rvnp-attendance`.
 6. **Settings → Variables and Secrets → Add**: Secret `ADMIN_PIN`, a 6-digit PIN.
-7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.3.0",…}`. Put the address in `config.js` as `serverUrl`.
+7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.4.0",…}`. Put the address in `config.js` as `serverUrl`.
 8. Recommended:
    - **Settings → General → Placement → Smart**, so the Worker runs next to the database.
    - **Workers Builds**: put the D1 database ID in `wrangler.toml`, then **Settings → Builds → Connect** → GitHub → `tt`, branch `main`, build command empty, deploy command `npx wrangler deploy`, root directory `/`. Every push then deploys the Worker in a minute or two.
@@ -215,6 +219,18 @@ Use the school Workspace account that owns the folders (**ictpoe@rvnp.ac.ke**).
 4. `?action=ping` now reports `"push":true`.
 
 Never commit the private key. If it is exposed, make a new pair and repeat steps 2 and 3; students simply turn the switch on again.
+
+### 4.5 Google sign-in (evidence in students' own Drive, about 10 minutes)
+
+As ictpoe@rvnp.ac.ke, at console.cloud.google.com:
+
+1. Create a project (for example `the-ark`) and enable the **Google Drive API** and the **Google Sheets API**.
+2. **OAuth consent screen**: User type **Internal**, app name **The ARK**. Internal apps are limited to the college's accounts and need no Google verification, even for `drive.readonly`.
+3. **Credentials → Create OAuth client ID → Web application**, Authorised JavaScript origins: `https://musumbidenis.github.io` and `https://rvnp-attendance-demo.ictpoe.workers.dev`.
+4. Put the client ID in `config.js` (`googleClientId`) and in `wrangler.demo.toml` (`GOOGLE_CLIENT_ID`); `GOOGLE_DOMAIN` is in both `wrangler.toml` files. Bump `APP_VERSION` and `CACHE`, commit and push.
+5. In the app, the MIS Officer sets the **Backup account** in Manage → Google Drive, and every trainer, HOD and MIS Officer connects Google in Profile.
+
+The client ID is not secret. With it empty, students send evidence through the Drive bridge as before.
 
 ---
 
@@ -304,7 +320,7 @@ A second Worker, `rvnp-attendance-demo`, with its own D1 database `rvnp-demo`, r
 | `devices` | `device_id` | Which device belongs to which student. |
 | `signoffs` | `id` (`term|class|unit`) | Term registers submitted to the HOD and decisions. |
 | `audit` | autoincrement | Who changed what in Manage. |
-| `evidence` | `id` | POE submissions: student, class, unit, item, version, Drive `file_id`, size, pages, `status`, decision, comment, `received_at`, `seen_at`. |
+| `evidence` | `id` | POE submissions: student, class, unit, item, version, Drive `file_id`, size, pages, `status`, decision, comment, `received_at`, `seen_at`; `source` (`drive` = in the student's own Drive, else the bridge), `owner_email`, `md5` and `modified_at` when sent, `shared` (JSON list of addresses given view access), `changed_at` (a trainer's device found a different fingerprint). `staff.email` and `trainees.email` are the connected Google accounts. |
 | `unit_marks` | `class_code, unit_code, adm_no` | **Lifetime** marksheet rows: `cat1–3`, `prac1–3`, and `meta` JSON recording for each cell the term, staff code and time it was entered. |
 | `marks` | `term_id, class_code, unit_code, adm_no` | Pre-6.0 per-term marks. No longer written; copied into `unit_marks` by a data migration. |
 | `unlocks` | `term_id, class_code, unit_code` | Ended-term class-units the HOD or MIS Officer reopened, with `until`. |
@@ -388,7 +404,10 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `myAttendance` | Every lesson of the student's class with their mark (accepted QR check-ins count as Present). |
 | `poeTicket` | A signed upload ticket for one item, with the next version number and file name. |
 | `poeDone` | Records an upload the bridge has signed. |
-| `poeMine` | The student's evidence and statuses. |
+| `poeMine` | The student's evidence and statuses; for files in the student's Drive, `share` lists who should have view access but has not been given it yet. |
+| `poeDrivePlan` | Before saving to the student's Drive: file name, version, folder names, description and who to share with, plus a plan signed with the database's key. |
+| `poeDriveDone` | Records a file in the student's Drive. The Worker reads the file from Google with the student's access token (used once, not stored): PDF, not in the bin, owned by a college account, at most 20 MB; it stores the md5 and owner. |
+| `poeShared` | The device shared a file with more people; they are added to `shared`. |
 | `pushSubscribe`, `pushUnsubscribe` | Notification addresses (at most 4 per student). |
 | `notices` | Decisions the student has not been told about; marks them seen. |
 
@@ -426,7 +445,10 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `setDefaultPin` | MIS | Set or remove the first-time PIN. |
 | `importRegCodes` | MIS | CDACC registration codes by admission number. |
 | `archiveClasses`, `classExport`, `deleteClasses` | MIS | Archive or restore classes; everything about them as JSON; delete archived classes (needs the typed name). |
-| `poeList`, `poeView` | Any | Evidence lists and a signed preview ticket. |
+| `poeList`, `poeView` | Any | Evidence lists; for a preview, a signed ticket for the bridge, or for a file in a student's Drive its file ID and md5 (the trainer's device opens it with their own Google sign-in). |
+| `poeChanged` | Any who may view | The device found a different md5 in the student's Drive: sets `changed_at` and audits it. |
+| `setGoogle` | Any | Connect (checked with Google's userinfo, college domain only) or clear the staff member's Google address. |
+| `setArchiveEmail` | MIS | The backup account every student file is shared with. |
 | `poeDecide` | Trainer, HOD | Approve or return (sends a notification). |
 | `poeReceive` | MIS | Mark approved evidence received. |
 | `poeClass` | MIS, HOD | Students and units of one class for the By student view. |
@@ -495,6 +517,15 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 2. The bridge saves `POE / <class> / <adm - name> / <unit> - <item> - v<N>.pdf`, signs what it saved, and the device sends that to `poeDone`. The Worker cannot be told about a file that was not saved.
 3. Trainers preview through `poeView` (a 10-minute view ticket) and the bridge's `file` action. Files are cached on the trainer's device afterwards.
 4. Who decides: the unit's trainer this term; if the unit is not taught this term, the trainer who had it last; the HOD always. Trainers who taught the unit earlier can view.
+
+### 9.6a Evidence in the student's own Drive (from 4.16)
+
+With `googleClientId` set, `google.js` signs people in with Google Identity Services (token model; the access token lasts about an hour and is kept in `sessionStorage` only).
+
+1. **Student device** (scope `drive.file`, so it sees only files it creates): `poeDrivePlan` → finds or makes `The ARK - POE / <unit>` → resumable upload → `permissions.create` (reader, no email) for each address in the plan → `poeDriveDone` with the access token. Each step is saved on the draft, so an interrupted send resumes without a second copy.
+2. **Who gets access**: the unit's trainer now (if not taught this term, the last trainer), every HOD and MIS Officer, and the backup account, as far as they have connected Google. `poeMine` lists anyone missing, and the student's device shares with them on its next signed-in sync. Nobody is removed, so earlier trainers keep access for auditing.
+3. **Trainer device** (scopes `drive.file` and `drive.readonly`): `poeView` gives the file ID and md5; the device reads the file's metadata, compares `md5Checksum`, downloads it with `alt=media` and caches it with its md5. A different md5 calls `poeChanged`.
+4. Files sent through the bridge before 4.16 keep `source` empty and open through the bridge as before.
 
 ### 9.7 Keeping Drive up to date
 
@@ -588,6 +619,7 @@ The Playwright suites, mocks (Drive bridge, Apps Script, push service) and fixtu
 - **Student actions** are limited to the registered device-student pair. One device belongs to one student and one student to one device. The device ID is random and kept in that browser's storage (IndexedDB and `localStorage`), so each browser on a phone is a separate device; web pages cannot read a hardware ID that all browsers share. A reset (Manage → Student phones) frees the student for a new one.
 - **QR codes** cannot be forged or reused: they are HMACs that change every 20 seconds and are checked against the trainer's record.
 - **Drive access** is only through tickets the Worker signs (upload 6 hours, view 10 minutes), so the bridge's open web address cannot read or write anything else.
+- **Google sign-in**: students grant `drive.file` (the app's own files only); staff also grant `drive.readonly`, needed to open files students shared with them. Access tokens stay in the browser tab (`sessionStorage`); the Worker receives one only to check a file or an account with Google, and never stores it. Only `GOOGLE_DOMAIN` accounts are accepted, on the device and on the server.
 - **The first-time PIN** is shared by everyone without their own PIN; treat it like a password and give it out privately. It is stored only as a salted hash.
 - **On devices**: registers and evidence stay on the device until sent. Trainers' devices also keep the last 60 evidence files opened. **Erase this device** removes everything.
 - **The `?notes=1` overlay** never captures text typed into inputs, but it does capture text printed on the screen.

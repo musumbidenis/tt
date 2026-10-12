@@ -1,7 +1,7 @@
 # The ARK — User Guide
 
 **The ARK: Academic Records Keeper.** The RVNP ICT Department's system for attendance, marks and POE evidence.
-Applies to app version 4.15 (server 6.3, Drive bridge 1.3). The screenshots show an invented demo department.
+Applies to app version 4.16 (server 6.4, Drive bridge 1.3). The screenshots show an invented demo department.
 
 The ARK is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -323,7 +323,9 @@ Only the trainer of the unit (or the HOD) can change marks; others see them read
 
 ## 7. POE evidence: reviewing students' work
 
-Students send scanned CATs and practicals from their app; the files are stored in the college Google Drive. POE needs internet.
+Students send scanned CATs and practicals from their app. New documents are saved in **the student's own college Google Drive** and shared (view only) with the unit's trainer, the HOD, the MIS Officer and the college's backup account. Documents sent before version 4.16 stay in the college Drive. POE needs internet.
+
+**Connect Google first (once).** To open documents in students' Drives, connect your college Google account in **Profile → Google account**. Students' documents are shared with that address. When your Google sign-in has run out (after about an hour), the preview shows **Sign in to Google**: tap it and carry on.
 
 ### 7.1 Trainers: review evidence
 
@@ -332,6 +334,10 @@ Students send scanned CATs and practicals from their app; the files are stored i
 3. Tap a submission to open it. The preview shows the student's name and the item (for example *CAT1*), their admission number, the unit and the version, and every page.
 4. Choose **Approve**, or write a note and choose **Return to student** (a note is needed when returning).
 5. After each decision the next waiting submission opens. **‹ Previous** and **Next ›** move through the list; **Open in Drive** opens the original file.
+
+**Changed after sending.** The app remembers each document's fingerprint when it is sent. If the student changes the file in their Drive afterwards, the preview shows **This file was changed in the student's Drive after it was sent**, and the list marks it *changed after sending*. Check it carefully before deciding.
+
+**"Not shared with you yet."** A document is shared with a unit's new trainer the next time the student's phone is online. If it says so, ask the student to open their app, and check that **Profile → Google account** shows your college address.
 
 <p align="center">
 <img src="images/poe-list.png" width="280" alt="Evidence waiting for review">
@@ -514,6 +520,8 @@ A folder is made automatically for every trainer in the loading who does not hav
 
 Setting up the Drive link is a one-off job described in the Technical Documentation.
 
+**Backup account.** Students' new documents are in their own Drives. Every one of them is also shared with the **Backup account** set on this card (for example ictpoe@rvnp.ac.ke), so the department can always see them; approved documents will be copied to the department's Shared Drive from it. Type the address and tap **Save**.
+
 ---
 
 ## 11. Your Profile
@@ -522,6 +530,7 @@ Setting up the Drive link is a one-off job described in the Technical Documentat
 |---|---|
 | **Name and roles** | Shows who is signed in. **Change PIN** and **Sign out** (signing out keeps everything on the device). |
 | **How attendance is counted** | How much of a lesson a **Late** arrival and an **Excused** absence count for (50% and 100% to start); how many hours until a register **locks**; whether new registers start with **everyone present** or **everyone absent**. Tap **Save**. The Late and Excused shares apply to your units' reports and Excel registers, including the copies the HOD sees. |
+| **Google account** | **Connect Google** with your college account, so students' POE documents are shared with you and you can open them. **Use another account** changes it. |
 | **Class lists** | When registers were last sent, and when class lists were last downloaded. **Download class lists** fetches the latest now. **Student app link** shows a QR code and link for students to set up their app. |
 | **Backup and transfer** | **Export backup** saves everything on the device to a file (useful before a long time offline or before changing phones). **Import backup** loads such a file on another device. **Erase this device** removes all data from this device (it warns you if any registers have not been sent). |
 
@@ -570,6 +579,8 @@ If a check-in is refused, the app says why:
 
 On the **Evidence (POE)** tab:
 
+**Connect Google Drive (once).** Your documents are saved in your own college Google Drive, in a folder called **The ARK - POE**, and shared (view only) with your trainer. Tap **Connect Google Drive** and sign in with your **college Google account** (@rvnp.ac.ke), then allow what Google asks. The app can only see the files it saves there. A personal Gmail account is not accepted.
+
 1. Choose the **Unit**. Units from earlier terms are marked *(earlier term)*.
 2. Tap one or more **items** (CAT1–CAT4, PRAC1–PRAC3). An item already sent shows ✓ approved, • with your trainer, or ↺ returned.
 3. For each item, add the pages. **Every submission needs at least 2 pages.**
@@ -584,7 +595,9 @@ On the **Evidence (POE)** tab:
 <img src="images/student-crop.png" width="240" alt="Adjusting the page corners">
 <img src="images/student-evidence.png" width="240" alt="Two pages ready to send">
 </p>
-4. Tap **Save and send**. The PDF is saved on your device first and sent to the college Drive when you have internet.
+4. Tap **Save and send**. The PDF is saved on your device first, then saved in your Google Drive and shared with your trainer when you have internet.
+   - Google asks you to sign in again after about an hour. If a document says **Sign in to Google to send it**, tap **Sign in to Google and send**.
+   - Do not change or delete your POE files in Drive: your trainer is told if a file changed after it was sent.
 
 Files can be up to 20 MB. If the camera inside the app cannot start on a device, the app says so and the next tap on **Take photo of a page** uses the phone's own camera app instead.
 

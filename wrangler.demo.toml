@@ -17,3 +17,8 @@ html_handling = "none"      # serve student.html as it is (a redirect to /studen
 binding = "DB"
 database_name = "rvnp-demo"
 database_id = "b60ade02-9b0e-4831-8355-f63bce8e89b5"
+
+# Google sign-in for the demo too (this address is listed on the same Google sign-in ID). Not secrets.
+[vars]
+GOOGLE_DOMAIN = "rvnp.ac.ke"
+GOOGLE_CLIENT_ID = "945611933983-grt6lrqgnovsbe52rec7bd9tdmt8j1rp.apps.googleusercontent.com"

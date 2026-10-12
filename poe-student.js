@@ -1,5 +1,6 @@
 /* Student app — POE evidence: scan pages like a document scanner, keep the PDF on the device, and send it
- * to the college Drive when there is internet. Statuses (with your trainer, approved, returned) come back
+ * when there is internet: to the student's own college Google Drive, shared with the trainer (google.js, when
+ * config.js has a googleClientId), or else to the college Drive through the Drive bridge. Statuses (with your trainer, approved, returned) come back
  * when the app opens, when it comes back into view, after an upload, and when a notification arrives.
  * Uses student.js (st, sdb, api, toast, esc, $) and scanner.js. */
 'use strict';
@@ -38,6 +39,7 @@ const POE = (() => {
     const card = $('#poeCard'); if (!card) return;
     if (!st.profile) { card.hidden = true; $('#poeListCard').hidden = true; return; }
     card.hidden = false;
+    renderGoogle();
     const sel = $('#poeUnit');
     sel.innerHTML = ps.units.length ? ps.units.map((u) => `<option value="${esc(u.code)}">${esc(u.code)} — ${esc(u.name)}${u.current === false ? ' (earlier term)' : ''}</option>`).join('')
       : '<option value="">Connect once to load your units</option>';
@@ -73,6 +75,58 @@ const POE = (() => {
     await renderList(docs);
     await renderNotify();
   }
+  /* ---------- the student's own Google Drive ---------- */
+  const viaGoogle = () => typeof Google !== 'undefined' && Google.on();
+  function renderGoogle() {
+    const box = $('#poeGoogle'); if (!box) return;
+    box.hidden = !viaGoogle();
+    if (!viaGoogle()) return;
+    $('#poeIntro').textContent = 'Scan your marked CAT or practical like a document. It is saved on this device first, then in your own college Google Drive when you have internet, and shared with your trainer, who approves it.';
+    const mail = Google.email(), live = !!Google.token('student');
+    box.innerHTML = mail
+      ? `<span class="small">Google Drive: <b>${esc(mail)}</b>${live ? '' : ' <span class="muted">(you sign in again when sending)</span>'}</span><button type="button" class="linkish" data-gswitch>Use another account</button>`
+      : `<span class="small">Sign in with your <b>college Google account</b> once, so your documents can be saved in your Drive and shared with your trainer.</span><button type="button" class="btn small" data-gsignin>Connect Google Drive</button>`;
+  }
+  async function googleSignIn(choose = false) {
+    try { await Google.signIn('student', { choose }); renderGoogle(); return true; } catch (e) { toast(e.message, 'err'); renderGoogle(); return false; }
+  }
+  /** Saves one document in the student's Drive, shares it, and records it. Each step is remembered on the device,
+   *  so a lost connection carries on where it stopped instead of saving the file twice. */
+  async function sendViaDrive(d, p) {
+    if (!d.plan) {
+      const blob = await attachment(d, 'doc.pdf');
+      const pl = await api('POST', null, { action: 'poeDrivePlan', deviceId: st.deviceId, admNo: p.admNo, unitCode: d.unitCode, item: d.item, bytes: blob.size, pages: d.pageCount });
+      if (!pl.ok) throw new Error(pl.error);
+      d.plan = { plan: pl.plan, fileName: pl.fileName, version: pl.version, folder: pl.folder, subfolder: pl.subfolder, description: pl.description, share: pl.share || [] };
+      await saveDraft(d);
+    }
+    if (!d.drive) {
+      const root = await Google.folder('student', d.plan.folder);
+      const sub = await Google.folder('student', d.plan.subfolder, root);
+      const up = await Google.upload('student', await attachment(d, 'doc.pdf'), { name: d.plan.fileName, parent: sub, description: d.plan.description });
+      d.drive = { fileId: up.id, shared: [] };
+      await saveDraft(d);
+    }
+    for (const email of d.plan.share) {
+      if (d.drive.shared.includes(email)) continue;
+      try { await Google.share('student', d.drive.fileId, email); d.drive.shared.push(email); } catch (e) { if (e instanceof Google.NeedSignIn) throw e; /* shared later */ }
+    }
+    await saveDraft(d);
+    const done = await api('POST', null, { action: 'poeDriveDone', deviceId: st.deviceId, admNo: p.admNo, plan: d.plan.plan, fileId: d.drive.fileId, accessToken: Google.token('student'), shared: d.drive.shared });
+    if (!done.ok) throw new Error(done.error);
+    return { evidence: done.evidence, fileName: d.plan.fileName, version: d.plan.version };
+  }
+  /** A new trainer, HOD or MIS Officer since a file was sent: give them view access too (nobody is removed). */
+  async function shareMissing(list) {
+    if (!viaGoogle() || !Google.token('student')) return;
+    for (const e of list) {
+      if (!e.share?.length) continue;
+      const done = [];
+      for (const email of e.share) { try { await Google.share('student', e.fileId, email); done.push(email); } catch (err) { if (err instanceof Google.NeedSignIn) return; } }
+      if (done.length) await api('POST', null, { action: 'poeShared', deviceId: st.deviceId, admNo: st.profile.admNo, id: e.id, emails: done }).catch(() => {});
+    }
+  }
+
   function docCard(item, d) {
     const pages = d?.pages || [];
     return `<div class="poe-doc" data-doc="${item}">
@@ -91,7 +145,7 @@ const POE = (() => {
     for (const d of local.filter((x) => x.status !== 'sent').sort((a, b) => String(b.createdAt).localeCompare(a.createdAt))) {
       rows.push(`<li data-local="${esc(d._id)}"><div><b>${esc(d.unitName)} — ${esc(d.item)}</b><span class="muted small">${d.pageCount || ''} page(s) · saved ${esc(fmtTime(d.createdAt))}${d.error ? ' · ' + esc(d.error) : ''}</span></div>
         <span class="poe-acts">${d.status === 'error' && navigator.onLine
-          ? `<span class="pill rejected">Not sent yet</span><span class="poe-why small">${esc(d.error || 'Try again later')}</span><button type="button" class="linkish" data-retry>Try again</button>`
+          ? `<span class="pill rejected">Not sent yet</span><span class="poe-why small">${esc(d.error || 'Try again later')}</span><button type="button" class="linkish" data-retry>${d.needGoogle ? 'Sign in to Google and send' : 'Try again'}</button>`
           : `<span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on device — sends when online'}</span>`}<button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
     }
     const by = $('#poeSort')?.value || 'new', ORDER = { returned: 0, submitted: 1, approved: 2 };
@@ -257,7 +311,10 @@ const POE = (() => {
 
   /* ---------- saving: one PDF per item, kept on the device ---------- */
   async function saveAll() {
-    const btn = $('#poeSave'); btn.disabled = true; btn.textContent = 'Making the PDF…';
+    const btn = $('#poeSave');
+    // Signing in to Google has to start from the tap itself (a window opened later is blocked).
+    if (viaGoogle() && navigator.onLine && !Google.token('student')) await googleSignIn();
+    btn.disabled = true; btn.textContent = 'Making the PDF…';
     try {
       for (const it of [...ps.picked]) {
         const d = ps.drafts[it];
@@ -281,7 +338,7 @@ const POE = (() => {
         await sdb.remove(d._id, d._rev);
         ps.picked.delete(it);
       }
-      toast('Saved on this device. It is sent to the college Drive when you have internet.', 'ok');
+      toast(viaGoogle() ? 'Saved on this device. It goes to your Google Drive when you have internet.' : 'Saved on this device. It is sent to the college Drive when you have internet.', 'ok');
       await render();
       sync();
     } catch (e) { toast('Could not save: ' + e.message, 'err'); }
@@ -301,11 +358,21 @@ const POE = (() => {
   async function sync() {
     const p = st.profile;
     if (ps.syncing || !p || !navigator.onLine || !st.sheetsUrl) return;
+    const google = viaGoogle();
     ps.syncing = true;
     try {
       const waiting = (await allDocs()).filter((d) => d.status === 'saved' || d.status === 'uploading' || d.status === 'error');
       for (const d of waiting) {
         try {
+          if (google) {
+            if (!Google.token('student')) throw new Google.NeedSignIn('Sign in to Google to send it');
+            d.status = 'uploading'; d.needGoogle = false; await saveDraft(d); await render();
+            const r = await sendViaDrive(d, p);
+            Object.assign(d, { status: 'sent', serverId: r.evidence.id, fileName: r.fileName, version: r.version, sentAt: nowISO(), error: '' });
+            delete d.plan; delete d.drive;
+            await saveDraft(d);
+            continue;
+          }
           d.status = 'uploading'; await saveDraft(d); await render();
           // An upload whose confirmation was lost is confirmed again, not uploaded twice.
           if (!d.upload) {
@@ -334,7 +401,9 @@ const POE = (() => {
           await saveDraft(d);
         } catch (e) {
           d.status = 'error';
+          d.needGoogle = google && e instanceof Google.NeedSignIn;
           d.error = !navigator.onLine ? 'Waiting for internet'
+            : d.needGoogle ? 'Sign in to Google to send it. Your file is safe on this device.'
             : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this device.'
             : e.bridge ? 'The college Drive did not answer this device. Your file is safe on this device. Your MIS Officer can check Manage → Google Drive.'
             : 'Could not send: ' + e.message;
@@ -342,7 +411,7 @@ const POE = (() => {
         }
       }
       const mine = await api('POST', null, { action: 'poeMine', deviceId: st.deviceId, admNo: p.admNo });
-      if (mine.ok) { ps.server = mine.evidence; await updateLocal('poeMine', (x) => { x.list = mine.evidence; }); }
+      if (mine.ok) { ps.server = mine.evidence; await updateLocal('poeMine', (x) => { x.list = mine.evidence; }); await shareMissing(mine.evidence); }
     } catch { /* offline */ }
     finally { ps.syncing = false; render(); }
   }
@@ -430,7 +499,7 @@ const POE = (() => {
       const b = e.target.closest('[data-view]'); if (!b) return;
       document.body.dataset.view = b.dataset.view;
       $$('#viewTabs [data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      if (b.dataset.view === 'poe') { loadUnits().then(render); sync(); }
+      if (b.dataset.view === 'poe') { if (viaGoogle()) Google.preload(); loadUnits().then(render); sync(); }
       if (b.dataset.view === 'subs') { render(); sync(); window.syncAttendance?.({ force: true }); }
     });
     $('#poeUnit').addEventListener('change', (e) => { ps.unit = e.target.value; ps.picked = new Set(); render(); });
@@ -497,9 +566,16 @@ const POE = (() => {
       else toast('Page added. Tap "Add another page" for the next one.', 'ok');
     });
     $('#poeSort').addEventListener('change', () => render());
+    $('#poeGoogle').addEventListener('click', (e) => {
+      if (e.target.closest('[data-gsignin]')) googleSignIn().then((ok) => ok && sync());
+      if (e.target.closest('[data-gswitch]')) { Google.signOut(); googleSignIn(true).then((ok) => ok && sync()); }
+    });
     $('#poeSave').addEventListener('click', saveAll);
     $('#poeList').addEventListener('click', (e) => {
-      if (e.target.closest('[data-retry]')) { sync(); return; }
+      if (e.target.closest('[data-retry]')) {
+        if (viaGoogle() && !Google.token('student')) { googleSignIn().then((ok) => ok && sync()); return; }
+        sync(); return;
+      }
       const c = e.target.closest('[data-copy]');
       if (c) { saveCopy(c.dataset.id || c.closest('[data-local]').dataset.local); return; }
       const r = e.target.closest('[data-redo]');
@@ -526,6 +602,7 @@ const POE = (() => {
     wire();
     await loadUnits();
     await render();
+    if (viaGoogle()) Google.preload();
     sync();   // on opening the app: send anything waiting and bring the statuses up to date
   }
   return { init, render, sync, showEvidence, busy, state: ps };
