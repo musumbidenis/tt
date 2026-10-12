@@ -1,7 +1,7 @@
 # The ARK — User Guide
 
 **The ARK: Academic Records Keeper.** The RVNP ICT Department's system for attendance, marks and POE evidence.
-Applies to app version 4.16 (server 6.4, Drive bridge 1.3). The screenshots show an invented demo department.
+Applies to app version 4.17 (server 6.5, Drive bridge 1.4). The screenshots show an invented demo department.
 
 The ARK is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -436,6 +436,30 @@ The next phone or browser the student sets up becomes theirs. Their old phone st
 <img src="images/manage-phones.png" width="280" alt="Student phones, with the Reset phone button">
 </p>
 
+### 9.5 Backup of approved evidence (HOD and MIS Officer)
+
+Students keep their documents in their own Drive, and a student's college account is removed when they leave. So approved documents are copied into the **backup account's** Drive (for example ictpoe@rvnp.ac.ke), in a folder called **The ARK - Archive**, sorted by class and student. Only the approved version is copied.
+
+**Manage → Backup** shows:
+
+- **How full the backup account's Drive is**, as a bar (for example *41 GB of 50 GB used*).
+- **The last backup**: how many documents were copied, how many had been changed by the student after sending, and how many could not be copied. **Try these again** retries the ones that failed (usually because the student deleted the file or stopped sharing it).
+- How many approved documents are **waiting** for the next backup.
+
+To back up:
+
+- Tap **Back up now**. It starts within a few minutes; a large backup carries on over several runs.
+- Or choose **Repeat** (every day, week or month) and the hour, and tap **Save**.
+
+**When the Drive fills up.** From **80% full**, a warning appears here and a dot on the Manage tab, for the HOD and the MIS Officer. At **95%** backups stop, so the Drive never fills up halfway through. Then either:
+
+- ask IT to give the backup account **more Google Drive space**, or
+- **switch to another college account**: set up the Drive bridge under that account (Technical Documentation, 4.3) and change the **Backup account** in Manage → Google Drive. Copies already made stay in the old account.
+
+<p align="center">
+<img src="images/manage-backup.png" width="280" alt="Backup: storage gauge, last backup and schedule">
+</p>
+
 ---
 
 ## 10. MIS Officer tasks
@@ -520,7 +544,7 @@ A folder is made automatically for every trainer in the loading who does not hav
 
 Setting up the Drive link is a one-off job described in the Technical Documentation.
 
-**Backup account.** Students' new documents are in their own Drives. Every one of them is also shared with the **Backup account** set on this card (for example ictpoe@rvnp.ac.ke), so the department can always see them; approved documents will be copied to the department's Shared Drive from it. Type the address and tap **Save**.
+**Backup account.** Students' new documents are in their own Drives. Every one of them is also shared with the **Backup account** set on this card (for example ictpoe@rvnp.ac.ke), so the department can always see them; approved documents are copied into it by the backup (see [9.5](#95-backup-of-approved-evidence-hod-and-mis-officer)). It must be the account the Drive bridge runs as. Type the address and tap **Save**.
 
 ---
 

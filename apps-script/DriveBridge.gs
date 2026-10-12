@@ -11,6 +11,9 @@
  *      POE / <Class> / <Adm No - Name> / <Unit name> - <CAT1…PRAC3> - v<N>.pdf
  *      and listed in the sheet "POE - Evidence index" in the POE folder.
  *   3. Trainers' phones fetch a file here to preview it before approving.
+ *   4. Backup (from 1.4.0): approved documents that students keep in their own Drive (shared with this account) are
+ *      copied into "The ARK - Archive / <Class> / <Adm No - Name>" in this account's Drive, when the HOD or MIS
+ *      Officer asks or on their repeat setting. It stops before this account's Drive is 95% full.
  * Every upload and preview needs a ticket signed by the database with the shared SECRET, so the open
  * web app address cannot be used to read or write anything else.
  *
@@ -23,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.3.0';
+var BRIDGE_VERSION = '1.4.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -240,6 +243,8 @@ function sync() {
     report.folders = folders.map(function (f) { return { id: f.id, name: f.name }; });
     report.bridge = BRIDGE_VERSION;
     callWorker_('bridgeReport', report);
+    // Backups use whatever time this run has left; unfinished ones carry on in the next run.
+    try { if (backup_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('backup: ' + e); }
   } finally { lock.releaseLock(); }
   // Anything that changed while this run was going, or a page of changes still to work through,
   // gets its own update in two minutes instead of waiting for the hour.
@@ -248,6 +253,55 @@ function sync() {
     try { scheduleSync_(); } catch (e) { Logger.log('could not book the next update: ' + e); }
   }
 }
+/* ---------- backup of approved evidence into this account's Drive ---------- */
+var ARCHIVE_ROOT = 'The ARK - Archive';
+function driveApi_(method, path, body, token) {
+  var res = UrlFetchApp.fetch('https://www.googleapis.com' + path, { method: method, muteHttpExceptions: true, contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + token }, payload: body ? JSON.stringify(body) : undefined });
+  var out = {}; try { out = JSON.parse(res.getContentText() || '{}'); } catch (e) { out = {}; }
+  if (res.getResponseCode() >= 300) throw new Error((out.error && out.error.message) || ('Drive answered ' + res.getResponseCode()));
+  return out;
+}
+function archiveRoot_(p) {
+  var id = p.getProperty('ARCHIVE_ID');
+  if (id) { try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (e) { /* deleted: make a new one */ } }
+  var it = DriveApp.getRootFolder().getFoldersByName(ARCHIVE_ROOT);
+  var root = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(ARCHIVE_ROOT);
+  p.setProperty('ARCHIVE_ID', root.getId());
+  return root;
+}
+/** Copies batches while there is time. Returns true when a backup is still going (the next run carries on). */
+function backup_(started) {
+  var p = PropertiesService.getScriptProperties();
+  var used = DriveApp.getStorageUsed(), limit = DriveApp.getStorageLimit(), email = Session.getEffectiveUser().getEmail();
+  var token = ScriptApp.getOAuthToken(), folders = {}, root = null;
+  while (Date.now() - started < TIME_BUDGET_MS) {
+    var job = callWorker_('backupJob', { email: email, used: used, limit: limit });
+    if (!job.due) return false;
+    root = root || archiveRoot_(p);
+    var results = [], paused = false, i;
+    for (i = 0; i < job.files.length && Date.now() - started < TIME_BUDGET_MS; i++) {
+      var f = job.files[i];
+      try {
+        var meta = driveApi_('get', '/drive/v3/files/' + encodeURIComponent(f.fileId) + '?fields=md5Checksum,size&supportsAllDrives=true', null, token);
+        var size = Number(meta.size) || 0;
+        if (limit > 0 && (used + size) / limit >= job.stopAt) { paused = true; break; }   // stop before the Drive fills up
+        var key = f.folders.join('/'), folder = folders[key];
+        if (!folder) { folder = root; f.folders.forEach(function (n) { folder = childFolder_(folder, n); }); folders[key] = folder; }
+        var copy = driveApi_('post', '/drive/v3/files/' + encodeURIComponent(f.fileId) + '/copy?fields=id&supportsAllDrives=true',
+          { name: f.name, parents: [folder.getId()], description: 'Backup copy of approved POE evidence, made by The ARK' }, token);
+        used += size;
+        results.push({ id: f.id, archiveId: copy.id, md5: meta.md5Checksum || '' });
+      } catch (e) { results.push({ id: f.id, error: String(e && e.message || e) }); }
+      if (results.length >= 20) { callWorker_('backupDone', { results: results, used: used, limit: limit }); results = []; }
+    }
+    callWorker_('backupDone', { results: results, used: used, limit: limit, paused: paused });
+    if (paused) return false;
+    if (i < job.files.length) return true;            // out of time in the middle of a batch
+  }
+  return true;
+}
+
 /** The address phones use. A school-domain address (/a/macros/<domain>/) is turned into the plain one, which
  * works for students who are not signed in; WEB_APP_URL in Script Properties overrides it if ever needed. */
 function webAppUrl_() {

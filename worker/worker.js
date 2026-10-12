@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.4.0';
-const SCHEMA_VERSION = '9';
+export const VERSION = '6.5.0';
+const SCHEMA_VERSION = '10';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -69,7 +69,10 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // Evidence kept in the student's own Google Drive (source 'drive'), checked by its fingerprint (md5).
   'ALTER TABLE staff ADD COLUMN email TEXT', 'ALTER TABLE trainees ADD COLUMN email TEXT', 'ALTER TABLE evidence ADD COLUMN source TEXT',
   'ALTER TABLE evidence ADD COLUMN owner_email TEXT', 'ALTER TABLE evidence ADD COLUMN md5 TEXT', 'ALTER TABLE evidence ADD COLUMN modified_at TEXT',
-  'ALTER TABLE evidence ADD COLUMN shared TEXT', 'ALTER TABLE evidence ADD COLUMN changed_at TEXT'];
+  'ALTER TABLE evidence ADD COLUMN shared TEXT', 'ALTER TABLE evidence ADD COLUMN changed_at TEXT',
+  // The backup copy of an approved document in the backup account's Drive.
+  'ALTER TABLE evidence ADD COLUMN archived_at TEXT', 'ALTER TABLE evidence ADD COLUMN archive_id TEXT', 'ALTER TABLE evidence ADD COLUMN archive_tries INTEGER',
+  'ALTER TABLE evidence ADD COLUMN archive_error TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -266,6 +269,8 @@ const ACTIONS = {
   poeChanged: { fn: (env, b, me) => poeChanged(env, b, me) },
   setGoogle: { fn: (env, b, me) => setGoogle(env, b, me) },
   setArchiveEmail: { role: ['MIS'], fn: (env, b, me) => setArchiveEmail(env, b, me) },
+  backupStatus: { role: ['MIS', 'HOD'], fn: (env) => backupStatus(env) },
+  setBackup: { role: ['MIS', 'HOD'], fn: (env, b, me) => setBackup(env, b, me) },
   poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me, pre, ctx) => poeDecide(env, b, me, ctx) },
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
@@ -282,7 +287,7 @@ const ACTIONS = {
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeReceive', 'submitSignoff', 'decideSignoff',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
-  'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock']);
+  'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -1307,7 +1312,103 @@ const BRIDGE_ACTIONS = {
     await many(env, metaStmt('drive_report', JSON.stringify({ ...r, at: nowIso() })), r.url && metaStmt('drive_url', r.url));
     return { ok: true };
   },
+  backupJob: async (env, b) => backupJob(env, await verifyBridge(env, b)),
+  backupDone: async (env, b) => backupDone(env, await verifyBridge(env, b)),
 };
+
+/* ---------- backup: approved documents copied into the backup account's Drive ----------
+ * The bridge runs as the backup account (ictpoe), which every student file is shared with. On each run it asks
+ * whether a backup is due (the HOD or MIS Officer tapped "Back up now", or the repeat setting says so), copies
+ * a batch, and reports. It also reports the account's storage: from 80% the HOD and MIS Officer are warned, and at
+ * 95% backups pause so the Drive never fills up halfway through. */
+const BACKUP_WARN = 0.8, BACKUP_STOP = 0.95, BACKUP_BATCH = 60, BACKUP_TRIES = 3;
+const nairobi = (iso) => new Date((iso ? Date.parse(iso) : Date.now()) + 3 * 3600e3);   // East Africa Time, no daylight saving
+const readJson = (v, d) => { try { return JSON.parse(v || '') || d; } catch { return d; } };
+function backupDue(plan, rep) {
+  if (plan.nowAt && plan.nowAt > (rep.startedAt || '')) return true;
+  if (rep.running) return true;
+  const repeat = plan.repeat || 'off';
+  if (repeat === 'off') return false;
+  const now = nairobi(), hour = Number(plan.hour ?? 18);
+  if (now.getUTCHours() < hour) return false;
+  if (!rep.startedAt) return true;
+  const last = nairobi(rep.startedAt);
+  if (repeat === 'daily') return last.toISOString().slice(0, 10) < now.toISOString().slice(0, 10);
+  if (repeat === 'weekly') return Date.now() - Date.parse(rep.startedAt) > 6.5 * 86400e3;
+  if (repeat === 'monthly') return last.toISOString().slice(0, 7) < now.toISOString().slice(0, 7);
+  return false;
+}
+const WAITING_SQL = `SELECT COUNT(*) AS n FROM evidence WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) < ${BACKUP_TRIES}`;
+async function backupJob(env, q) {
+  const [planRow, repRow, archive] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"], ["SELECT value FROM meta WHERE key='archive_email'"]);
+  const plan = readJson(planRow[0]?.value, {}), rep = readJson(repRow[0]?.value, {});
+  // The storage reading is kept every time, so the gauge stays current even when nothing is due.
+  Object.assign(rep, { email: lower(q.email || ''), used: Number(q.used) || 0, limit: Number(q.limit) || 0, checkedAt: nowIso() });
+  const full = rep.limit > 0 && rep.used / rep.limit >= BACKUP_STOP;
+  const wrongAccount = archive[0]?.value && rep.email && lower(archive[0].value) !== rep.email;
+  rep.wrongAccount = wrongAccount ? archive[0].value : '';
+  let out = { ok: true, due: false, stopAt: BACKUP_STOP };
+  if (backupDue(plan, rep)) {
+    if (full) { rep.paused = true; rep.running = false; }
+    else if (wrongAccount) { rep.running = false; rep.lastError = `The Drive bridge runs as ${rep.email}, but students share their files with ${archive[0].value}.`; }
+    else {
+      if (!rep.running) Object.assign(rep, { running: true, startedAt: nowIso(), finishedAt: '', copied: 0, changed: 0, failed: 0, paused: false, lastError: '' });
+      const rows = await all(env, `SELECT id, adm_no, name, class_code, unit_name, item, version, file_id, file_name, md5 FROM evidence
+        WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) < ${BACKUP_TRIES} ORDER BY decided_at LIMIT ${BACKUP_BATCH}`);
+      if (!rows.length) Object.assign(rep, { running: false, finishedAt: nowIso() });
+      out = { ok: true, due: rows.length > 0, stopAt: BACKUP_STOP, files: rows.map((r) => ({ id: r.id, fileId: r.file_id, md5: r.md5 || '',
+        name: r.file_name || `${safeName(r.unit_name)} - ${r.item} - v${r.version}.pdf`, folders: [safeName(r.class_code), folderName(`${r.adm_no} - ${r.name}`)] })) };
+    }
+  }
+  if (!full) rep.paused = false;
+  await setMeta(env, 'backup_report', JSON.stringify(rep));
+  return out;
+}
+async function backupDone(env, q) {
+  const now = nowIso(), results = (q.results || []).slice(0, 200);
+  const rows = new Map((await all(env, `SELECT id, md5, changed_at FROM evidence WHERE id IN ${IN}`, JSON.stringify(results.map((r) => String(r.id))))).map((r) => [r.id, r]));
+  const stmts = [];
+  let copied = 0, changed = 0, failed = 0;
+  for (const r of results) {
+    const row = rows.get(String(r.id)); if (!row) continue;
+    if (r.archiveId) {
+      copied++;
+      const differs = r.md5 && row.md5 && r.md5 !== row.md5;
+      if (differs) changed++;
+      stmts.push(['UPDATE evidence SET archived_at=?, archive_id=?, archive_error=NULL, changed_at=COALESCE(changed_at, ?) WHERE id=?', now, String(r.archiveId), differs ? now : null, row.id]);
+    } else {
+      failed++;
+      stmts.push(['UPDATE evidence SET archive_tries=COALESCE(archive_tries,0)+1, archive_error=? WHERE id=?', String(r.error || 'Could not copy').slice(0, 300), row.id]);
+    }
+  }
+  const rep = readJson(await getMeta(env, 'backup_report'), {});
+  Object.assign(rep, { copied: (rep.copied || 0) + copied, changed: (rep.changed || 0) + changed, failed: (rep.failed || 0) + failed,
+    used: Number(q.used) || rep.used || 0, limit: Number(q.limit) || rep.limit || 0, checkedAt: now });
+  if (q.paused) Object.assign(rep, { paused: true, running: false });
+  if (q.finished && !q.paused) Object.assign(rep, { running: false, finishedAt: now });
+  await many(env, ...stmts, metaStmt('backup_report', JSON.stringify(rep)));
+  return { ok: true };
+}
+async function backupStatus(env) {
+  const [planRow, repRow, archive, waiting, failedRows] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"],
+    ["SELECT value FROM meta WHERE key='archive_email'"], [WAITING_SQL],
+    [`SELECT adm_no, name, unit_name, item, version, archive_error FROM evidence WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) >= ${BACKUP_TRIES} LIMIT 50`]);
+  const rep = readJson(repRow[0]?.value, {});
+  const share = rep.limit ? rep.used / rep.limit : 0;
+  return { ok: true, plan: { repeat: 'off', hour: 18, ...readJson(planRow[0]?.value, {}) }, report: rep, archiveEmail: archive[0]?.value || '', waiting: waiting[0]?.n || 0,
+    gaveUp: failedRows.map((r) => ({ admNo: r.adm_no, name: r.name, what: `${r.unit_name} ${r.item} v${r.version}`, error: r.archive_error || '' })),
+    level: share >= BACKUP_STOP ? 'full' : share >= BACKUP_WARN ? 'warn' : 'ok', warnAt: BACKUP_WARN, stopAt: BACKUP_STOP };
+}
+async function setBackup(env, b, me) {
+  const plan = { repeat: 'off', hour: 18, ...readJson(await getMeta(env, 'backup_plan'), {}) };
+  if (b.repeat !== undefined) { if (!['off', 'daily', 'weekly', 'monthly'].includes(b.repeat)) fail('Choose off, daily, weekly or monthly'); plan.repeat = b.repeat; }
+  if (b.hour !== undefined) { const h = Number(b.hour); if (!(h >= 0 && h <= 23)) fail('Choose an hour from 0 to 23'); plan.hour = h; }
+  if (b.now) plan.nowAt = nowIso();
+  if (b.retry) await run(env, "UPDATE evidence SET archive_tries=0, archive_error=NULL WHERE archived_at IS NULL AND source='drive'");
+  await setMeta(env, 'backup_plan', JSON.stringify(plan));
+  await audit(env, me, 'backup', b.now ? 'back up now' : `repeat ${plan.repeat} at ${plan.hour}:00`);
+  return { ...(await backupStatus(env)) };
+}
 
 /** Term register rows for one class and unit, the same way the app's Reports work them out. */
 const PERIOD_NO = (p) => { const m = /(\d+)/.exec(p || ''); return m ? Number(m[1]) : 9; };

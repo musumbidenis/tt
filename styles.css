@@ -962,3 +962,13 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .poe-changed { margin: .5rem 0; padding: .5rem .75rem; border-radius: 8px; background: #fef3c7; color: #78350f; font-weight: 600; }
 .archive-email { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem; margin-top: .75rem; }
 .archive-email label { flex: 1 1 260px; }
+
+/* ---------- backup ---------- */
+.backup-alert { margin: 0 0 .75rem; padding: .65rem .8rem; border-radius: 8px; background: #fef3c7; color: #78350f; border-left: 5px solid #d97706; }
+.backup-alert.full { background: #fee2e2; color: #7f1d1d; border-left-color: var(--crest-red, #b91c1c); }
+.gauge { height: 12px; border-radius: 999px; background: var(--line); overflow: hidden; margin: .5rem 0 .25rem; }
+.gauge span { display: block; height: 100%; background: var(--p); }
+.gauge.warn span { background: #d97706; }
+.gauge.full span { background: var(--crest-red, #b91c1c); }
+.backup-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem; margin: .75rem 0 .5rem; }
+.backup-form label { flex: 1 1 160px; }

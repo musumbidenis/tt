@@ -432,3 +432,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Fingerprints.** The server checks each file with Google and keeps its md5; if a student changes a file after sending it, trainers see *changed after sending*.
 - **Staff connect Google** in Profile to open students' documents. The MIS Officer sets the **Backup account** in Manage → Google Drive.
 - Uploads no longer go through the Drive bridge, so busy moments (everyone sending after a CAT) are no longer limited by Apps Script. Documents sent earlier still open through the bridge.
+
+## Changes in 4.17 (Worker 6.5.0, Drive bridge 1.4.0)
+
+- **Backup of approved evidence.** Approved documents in students' Drives are copied into *The ARK - Archive* in the backup account's Drive (ictpoe), sorted by class and student. **Manage → Backup** (HOD and MIS Officer): **Back up now**, a repeat setting (daily, weekly or monthly at a chosen hour), the last backup's counts, documents waiting, and **Try these again** for ones that failed.
+- **Storage gauge and warnings.** The backup account's used and total space are shown; from 80% full the HOD and MIS Officer are warned to ask IT for more space or switch to another account, and at 95% backups stop.

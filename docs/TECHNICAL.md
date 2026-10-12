@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.16.0**, server (Worker) **6.4.0**, database schema **9**, Drive bridge **1.3.0**.
+Describes app **4.17.0**, server (Worker) **6.5.0**, database schema **10**, Drive bridge **1.4.0**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -188,7 +188,7 @@ Bump these with every release:
 4. **Edit code**, replace everything with `worker/worker.js`, **Deploy** (or connect Workers Builds, step 8).
 5. **Bindings → Add binding → D1 database**: variable `DB`, database `rvnp-attendance`.
 6. **Settings → Variables and Secrets → Add**: Secret `ADMIN_PIN`, a 6-digit PIN.
-7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.4.0",…}`. Put the address in `config.js` as `serverUrl`.
+7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.5.0",…}`. Put the address in `config.js` as `serverUrl`.
 8. Recommended:
    - **Settings → General → Placement → Smart**, so the Worker runs next to the database.
    - **Workers Builds**: put the D1 database ID in `wrangler.toml`, then **Settings → Builds → Connect** → GitHub → `tt`, branch `main`, build command empty, deploy command `npx wrangler deploy`, root directory `/`. Every push then deploys the Worker in a minute or two.
@@ -449,6 +449,7 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `poeChanged` | Any who may view | The device found a different md5 in the student's Drive: sets `changed_at` and audits it. |
 | `setGoogle` | Any | Connect (checked with Google's userinfo, college domain only) or clear the staff member's Google address. |
 | `setArchiveEmail` | MIS | The backup account every student file is shared with. |
+| `backupStatus`, `setBackup` | HOD, MIS | Backup plan (`repeat` off/daily/weekly/monthly, `hour`), last report, storage level (`ok`, `warn` from 80%, `full` from 95%), documents waiting, ones given up on; `setBackup` also takes `now` (back up now) and `retry`. |
 | `poeDecide` | Trainer, HOD | Approve or return (sends a notification). |
 | `poeReceive` | MIS | Mark approved evidence received. |
 | `poeClass` | MIS, HOD | Students and units of one class for the By student view. |
@@ -464,6 +465,8 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 | Worker → bridge | `nudge` | "Something changed": the bridge books one sync about two minutes later. |
 | Bridge → Worker | `bridgeFeed` | What changed since the bridge's cursor: units with lessons, rosters, sign-offs, marksheets, trainers and new evidence (12 class-units per page). |
 | Bridge → Worker | `bridgeReport` | Folders matched, sheets made, web app URL, version. |
+| Bridge → Worker | `backupJob` | Reports the bridge account's email and storage; if a backup is due and there is room, returns up to 60 approved Drive documents not yet copied. |
+| Bridge → Worker | `backupDone` | Results: the copy's file ID and the md5 found (a different md5 sets `changed_at`), or the error (3 tries, then given up). |
 | Device → bridge | `upload` | A student's PDF with its upload ticket. |
 | Device → bridge | `file` (GET or POST) | A file for preview, with a view ticket (valid 10 minutes). |
 
@@ -526,6 +529,16 @@ With `googleClientId` set, `google.js` signs people in with Google Identity Serv
 2. **Who gets access**: the unit's trainer now (if not taught this term, the last trainer), every HOD and MIS Officer, and the backup account, as far as they have connected Google. `poeMine` lists anyone missing, and the student's device shares with them on its next signed-in sync. Nobody is removed, so earlier trainers keep access for auditing.
 3. **Trainer device** (scopes `drive.file` and `drive.readonly`): `poeView` gives the file ID and md5; the device reads the file's metadata, compares `md5Checksum`, downloads it with `alt=media` and caches it with its md5. A different md5 calls `poeChanged`.
 4. Files sent through the bridge before 4.16 keep `source` empty and open through the bridge as before.
+
+### 9.6b Backup into the backup account's Drive (from 4.17, bridge 1.4.0)
+
+There is no Shared Drive, so the archive lives in the **backup account's own Drive** (the account the bridge runs as, which every student file is shared with), in `The ARK - Archive / <class> / <adm - name>`.
+
+- **When**: `meta.backup_plan` holds `repeat` and `hour` (East Africa Time) and `nowAt` (Back up now, which also nudges the bridge). A backup is due when `nowAt` is newer than the last start, when one is still running, or when the repeat says so (daily: not yet today; weekly: 6.5 days since the last; monthly: not yet this month), from the chosen hour.
+- **How**: at the end of every bridge run (hourly or nudged), `backup_()` reports `DriveApp.getStorageUsed()` and `getStorageLimit()` to `backupJob`, then copies each file with the Drive REST API (`files.copy`, the script's own OAuth token), checking its size and md5 first. It reports in groups of 20 to `backupDone`, and keeps asking for batches until nothing is due or the run's time is up; an unfinished backup books another run in two minutes.
+- **Space**: the Worker marks the level `warn` from 80% (a banner and a Manage badge for the HOD and MIS Officer) and stops handing out work at 95%; the bridge also stops before a copy would cross 95%.
+- **Changing account**: copies are made by the bridge, so a new backup account means deploying the bridge as that account (4.3) and setting the Backup account to it. If the two differ, the Worker refuses to hand out work and Manage says so.
+- `meta.backup_report` keeps the last start and finish, the counts, storage and any error. Per document: `archived_at`, `archive_id`, `archive_tries`, `archive_error`.
 
 ### 9.7 Keeping Drive up to date
 

@@ -129,6 +129,11 @@ def seed():
     sql('INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,decided_by,decided_name,decided_at,comment,received_at,updated_at) VALUES ' + ','.join(ev))
     report = {'matched': 2, 'unmatched': [], 'sheets': {}, 'url': 'https://bridge.demo/exec', 'folders': [], 'bridge': '1.3.0', 'at': now.isoformat() + 'Z'}
     sql("INSERT OR REPLACE INTO meta (key,value) VALUES ('drive_url','https://bridge.demo/exec'),('drive_report','%s')" % json.dumps(report).replace("'", "''"))
+    # a backup account that has made one backup and is 82% full (shows the gauge and the warning)
+    backup = {'email': 'ictpoe@rvnp.ac.ke', 'used': int(41 * 1024 ** 3), 'limit': 50 * 1024 ** 3, 'checkedAt': now.isoformat() + 'Z', 'startedAt': (now - datetime.timedelta(hours=20)).isoformat() + 'Z',
+              'finishedAt': (now - datetime.timedelta(hours=19)).isoformat() + 'Z', 'copied': 18, 'changed': 0, 'failed': 0, 'running': False}
+    sql("INSERT OR REPLACE INTO meta (key,value) VALUES ('archive_email','ictpoe@rvnp.ac.ke'),('backup_report','%s'),('backup_plan','%s')" % (
+        json.dumps(backup), json.dumps({'repeat': 'weekly', 'hour': 18})))
 
 
 def camera_feed(folder):
@@ -222,6 +227,9 @@ def staff(pw, browser, pdf64):
     pg.click('details.fold[data-sec=phones] > summary')
     pg.wait_for_selector('#phoneList table, #phoneList p', timeout=5000)
     shot(pg, 'manage-phones.png', '#m-phones')
+    pg.wait_for_selector('#m-backup .gauge', timeout=15000)
+    pg.locator('#m-backup').scroll_into_view_if_needed()
+    shot(pg, 'manage-backup.png', '#m-backup')
     pg.wait_for_selector('#m-staff details.fold', timeout=15000)
     pg.click('details.fold[data-sec=staff] > summary')
     shot(pg, 'manage-staff.png', '#m-staff')

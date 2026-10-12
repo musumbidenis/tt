@@ -1,5 +1,5 @@
 /* Manage tab — sections shown by role.
- *   HOD:  registers waiting for approval, department overview, students waiting for the MIS Officer, student phones
+ *   HOD:  registers waiting for approval, department overview, students waiting for the MIS Officer, student phones, backup
  *   MIS:  term, trainer loading, class lists, student requests, staff
  * Everything here talks to the server, so it needs internet (marking does not). */
 'use strict';
@@ -7,7 +7,7 @@
 const Admin = (() => {
   const box = () => $('#manage');
   const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
-  let cache = { signoffs: [], requests: [], overview: null, staff: [], phones: [] };
+  let cache = { signoffs: [], requests: [], overview: null, staff: [], phones: [], backup: null };
   let loadingPreview = null;
   let ovSort = { key: 'classCode', dir: 1 };
   const secOpen = new Set();   // which folded-away sections the person has opened, so a refresh keeps them as they were
@@ -36,12 +36,13 @@ const Admin = (() => {
       parts.push(section('m-classes', 'Class lists', classesHtml()));
       parts.push(section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
+      parts.push(section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
-    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'));
+    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
     box().innerHTML = parts.join('');
     const jobs = [];
     if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
-    jobs.push(loadRequests(), loadPhones());
+    jobs.push(loadRequests(), loadPhones(), loadBackup());
     if (hasRole('MIS')) jobs.push(loadStaff().then(loadDrive));
     await Promise.allSettled(jobs);
     refreshBadge();
@@ -491,6 +492,51 @@ const Admin = (() => {
     } catch (e) { busy(btn, false); toast(e.message, 'err'); }
   }
 
+  /* ---------- HOD and MIS: backup of approved evidence into the backup account's Drive ---------- */
+  const gb = (n) => (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + ' GB';
+  const REPEAT = { off: 'Off (only when I tap Back up now)', daily: 'Every day', weekly: 'Every week', monthly: 'Every month' };
+  async function loadBackup() {
+    try {
+      const b = cache.backup = need(await api('backupStatus'));
+      drawBackup(b);
+      refreshBadge();
+    } catch (e) { fill('m-backup', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  function drawBackup(b) {
+    const r = b.report || {}, who = r.email || b.archiveEmail || 'the backup account', pct = r.limit ? Math.round((r.used / r.limit) * 100) : 0;
+    const advice = `Ask IT to give <b>${esc(who)}</b> more Google Drive space, or switch the backup to another college account: set up the Drive bridge under that account (Technical Documentation, 4.3) and change the <b>Backup account</b> in Manage → Google Drive. Copies already made stay where they are.`;
+    const banner = b.level === 'full' ? `<div class="backup-alert full"><b>The backup account's Drive is ${pct}% full, so backups have stopped.</b> ${advice}</div>`
+      : b.level === 'warn' ? `<div class="backup-alert"><b>The backup account's Drive is ${pct}% full.</b> Backups stop at ${Math.round(b.stopAt * 100)}%. ${advice}</div>` : '';
+    const gauge = r.limit ? `<div class="gauge ${b.level}" role="img" aria-label="${pct}% used"><span style="width:${Math.min(100, pct)}%"></span></div>
+      <p class="small">${esc(who)}: <b>${gb(r.used)}</b> of ${gb(r.limit)} used (${pct}%)${r.checkedAt ? ` <span class="muted">· checked ${esc(fmtTime(r.checkedAt))}</span>` : ''}</p>`
+      : '<p class="muted small">The Drive bridge has not reported the backup account\'s storage yet. It does on its next hourly run.</p>';
+    const last = r.running ? `<p><b>Backing up now…</b> ${r.copied || 0} copied so far.</p>`
+      : r.finishedAt ? `<p>Last backup ${esc(fmtTime(r.finishedAt))}: <b>${r.copied || 0}</b> copied${r.changed ? `, ${r.changed} changed after sending` : ''}${r.failed ? `, <span class="err-text">${r.failed} could not be copied</span>` : ''}.</p>`
+        : r.paused ? '<p class="err-text">The last backup stopped because the Drive is nearly full.</p>' : '<p class="muted">No backup yet.</p>';
+    const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}"${h === Number(b.plan.hour) ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
+    fill('m-backup', `${banner}
+      <p class="muted">Approved documents that students keep in their own Drive are copied into <b>The ARK - Archive</b> in ${esc(who)}'s Drive, so the college keeps them after a student leaves.</p>
+      ${gauge}
+      ${r.wrongAccount ? `<p class="err-text small">The Drive bridge runs as ${esc(r.email)}, but students share their files with ${esc(r.wrongAccount)}. Make them the same account (Manage → Google Drive → Backup account).</p>` : ''}
+      ${r.lastError && !r.wrongAccount ? `<p class="err-text small">${esc(r.lastError)}</p>` : ''}
+      ${last}
+      <p class="small">${b.waiting ? `<b>${b.waiting}</b> approved document(s) waiting for the next backup.` : 'Every approved document is backed up.'}</p>
+      ${b.gaveUp.length ? fold('backupFailed', `${b.gaveUp.length} could not be copied`, `<ul class="mlist">${b.gaveUp.map((g) => `<li><span><b>${esc(g.name)}</b><small>${esc(g.admNo)} · ${esc(g.what)} · ${esc(g.error)}</small></span></li>`).join('')}</ul>
+        <p class="muted small">Usually the student deleted the file or stopped sharing it.</p><button type="button" class="btn small" data-act="backupRetry">Try these again</button>`) : ''}
+      <form id="backupForm" class="backup-form">
+        <label>Repeat<select id="backupRepeat">${Object.entries(REPEAT).map(([k, v]) => `<option value="${k}"${k === b.plan.repeat ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label>At<select id="backupHour">${hours}</select></label>
+        <button class="btn">Save</button>
+      </form>
+      <div class="row-actions"><button type="button" class="btn primary" data-act="backupNow"${b.level === 'full' ? ' disabled' : ''}>Back up now</button></div>
+      <p class="muted small">A backup starts within a few minutes of <b>Back up now</b>, or at the chosen hour (East Africa Time). Large backups carry on over several runs.</p>`);
+  }
+  async function backupAction(patch, btn, msg) {
+    busy(btn, true, 'Saving…');
+    try { cache.backup = need(await api('setBackup', patch)); drawBackup(cache.backup); refreshBadge(); toast(msg, 'ok'); }
+    catch (e) { toast(e.message, 'err'); busy(btn, false); }
+  }
+
   /* ---------- MIS: staff ---------- */
   async function loadStaff() {
     if (!hasRole('MIS')) return;
@@ -626,6 +672,7 @@ const Admin = (() => {
     let n = 0;
     if (hasRole('MIS')) n += (state.meta.pending || []).length;
     if (hasRole('HOD')) n += cache.signoffs.filter((s) => s.status === 'submitted').length;
+    if (cache.backup && cache.backup.level !== 'ok') n += 1;       // the backup account's Drive is filling up
     dot.hidden = !n;
     dot.textContent = n > 9 ? '9+' : String(n);
   }
@@ -647,6 +694,8 @@ const Admin = (() => {
     if (sortTh) { const k = sortTh.dataset.sort; ovSort = { key: k, dir: ovSort.key === k ? -ovSort.dir : 1 }; Tables.reset('overview'); drawOverview(); return; }
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
     const tb = t.closest('[data-act="testBridge"]'); if (tb) { testBridge(tb); return; }
+    const bn = t.closest('[data-act="backupNow"]'); if (bn) { backupAction({ now: true }, bn, 'Backup asked for: it starts within a few minutes'); return; }
+    const br = t.closest('[data-act="backupRetry"]'); if (br) { backupAction({ retry: true, now: true }, br, 'They will be tried again in the next backup'); return; }
     if (t.closest('[data-act="clearDefaultPin"]')) {
       if (confirm('Remove the first-time PIN? Staff without their own PIN will not be able to sign in.')) {
         api('setDefaultPin', { pin: '' }).then((r) => { need(r); toast('First-time PIN removed', 'ok'); loadStaff(); }).catch((err) => toast(err.message, 'err'));
@@ -740,6 +789,12 @@ const Admin = (() => {
     if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click(); }
   });
   document.addEventListener('submit', (e) => {
+    if (e.target.id === 'backupForm') {
+      e.preventDefault();
+      const repeat = $('#backupRepeat').value, hour = Number($('#backupHour').value);
+      backupAction({ repeat, hour }, e.target.querySelector('button'), repeat === 'off' ? 'Backups run only when you tap Back up now' : `Backups: ${REPEAT[repeat].toLowerCase()} at ${String(hour).padStart(2, '0')}:00`);
+      return;
+    }
     if (e.target.id === 'archiveEmailForm') {
       e.preventDefault();
       const btn = e.target.querySelector('button');
