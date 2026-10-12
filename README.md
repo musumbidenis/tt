@@ -16,6 +16,7 @@ Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 
 
 - Trainer app: **https://musumbidenis.github.io/tt/**
 - Student check-in app: **https://musumbidenis.github.io/tt/student.html**
+- Demo copy for training, with invented data: see [demo/README.md](demo/README.md)
 
 **Documentation**: the [User Guide](docs/USER-GUIDE.md) (trainers, HODs, the MIS Officer and students) and the [Technical Documentation](docs/TECHNICAL.md) (setup, deployment, data model, API and operations) describe the current version. The sections below are the original set-up notes and the change log.
 
@@ -417,3 +418,4 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **Reset phone** in **Manage → Student phones** (HOD and MIS Officer): frees a student whose phone was changed, lost or reset, or who needs another browser. The next phone they set up becomes theirs; their records stay. Each reset is audited.
 - Messages to students now say a phone or browser is already registered, and to ask the HOD or MIS Officer.
+- **Demo copy** for showing trainers and students: the same apps and server at their own address with their own database of invented data (3 classes, 2 units each, 10 trainers). `python demo/demo.py setup` makes it, `reset` refills it before each demo. See [demo/README.md](demo/README.md).

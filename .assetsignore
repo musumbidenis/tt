@@ -1,0 +1,18 @@
+# Files the demo Worker (wrangler.demo.toml) does not serve: only the apps' own files go up.
+.git
+.github
+.wrangler
+node_modules
+worker
+apps-script
+docs
+demo
+loadtest
+sample-data
+*.md
+*.py
+*.toml
+*.sh
+.gitignore
+.assetsignore
+.clasp*

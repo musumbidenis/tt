@@ -13,3 +13,6 @@ loadtest/__pycache__/
 
 # Local Wrangler state (dev server bundles, caches, local database)
 .wrangler/
+
+# The demo copy: the address of the last deploy
+demo/.url

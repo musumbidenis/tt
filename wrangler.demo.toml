@@ -1,0 +1,19 @@
+# The demo copy: the same server and apps with invented data, at their own address and with their own
+# database, for showing trainers and students. Nothing is shared with the real app.
+# Set up, deploy and refill with:  python demo/demo.py setup   (see demo/README.md)
+name = "rvnp-attendance-demo"
+main = "worker/demo.js"
+compatibility_date = "2025-09-01"
+keep_vars = true
+
+# The apps' files, served by the same Worker (.assetsignore leaves out everything else in the repository).
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"      # serve student.html as it is (a redirect to /student breaks the offline cache)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rvnp-demo"
+database_id = "REPLACE_ME"

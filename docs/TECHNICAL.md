@@ -92,6 +92,7 @@ The git repository is the `app` folder. Everything at its root is published to G
 | `apps-script/DriveBridge.gs`, `apps-script/appsscript.json` | The Drive bridge and its manifest. |
 | `apps-script/clasp-init.sh`, `.clasp.json.example`, `.claspignore` | Pushing the bridge with clasp. |
 | `apps-script/Code.gs` | The retired Google Sheet backend. Kept for reference; **never** push it to the bridge project. |
+| `wrangler.demo.toml`, `worker/demo.js`, `.assetsignore`, `demo/` | The demo copy (see [5.4](#54-the-demo-copy)): its Worker configuration, the wrapper that also serves the apps, the list of files it does not serve, and the set-up and reset script. |
 | `loadtest/` | Load-testing tools and results (see [10](#10-load-and-free-plan-budget)). |
 | `sample-data/` | Example CSVs. |
 
@@ -269,6 +270,17 @@ Notes:
 - Run `setup()` again only when a release changes the triggers; it keeps the existing SECRET.
 
 By hand: paste the file, Save, **Deploy → Manage deployments → Edit → Version: New version → Deploy**.
+
+### 5.4 The demo copy
+
+A second Worker, `rvnp-attendance-demo`, with its own D1 database `rvnp-demo`, runs the same code with invented data for training (`demo/README.md` lists what is in it).
+
+- **One Worker serves everything.** `worker/demo.js` wraps `worker/worker.js`: `/exec` is the server, `/config.js` is generated so the apps use that same address (and adds the orange DEMO tag), and every other path is the apps' files from Workers static assets (`[assets]` in `wrangler.demo.toml`, `run_worker_first`, `html_handling = "none"` so `student.html` is not redirected, which would break the service worker). `.assetsignore` keeps the server code, docs and scripts out.
+- **Separate on devices.** Being a different origin from GitHub Pages, the demo apps have their own IndexedDB, `localStorage` and service worker, so a phone can hold both without mixing them.
+- **Not deployed by Workers Builds.** Run `python demo/demo.py deploy` after app changes (signed in with `npx wrangler login`).
+- **Reset** (`python demo/demo.py reset --pin … --mis-pin …`) deletes every row of every table named in `worker.js` except the `schema` and `auth_secret` meta keys (a warm Worker caches both), inserts the staff with salted PIN hashes (`sha256(salt|pin)`) and a new `pin_version` so earlier sign-ins stop working, then fills term, loading, class lists, registers, marks, a sign-off and a student request through the normal API.
+- **No Drive bridge, no notifications** unless `BRIDGE_SECRET` (and a separate bridge) or the VAPID secrets are added to this Worker. Never point it at the real bridge.
+- **Trying it on this computer:** `npx wrangler dev --config wrangler.demo.toml` watches the whole repository and reloads on its own `.wrangler` writes; use a copy of the configuration in a temporary folder with absolute `main` and `directory` paths, then `python demo/demo.py reset --local --toml <that copy> --url http://127.0.0.1:8787 …`.
 
 ---
 
