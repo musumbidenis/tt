@@ -20,7 +20,7 @@
   if (!/[?&]notes=1(&|$)/.test(location.search)) return;
 
   const KEY = 'rvnp_design_notes';
-  const PAGE = location.pathname.endsWith('student.html') ? 'student.html' : 'index.html';
+  const PAGE = /\/student(\.html)?$/.test(location.pathname) ? 'student.html' : 'index.html';
   const PAGE_NAME = PAGE === 'student.html' ? 'student app' : 'trainer / HOD / MIS app';
   /* Where to look for whatever a note was left on. Fetched through the service worker, so this works
    * with no internet too (these are the files it keeps). */

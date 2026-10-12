@@ -1,0 +1,4 @@
+# Cloudflare Pages: serve these pages as they are. Pages would otherwise redirect /index.html to / and
+# /student.html to /student, and the app's offline cache cannot use a redirected page.
+/index.html    /         200
+/student.html  /student  200

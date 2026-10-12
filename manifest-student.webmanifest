@@ -3,7 +3,7 @@
   "name": "Student-POE (The ARK)",
   "short_name": "Student-POE",
   "description": "The ARK student app: check in to lessons, send POE evidence and see your attendance, working offline",
-  "start_url": "./student.html",
+  "start_url": "./student",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

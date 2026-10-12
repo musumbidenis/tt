@@ -452,3 +452,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Demo day handout** at `demo/demo-day.html`: pairs (one partner the trainer, the other the student, then swap), the steps for each role, the facilitator's part and checklist. Prints on two pages.
 - **Scan ID cards** no longer turns students who already checked in with the lesson QR absent.
 - **Bigger demo**: 26 demo trainers (DEMO01 the HOD; DEMO02 to DEMO26 one unit each), 5 classes of 20 students with 5 units each, so 50 people can run the paired demo as 25 pairs. The handout lists all 25.
+
+## Changes in 4.18
+
+- **The student app's address is now `/student`** (the old `student.html` keeps working). The Student app link and lesson QR codes use it, and with no network `/student` opens the student app from the device.
+- `_redirects` lets the apps run on Cloudflare Pages, which would otherwise redirect `index.html` and `student.html` and break offline use.

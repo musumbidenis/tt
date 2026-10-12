@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.17.2';
+const APP_VERSION = '4.18.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1510,7 +1510,8 @@ const QR_WINDOW = 20; // seconds — must match WINDOW_SECONDS in Code.gs
 const qrWindow = (t = Date.now()) => Math.floor(t / 1000 / QR_WINDOW);
 const b64url = (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const randomHex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, '0')).join('');
-const studentPageUrl = () => new URL('student.html', location.href.split('#')[0]).toString();
+// The student app's address is /student (Cloudflare Pages, GitHub Pages and the demo all serve student.html there).
+const studentPageUrl = () => new URL('student', location.href.split('#')[0]).toString();
 
 async function qrToken(secret, sid, w) {
   const enc = new TextEncoder();

@@ -21,6 +21,7 @@ export default {
       return new Response(CONFIG(url.origin, env.VAPID_PUBLIC_KEY, env), { headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' } });
     }
     if (url.pathname === '/') return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
+    if (url.pathname === '/student') return env.ASSETS.fetch(new Request(new URL('/student.html', url), request));
     return env.ASSETS.fetch(request);
   },
 };
