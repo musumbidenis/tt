@@ -1,7 +1,7 @@
 # The ARK — User Guide
 
 **The ARK: Academic Records Keeper.** The RVNP ICT Department's system for attendance, marks and POE evidence.
-Applies to app version 4.17 (server 6.5, Drive bridge 1.4). The screenshots show an invented demo department.
+Applies to app version 4.17 (server 6.5, Drive bridge 1.4.2). The screenshots show an invented demo department.
 
 The ARK is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -442,7 +442,7 @@ Students keep their documents in their own Drive, and a student's college accoun
 
 **Manage → Backup** shows:
 
-- **How full the backup account's Drive is**, as a bar (for example *41 GB of 50 GB used*).
+- **How full the backup account's Drive is**, as a bar (for example *41 GB of 50 GB used*): the account's own use against the space typed in Manage → Google Drive.
 - **The last backup**: how many documents were copied, how many had been changed by the student after sending, and how many could not be copied. **Try these again** retries the ones that failed (usually because the student deleted the file or stopped sharing it).
 - How many approved documents are **waiting** for the next backup.
 
@@ -536,7 +536,7 @@ When a class has finished:
 
 ### 10.5 Google Drive
 
-**Manage → Google Drive** shows whether the Drive link is **Connected** and when it last updated. **Test connection** checks it.
+**Manage → Google Drive** shows whether the Drive link is **Connected** and when it last updated.
 
 Each trainer's Drive folder gets **Attendance register - <term>** and **Marksheets - <term>**, rewritten from the database within a few minutes of a change (edits made in the sheets are replaced). Evidence is stored as **POE / Class / Adm No - Name / Unit - CAT1 - v1.pdf**, listed in the sheet **POE - Evidence index**.
 
@@ -544,7 +544,7 @@ A folder is made automatically for every trainer in the loading who does not hav
 
 Setting up the Drive link is a one-off job described in the Technical Documentation.
 
-**Backup account.** Students' new documents are in their own Drives. Every one of them is also shared with the **Backup account** set on this card (for example ictpoe@rvnp.ac.ke), so the department can always see them; approved documents are copied into it by the backup (see [9.5](#95-backup-of-approved-evidence-hod-and-mis-officer)). It must be the account the Drive bridge runs as. Type the address and tap **Save**.
+**Backup account.** Students' new documents are in their own Drives. Every one of them is also shared with the **Backup account** set on this card (for example ictpoe@rvnp.ac.ke), so the department can always see them; approved documents are copied into it by the backup (see [9.5](#95-backup-of-approved-evidence-hod-and-mis-officer)). It must be the account the Drive bridge runs as. Type the address and the **Space (GB)** the college gave that account (for example 50), then tap **Save**. The space is typed in because, with the college's shared (pooled) Google storage, Google reports only the whole college's total, not one account's allowance.
 
 ---
 
@@ -632,7 +632,7 @@ Files can be up to 20 MB. If the camera inside the app cannot start on a device,
 
 ### 12.4 Submissions
 
-The **Submissions** tab has three blocks. Tap a heading to open or close it; each has its own **Sort** (newest, oldest, by unit, by status).
+The **Submissions** tab has three blocks. Tap a heading to open or close it. **My POE submissions** and **My attendance** are tables: type in **Search**, narrow them down with the choices beside it (status; unit and mark), and tap a column heading to sort (tap again to reverse). Long tables show 30 rows at a time. **My scanned check-in(s)** has its own **Sort**.
 
 | Block | What it shows |
 |---|---|

@@ -80,7 +80,7 @@
   </div>
 
   <div class="view-checkin">
-  <button type="button" class="btn primary big" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan lesson QR</button>
+  <button type="button" class="btn primary" id="scanBtn"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg>Scan lesson QR</button>
   <p class="scan-hint">Point your camera at your trainer's Lesson QR. No internet needed.</p>
 
   </div>
@@ -94,7 +94,7 @@
     <p class="field-label">What are you sending? <span class="muted small">Pick one or more</span></p>
     <div id="poeItems" class="item-chips" role="group" aria-label="Items"></div>
     <div id="poeDocs"></div>
-    <button type="button" class="btn primary big" id="poeSave" disabled>Scan pages first</button>
+    <button type="button" class="btn primary" id="poeSave" disabled>Scan pages first</button>
     <div id="poeNotify" class="notify-row" hidden>
       <label class="check"><input type="checkbox" id="poeNotifyOn"> Notify me about my evidence</label>
       <p id="poeNotifyHint" class="muted small">Your device tells you when your trainer approves your work or sends it back.</p>
@@ -107,8 +107,9 @@
   <div class="view-subs">
   <details id="poeListCard" class="card fold-card" hidden>
     <summary><h2>My POE submissions</h2><span id="poeListCount" class="count-pill"></span></summary>
-    <div class="list-tools"><select id="poeSort" aria-label="Sort my submissions"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="unit">By unit</option><option value="status">By status</option></select></div>
-    <ul id="poeList" class="history poe-list"></ul>
+    <div class="list-tools"><input type="search" id="poeSearch" placeholder="Search unit, item or comment" aria-label="Search my submissions">
+      <select id="poeFilter" aria-label="Show"><option value="">All</option><option value="local">Not sent yet</option><option value="submitted">With your trainer</option><option value="approved">Approved</option><option value="returned">Returned</option></select></div>
+    <div id="poeList"></div>
   </details>
   <details id="historyCard" class="card fold-card" hidden>
     <summary><h2>My scanned check-in(s)</h2><span id="historyCount" class="count-pill"></span></summary>
@@ -118,8 +119,10 @@
   <details id="attendCard" class="card fold-card" hidden>
     <summary><h2>My attendance</h2><span id="attendCount" class="count-pill"></span></summary>
     <p id="attendSum" class="muted small"></p>
-    <div class="list-tools"><select id="attSort" aria-label="Sort my attendance"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="unit">By unit</option><option value="status">By status</option></select></div>
-    <ul id="attendList" class="history"></ul>
+    <div class="list-tools"><input type="search" id="attSearch" placeholder="Search unit or date" aria-label="Search my attendance">
+      <select id="attUnit" aria-label="Unit"><option value="">All units</option></select>
+      <select id="attStatus" aria-label="Mark"><option value="">All marks</option><option>Present</option><option>Late</option><option>Absent</option><option>Excused</option></select></div>
+    <div id="attendList"></div>
   </details>
   <p class="subs-empty muted center">Nothing here yet. Your check-ins and the evidence you send show up here.</p>
   </div>
@@ -168,6 +171,7 @@
 <script src="vendor/jsQR.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="scanner.js"></script>
+<script src="tables.js"></script>
 <script src="google.js"></script>
 <script src="poe-student.js"></script>
 <script src="student.js"></script>

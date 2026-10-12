@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.4.1';
+var BRIDGE_VERSION = '1.4.2';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -273,15 +273,16 @@ function archiveRoot_(p) {
 /** Copies batches while there is time. Returns true when a backup is still going (the next run carries on). */
 function backup_(started) {
   var p = PropertiesService.getScriptProperties();
-  // Drive's own "about" gives this account's address and storage with the Drive permission the script already has
-  // (Session.getEffectiveUser() would need an extra permission, userinfo.email).
+  // Drive's "about" gives this account's address with the Drive permission the script already has (Session.getEffectiveUser()
+  // would need userinfo.email). Its storage figures are the whole college's when storage is pooled, so the space used is
+  // this account's own (DriveApp), and the limit is the allowance the MIS Officer typed in (it comes with each job).
   var token = ScriptApp.getOAuthToken(), folders = {}, root = null;
-  var about = driveApi_('get', '/drive/v3/about?fields=user(emailAddress),storageQuota(limit,usage)', null, token);
+  var about = driveApi_('get', '/drive/v3/about?fields=user(emailAddress)', null, token);
   var email = (about.user && about.user.emailAddress) || '';
-  var used = Number(about.storageQuota && about.storageQuota.usage) || DriveApp.getStorageUsed();
-  var limit = Number(about.storageQuota && about.storageQuota.limit) || DriveApp.getStorageLimit();
+  var used = DriveApp.getStorageUsed(), limit = 0;
   while (Date.now() - started < TIME_BUDGET_MS) {
-    var job = callWorker_('backupJob', { email: email, used: used, limit: limit });
+    var job = callWorker_('backupJob', { email: email, used: used });
+    limit = Number(job.limit) || 0;
     if (!job.due) return false;
     root = root || archiveRoot_(p);
     var results = [], paused = false, i;

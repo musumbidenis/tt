@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.17.0**, server (Worker) **6.5.0**, database schema **10**, Drive bridge **1.4.1**.
+Describes app **4.17.1**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -188,7 +188,7 @@ Bump these with every release:
 4. **Edit code**, replace everything with `worker/worker.js`, **Deploy** (or connect Workers Builds, step 8).
 5. **Bindings → Add binding → D1 database**: variable `DB`, database `rvnp-attendance`.
 6. **Settings → Variables and Secrets → Add**: Secret `ADMIN_PIN`, a 6-digit PIN.
-7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.5.0",…}`. Put the address in `config.js` as `serverUrl`.
+7. Open `https://rvnp-attendance.<subdomain>.workers.dev/?action=ping`. You should see `{"ok":true,"version":"6.5.1",…}`. Put the address in `config.js` as `serverUrl`.
 8. Recommended:
    - **Settings → General → Placement → Smart**, so the Worker runs next to the database.
    - **Workers Builds**: put the D1 database ID in `wrangler.toml`, then **Settings → Builds → Connect** → GitHub → `tt`, branch `main`, build command empty, deploy command `npx wrangler deploy`, root directory `/`. Every push then deploys the Worker in a minute or two.
@@ -448,7 +448,7 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `poeList`, `poeView` | Any | Evidence lists; for a preview, a signed ticket for the bridge, or for a file in a student's Drive its file ID and md5 (the trainer's device opens it with their own Google sign-in). |
 | `poeChanged` | Any who may view | The device found a different md5 in the student's Drive: sets `changed_at` and audits it. |
 | `setGoogle` | Any | Connect (checked with Google's userinfo, college domain only) or clear the staff member's Google address. |
-| `setArchiveEmail` | MIS | The backup account every student file is shared with. |
+| `setArchiveEmail` | MIS | The backup account every student file is shared with, and its space in GB (`quotaGb`). |
 | `backupStatus`, `setBackup` | HOD, MIS | Backup plan (`repeat` off/daily/weekly/monthly, `hour`), last report, storage level (`ok`, `warn` from 80%, `full` from 95%), documents waiting, ones given up on; `setBackup` also takes `now` (back up now) and `retry`. |
 | `poeDecide` | Trainer, HOD | Approve or return (sends a notification). |
 | `poeReceive` | MIS | Mark approved evidence received. |
@@ -536,7 +536,7 @@ There is no Shared Drive, so the archive lives in the **backup account's own Dri
 
 - **When**: `meta.backup_plan` holds `repeat` and `hour` (East Africa Time) and `nowAt` (Back up now, which also nudges the bridge). A backup is due when `nowAt` is newer than the last start, when one is still running, or when the repeat says so (daily: not yet today; weekly: 6.5 days since the last; monthly: not yet this month), from the chosen hour.
 - **How**: at the end of every bridge run (hourly or nudged), `backup_()` reports `DriveApp.getStorageUsed()` and `getStorageLimit()` to `backupJob`, then copies each file with the Drive REST API (`files.copy`, the script's own OAuth token), checking its size and md5 first. It reports in groups of 20 to `backupDone`, and keeps asking for batches until nothing is due or the run's time is up; an unfinished backup books another run in two minutes.
-- **Space**: the Worker marks the level `warn` from 80% (a banner and a Manage badge for the HOD and MIS Officer) and stops handing out work at 95%; the bridge also stops before a copy would cross 95%.
+- **Space**: with pooled Workspace storage, Drive's `about.storageQuota` gives the whole organisation's usage and limit, so the bridge reports the account's own `DriveApp.getStorageUsed()` and the limit is `meta.backup_quota_gb` (Space (GB) in Manage → Google Drive, default 50), sent back with each job. The Worker marks the level `warn` from 80% (a banner and a Manage badge for the HOD and MIS Officer) and stops handing out work at 95%; the bridge also stops before a copy would cross 95%.
 - **Changing account**: copies are made by the bridge, so a new backup account means deploying the bridge as that account (4.3) and setting the Backup account to it. If the two differ, the Worker refuses to hand out work and Manage says so.
 - `meta.backup_report` keeps the last start and finish, the counts, storage and any error. Per document: `archived_at`, `archive_id`, `archive_tries`, `archive_error`.
 

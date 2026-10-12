@@ -494,7 +494,7 @@ const Admin = (() => {
 
   /* ---------- HOD and MIS: backup of approved evidence into the backup account's Drive ---------- */
   const gb = (n) => (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + ' GB';
-  const REPEAT = { off: 'Off (only when I tap Back up now)', daily: 'Every day', weekly: 'Every week', monthly: 'Every month' };
+  const REPEAT = { off: 'Off', daily: 'Every day', weekly: 'Every week', monthly: 'Every month' };
   async function loadBackup() {
     try {
       const b = cache.backup = need(await api('backupStatus'));
@@ -523,13 +523,13 @@ const Admin = (() => {
       <p class="small">${b.waiting ? `<b>${b.waiting}</b> approved document(s) waiting for the next backup.` : 'Every approved document is backed up.'}</p>
       ${b.gaveUp.length ? fold('backupFailed', `${b.gaveUp.length} could not be copied`, `<ul class="mlist">${b.gaveUp.map((g) => `<li><span><b>${esc(g.name)}</b><small>${esc(g.admNo)} · ${esc(g.what)} · ${esc(g.error)}</small></span></li>`).join('')}</ul>
         <p class="muted small">Usually the student deleted the file or stopped sharing it.</p><button type="button" class="btn small" data-act="backupRetry">Try these again</button>`) : ''}
-      <form id="backupForm" class="backup-form">
-        <label>Repeat<select id="backupRepeat">${Object.entries(REPEAT).map(([k, v]) => `<option value="${k}"${k === b.plan.repeat ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
-        <label>At<select id="backupHour">${hours}</select></label>
+      <form id="backupForm" class="inline-form">
+        <label class="grow">Repeat<select id="backupRepeat">${Object.entries(REPEAT).map(([k, v]) => `<option value="${k}"${k === b.plan.repeat ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label class="grow">At<select id="backupHour">${hours}</select></label>
         <button class="btn">Save</button>
       </form>
       <div class="row-actions"><button type="button" class="btn primary" data-act="backupNow"${b.level === 'full' ? ' disabled' : ''}>Back up now</button></div>
-      <p class="muted small">A backup starts within a few minutes of <b>Back up now</b>, or at the chosen hour (East Africa Time). Large backups carry on over several runs.</p>`);
+`);
   }
   async function backupAction(patch, btn, msg) {
     busy(btn, true, 'Saving…');
@@ -614,10 +614,12 @@ const Admin = (() => {
   /* ---------- MIS: the Google Drive bridge (attendance sheets per trainer, POE files) ---------- */
   async function loadDrive() {
     try {
-      const { secret, report: r, archiveEmail } = need(await api('driveStatus'));
-      // The backup account sees every document students save in their own Drive (and copies approved ones later).
-      const archiveBox = typeof Google !== 'undefined' && Google.on() ? `<form class="archive-email" id="archiveEmailForm"><label>Backup account <span class="muted small">(sees every POE document students save in their own Drive)</span>
-        <input type="email" id="archiveEmail" value="${esc(archiveEmail || '')}" placeholder="ictpoe@rvnp.ac.ke"></label><button class="btn small">Save</button></form>` : '';
+      const { secret, report: r, archiveEmail, quotaGb } = need(await api('driveStatus'));
+      // The backup account sees every document students save in their own Drive, and holds the backup copies.
+      // Its space is typed in: with the college's pooled storage, Google reports only the whole college's limit.
+      const archiveBox = typeof Google !== 'undefined' && Google.on() ? `<p class="muted small">The backup account sees every POE document students save in their own Drive, and keeps the backup copies.</p>
+        <form class="inline-form" id="archiveEmailForm"><label class="grow">Backup account<input type="email" id="archiveEmail" value="${esc(archiveEmail || '')}" placeholder="ictpoe@rvnp.ac.ke"></label>
+        <label class="narrow">Space (GB)<input type="number" id="archiveQuota" min="1" max="100000" step="1" value="${esc(quotaGb || 50)}"></label><button class="btn">Save</button></form>` : '';
       if (!r) {
         fill('m-drive', `<p class="muted">Not connected yet. Each trainer's attendance sheet and the students' POE files go to the college Google Drive through a small Apps Script in the school account. The README has the steps (about 10 minutes, once).</p>
           ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare → the Worker → Settings → Variables).</p>'}${archiveBox}`);
@@ -629,30 +631,14 @@ const Admin = (() => {
       const schoolOnly = /\/a\/macros\//.test(r.url || '');
       const noFolders = !(r.folders || []).length;
       fill('m-drive', `<p class="muted">Connected - last update ${esc(fmtShort(r.at))}</p>
-        <div class="drive-test"><button type="button" class="btn small" data-act="testBridge">Test connection</button> <span id="driveTest" class="muted small"></span></div>
         ${schoolOnly ? `<p class="err-text small">The bridge address is the school-only form, so students who are not signed in to the school account cannot send evidence. In Apps Script, deploy a new version of the web app with <b>Who has access: Anyone</b>, then run sync() once.</p>` : ''}
         ${noFolders ? '<p class="warn-text small">The Trainers folder in Drive has no folders inside it yet. Create one folder per trainer inside it, or paste each trainer\'s folder link below.</p>' : ''}
         ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> A folder is made for each trainer in the loading the next time the Drive updates; you can also choose one yourself or paste its link.</p>
         <ul class="mlist drive-list">${r.unmatched.map((u) => `<li data-code="${esc(u.code)}"><span><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span></span>
           <span class="drive-pick">${(r.folders || []).length ? `<select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select>` : ''}
-          <input type="text" data-drivelink placeholder="or paste folder link" aria-label="Folder link for ${esc(u.name)}"></span></li>`).join('')}</ul>` : '<p>Every trainer with units has a folder and a sheet.</p>'}
-        <p class="muted small">Sheets refresh about every 10 minutes from the registers that have reached the server.</p>${archiveBox}`);
+          <input type="text" data-drivelink placeholder="or paste folder link" aria-label="Folder link for ${esc(u.name)}"></span></li>`).join('')}</ul>` : ''}
+        ${archiveBox}`);
     } catch (e) { fill('m-drive', `<p class="err-text">${esc(e.message)}</p>`); }
-  }
-  /** Asks the bridge a question the way a phone does. A sign-in page or no answer shows here, not on a student's phone. */
-  async function testBridge(btn) {
-    const out = $('#driveTest'); const url = $('.drive-url')?.textContent || '';
-    if (!url) { out.textContent = 'No bridge address yet.'; return; }
-    btn.disabled = true; out.textContent = 'Testing…';
-    try {
-      const res = await fetch(url, { redirect: 'follow' });
-      let j = null; try { j = await res.json(); } catch { /* not JSON */ }
-      out.innerHTML = j && j.ok ? '<b class="ok-text">Reachable — students can send evidence.</b>'
-        : '<b class="err-text">It asks for a sign-in. Redeploy the web app with Who has access: Anyone, then run sync().</b>';
-    } catch (e) {
-      // A Google sign-in page on another site also ends here: the browser blocks it before the app can read it.
-      out.innerHTML = '<b class="err-text">The device could not read an answer. Open the address above in a private (incognito) window: a Google sign-in page means the web app is not open to Anyone; "unable to open the file" means the address is out of date.</b>';
-    } finally { btn.disabled = false; }
   }
 
   async function setDriveFolder(input) {
@@ -693,7 +679,6 @@ const Admin = (() => {
     const sortTh = t.closest('th[data-sort]');
     if (sortTh) { const k = sortTh.dataset.sort; ovSort = { key: k, dir: ovSort.key === k ? -ovSort.dir : 1 }; Tables.reset('overview'); drawOverview(); return; }
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
-    const tb = t.closest('[data-act="testBridge"]'); if (tb) { testBridge(tb); return; }
     const bn = t.closest('[data-act="backupNow"]'); if (bn) { backupAction({ now: true }, bn, 'Backup asked for: it starts within a few minutes'); return; }
     const br = t.closest('[data-act="backupRetry"]'); if (br) { backupAction({ retry: true, now: true }, br, 'They will be tried again in the next backup'); return; }
     if (t.closest('[data-act="clearDefaultPin"]')) {
@@ -799,8 +784,8 @@ const Admin = (() => {
       e.preventDefault();
       const btn = e.target.querySelector('button');
       busy(btn, true, 'Saving…');
-      api('setArchiveEmail', { email: $('#archiveEmail').value.trim() }).then(need)
-        .then((r) => toast(r.email ? `Students' documents are now also shared with ${r.email}` : 'No backup account', 'ok'))
+      api('setArchiveEmail', { email: $('#archiveEmail').value.trim(), quotaGb: Number($('#archiveQuota').value) || 50 }).then(need)
+        .then((r) => { toast(r.email ? `Saved: ${r.email}, ${r.quotaGb} GB` : 'No backup account', 'ok'); if (cache.backup) loadBackup(); })
         .catch((err) => toast(err.message, 'err')).finally(() => busy(btn, false));
       return;
     }

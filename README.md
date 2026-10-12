@@ -438,3 +438,9 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Backup of approved evidence.** Approved documents in students' Drives are copied into *The ARK - Archive* in the backup account's Drive (ictpoe), sorted by class and student. **Manage → Backup** (HOD and MIS Officer): **Back up now**, a repeat setting (daily, weekly or monthly at a chosen hour), the last backup's counts, documents waiting, and **Try these again** for ones that failed.
 - **Storage gauge and warnings.** The backup account's used and total space are shown; from 80% full the HOD and MIS Officer are warned to ask IT for more space or switch to another account, and at 95% backups stop.
 - Drive bridge 1.4.1: the backup reads the account's address and storage from Drive itself (1.4.0 needed a permission the bridge does not have, so backups did not run).
+
+## Changes in 4.17.1 (Worker 6.5.1, Drive bridge 1.4.2)
+
+- **Backup storage shows the backup account's own use** against the space the college gave it, typed in Manage → Google Drive (**Space (GB)**, default 50). Google's own figures were the whole college's pooled storage (1.3 TB of 100 TB).
+- Manage: the backup and backup-account forms sit on one row; removed **Test connection** (it no longer worked), the "sheets refresh" note and the "every trainer has a folder" line.
+- Student app: **My POE submissions** and **My attendance** are now tables with search, filters (status; unit and mark) and sorting by heading; the scan and save buttons are smaller; a document being scanned shows just its item and page count.

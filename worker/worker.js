@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.5.0';
+export const VERSION = '6.5.1';
 const SCHEMA_VERSION = '10';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -1340,14 +1340,17 @@ function backupDue(plan, rep) {
 }
 const WAITING_SQL = `SELECT COUNT(*) AS n FROM evidence WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) < ${BACKUP_TRIES}`;
 async function backupJob(env, q) {
-  const [planRow, repRow, archive] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"], ["SELECT value FROM meta WHERE key='archive_email'"]);
+  const [planRow, repRow, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"],
+    ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
   const plan = readJson(planRow[0]?.value, {}), rep = readJson(repRow[0]?.value, {});
-  // The storage reading is kept every time, so the gauge stays current even when nothing is due.
-  Object.assign(rep, { email: lower(q.email || ''), used: Number(q.used) || 0, limit: Number(q.limit) || 0, checkedAt: nowIso() });
+  // The storage reading is kept every time, so the gauge stays current even when nothing is due. The limit is the
+  // space the college gave the account (typed in Manage): with pooled storage Google only reports the college's total.
+  const limit = (Number(quota[0]?.value) || 50) * 1024 ** 3;
+  Object.assign(rep, { email: lower(q.email || ''), used: Number(q.used) || 0, limit, checkedAt: nowIso() });
   const full = rep.limit > 0 && rep.used / rep.limit >= BACKUP_STOP;
   const wrongAccount = archive[0]?.value && rep.email && lower(archive[0].value) !== rep.email;
   rep.wrongAccount = wrongAccount ? archive[0].value : '';
-  let out = { ok: true, due: false, stopAt: BACKUP_STOP };
+  let out = { ok: true, due: false, stopAt: BACKUP_STOP, limit };
   if (backupDue(plan, rep)) {
     if (full) { rep.paused = true; rep.running = false; }
     else if (wrongAccount) { rep.running = false; rep.lastError = `The Drive bridge runs as ${rep.email}, but students share their files with ${archive[0].value}.`; }
@@ -1356,7 +1359,7 @@ async function backupJob(env, q) {
       const rows = await all(env, `SELECT id, adm_no, name, class_code, unit_name, item, version, file_id, file_name, md5 FROM evidence
         WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) < ${BACKUP_TRIES} ORDER BY decided_at LIMIT ${BACKUP_BATCH}`);
       if (!rows.length) Object.assign(rep, { running: false, finishedAt: nowIso() });
-      out = { ok: true, due: rows.length > 0, stopAt: BACKUP_STOP, files: rows.map((r) => ({ id: r.id, fileId: r.file_id, md5: r.md5 || '',
+      out = { ok: true, due: rows.length > 0, stopAt: BACKUP_STOP, limit, files: rows.map((r) => ({ id: r.id, fileId: r.file_id, md5: r.md5 || '',
         name: r.file_name || `${safeName(r.unit_name)} - ${r.item} - v${r.version}.pdf`, folders: [safeName(r.class_code), folderName(`${r.adm_no} - ${r.name}`)] })) };
     }
   }
@@ -1383,17 +1386,18 @@ async function backupDone(env, q) {
   }
   const rep = readJson(await getMeta(env, 'backup_report'), {});
   Object.assign(rep, { copied: (rep.copied || 0) + copied, changed: (rep.changed || 0) + changed, failed: (rep.failed || 0) + failed,
-    used: Number(q.used) || rep.used || 0, limit: Number(q.limit) || rep.limit || 0, checkedAt: now });
+    used: Number(q.used) || rep.used || 0, checkedAt: now });
   if (q.paused) Object.assign(rep, { paused: true, running: false });
   if (q.finished && !q.paused) Object.assign(rep, { running: false, finishedAt: now });
   await many(env, ...stmts, metaStmt('backup_report', JSON.stringify(rep)));
   return { ok: true };
 }
 async function backupStatus(env) {
-  const [planRow, repRow, archive, waiting, failedRows] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"],
+  const [planRow, repRow, archive, waiting, failedRows, quota] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"],
     ["SELECT value FROM meta WHERE key='archive_email'"], [WAITING_SQL],
-    [`SELECT adm_no, name, unit_name, item, version, archive_error FROM evidence WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) >= ${BACKUP_TRIES} LIMIT 50`]);
+    [`SELECT adm_no, name, unit_name, item, version, archive_error FROM evidence WHERE status='approved' AND source='drive' AND archived_at IS NULL AND COALESCE(archive_tries,0) >= ${BACKUP_TRIES} LIMIT 50`], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
   const rep = readJson(repRow[0]?.value, {});
+  rep.limit = (Number(quota[0]?.value) || 50) * 1024 ** 3;      // the allowance as it is now, even before the bridge's next run
   const share = rep.limit ? rep.used / rep.limit : 0;
   return { ok: true, plan: { repeat: 'off', hour: 18, ...readJson(planRow[0]?.value, {}) }, report: rep, archiveEmail: archive[0]?.value || '', waiting: waiting[0]?.n || 0,
     gaveUp: failedRows.map((r) => ({ admNo: r.adm_no, name: r.name, what: `${r.unit_name} ${r.item} v${r.version}`, error: r.archive_error || '' })),
@@ -1912,9 +1916,11 @@ async function setArchiveEmail(env, b, me) {
   const email = lower(String(b.email || '').trim());
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail('That does not look like an email address');
   if (email && !okDomain(env, email)) fail(`Use a college Google account (@${env.GOOGLE_DOMAIN})`);
-  await setMeta(env, 'archive_email', email);
-  await audit(env, me, 'backup account', email || '(none)');
-  return { ok: true, email };
+  const quotaGb = Math.round(Number(b.quotaGb) || 0) || Number(await getMeta(env, 'backup_quota_gb')) || 50;
+  if (quotaGb < 1 || quotaGb > 100000) fail('Give the space in GB, from 1 to 100000');
+  await many(env, metaStmt('archive_email', email), metaStmt('backup_quota_gb', quotaGb));
+  await audit(env, me, 'backup account', `${email || '(none)'}, ${quotaGb} GB`);
+  return { ok: true, email, quotaGb };
 }
 async function poeDecide(env, b, me, ctx) {
   const r = await evidenceFor(env, b.id, me, true);
@@ -2020,8 +2026,8 @@ async function poeClass(env, b) {
   return { ok: true, classes, classCode: cls, units, students };
 }
 async function driveStatus(env) {
-  const [r, archive] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"]);
-  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', domain: env.GOOGLE_DOMAIN || '' };
+  const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
+  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', quotaGb: Number(quota[0]?.value) || 50, domain: env.GOOGLE_DOMAIN || '' };
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */

@@ -249,21 +249,26 @@ async function renderAttendance() {
   card.hidden = !lessons.length;
   $('#attendCount').textContent = lessons.length || '';
   if (!lessons.length) return;
-  const ORDER = { Absent: 0, Late: 1, Excused: 2, Present: 3 };
-  const by = $('#attSort').value || 'new';
-  const key = (l) => l.date + ' ' + l.period;
-  const list = [...lessons].sort(by === 'old' ? (a, b) => key(a).localeCompare(key(b))
-    : by === 'unit' ? (a, b) => String(a.unitName).localeCompare(String(b.unitName)) || key(b).localeCompare(key(a))
-      : by === 'status' ? (a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || key(b).localeCompare(key(a))
-        : (a, b) => key(b).localeCompare(key(a)));
   const lessonsOnly = lessons.filter((l) => l.kind === 'lesson');
   const count = (st) => lessonsOnly.filter((l) => l.status === st).reduce((n, l) => n + (l.slots || 1), 0);
   const held = lessonsOnly.reduce((n, l) => n + (l.slots || 1), 0), came = count('Present') + count('Late');
   $('#attendSum').textContent = `${held} lesson(s) marked: ${count('Present')} present, ${count('Late')} late, ${count('Absent')} absent, ${count('Excused')} excused`
     + (held ? ` · ${Math.round((came / Math.max(1, held - count('Excused'))) * 100)}% attended` : '') + (d.at ? ` · updated ${fmtTime(d.at)}` : '');
+  // The table: searchable, filtered by unit and mark, sorted by tapping a heading.
+  const unitSel = $('#attUnit'), units = [...new Set(lessons.map((l) => l.unitName))].sort();
+  const keep = unitSel.value;
+  unitSel.innerHTML = '<option value="">All units</option>' + units.map((u) => `<option${u === keep ? ' selected' : ''}>${esc(u)}</option>`).join('');
+  try { if (!localStorage.getItem('tsort:attMine')) Tables.setSort('attMine', 'date', -1); } catch { /* private mode */ }   // newest first to start
+  const q = $('#attSearch').value.trim().toLowerCase(), unit = unitSel.value, mark = $('#attStatus').value;
+  const shown = Tables.sort('attMine', lessons.filter((l) => (!unit || l.unitName === unit) && (!mark || l.status === mark)
+    && (!q || [l.unitName, l.unitCode, l.date, fmtDate(l.date), l.period].some((x) => String(x || '').toLowerCase().includes(q)))),
+  { date: (l) => l.date + ' ' + l.period, unit: (l) => l.unitName, lesson: (l) => l.period, mark: (l) => l.status }, 'date');
+  const page = Tables.slice('attMine', shown), first = shown.indexOf(page[0]);
   const PILL = { Present: 'synced', Late: 'pending', Absent: 'rejected', Excused: 'locked' };
-  $('#attendList').innerHTML = list.map((l) => `<li><div><b>${esc(l.unitName)}${l.kind !== 'lesson' ? ` <span class="muted small">(${l.kind === 'cat' ? 'CAT' : 'extra'})</span>` : ''}</b>
-    <span class="muted small">${esc(fmtDate(l.date))} · ${esc(l.period)}</span></div><span class="pill ${PILL[l.status] || 'locked'}">${esc(l.status || '–')}</span></li>`).join('');
+  $('#attendList').innerHTML = !shown.length ? '<p class="muted small">Nothing matches.</p>'
+    : `<div class="table-wrap"><table class="report-table stu-table"><thead><tr><th class="num">S/N</th>${Tables.th('attMine', 'date', 'Date')}${Tables.th('attMine', 'unit', 'Unit')}${Tables.th('attMine', 'mark', 'Mark')}</tr></thead>
+      <tbody>${page.map((l, i) => `<tr><td class="num">${first + i + 1}</td><td>${esc(new Date(l.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }))}<span class="sub">${esc(String(l.period).replace(/ · .*$/, ''))}${l.kind !== 'lesson' ? ` (${l.kind === 'cat' ? 'CAT' : 'extra'})` : ''}</span></td>
+        <td>${esc(l.unitName)}</td><td><span class="pill ${PILL[l.status] || 'locked'}">${esc(l.status || '–')}</span></td></tr>`).join('')}</tbody></table></div>${Tables.bar('attMine', shown)}`;
 }
 
 async function sync({ manual = false } = {}) {
@@ -462,7 +467,10 @@ async function init() {
   window.addEventListener('hashchange', consumeHash);
   window.addEventListener('online', () => { updateNet(); if (!st.profile && !$('#setupCard').hidden) openSetup(); sync(); syncAttendance(); });
   $('#histSort').addEventListener('change', () => render());
-  $('#attSort').addEventListener('change', () => renderAttendance());
+  $('#attSearch').addEventListener('input', () => { Tables.reset('attMine'); renderAttendance(); });
+  $('#attUnit').addEventListener('change', () => { Tables.reset('attMine'); renderAttendance(); });
+  $('#attStatus').addEventListener('change', () => { Tables.reset('attMine'); renderAttendance(); });
+  Tables.on('attMine', () => renderAttendance());
   window.syncAttendance = syncAttendance;
   window.addEventListener('offline', updateNet);
   // Automatic sending: on every scan, when the internet comes back, when the app is opened, and every minute.

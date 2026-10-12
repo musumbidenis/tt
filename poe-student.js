@@ -130,7 +130,7 @@ const POE = (() => {
   function docCard(item, d) {
     const pages = d?.pages || [];
     return `<div class="poe-doc" data-doc="${item}">
-      <div class="poe-doc-head"><b>${esc(unitName(ps.unit))} — ${item}</b><span class="muted small">${d?.pdfOnly ? `PDF from the device · ${pagesOf(d)} pages` : pages.length + ' page' + (pages.length === 1 ? '' : 's')}${pagesOf(d) < MIN_PAGES ? ` · add at least ${MIN_PAGES}` : ''}</span></div>
+      <div class="poe-doc-head"><span class="item-tag">${item}</span><span class="muted small">${pagesOf(d)} page${pagesOf(d) === 1 ? '' : 's'}${d?.pdfOnly ? ' (PDF from the device)' : ''}</span></div>
       ${d?.pdfOnly ? `<p class="small">${esc(d.pdfName || 'document.pdf')} <button type="button" class="linkish" data-clear>Remove</button></p>` : `
       <ol class="poe-pages">${pages.map((_, i) => `<li data-page="${i}"><img alt="Page ${i + 1}" class="f-document"><span>${i + 1}</span>
         <span class="pg-tools"><button type="button" data-move="-1" aria-label="Move page ${i + 1} up" ${i ? '' : 'disabled'}>↑</button><button type="button" data-move="1" aria-label="Move page ${i + 1} down" ${i < pages.length - 1 ? '' : 'disabled'}>↓</button><button type="button" data-del aria-label="Delete page ${i + 1}">✕</button></span></li>`).join('')}</ol>`}
@@ -138,30 +138,37 @@ const POE = (() => {
     </div>`;
   }
   const STATUS = { submitted: ['pending', 'With your trainer'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
+  /* My POE submissions: one table of what is still on this device and what has been sent, searchable, filterable and
+   * sortable (tap a heading). */
+  const shortDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
   async function renderList(docs) {
+    docs = docs || await allDocs();
     const local = docs.filter((d) => d.status !== 'draft');
-    const box = $('#poeList');
     const rows = [];
-    for (const d of local.filter((x) => x.status !== 'sent').sort((a, b) => String(b.createdAt).localeCompare(a.createdAt))) {
-      rows.push(`<li data-local="${esc(d._id)}"><div><b>${esc(d.unitName)} — ${esc(d.item)}</b><span class="muted small">${d.pageCount || ''} page(s) · saved ${esc(fmtTime(d.createdAt))}${d.error ? ' · ' + esc(d.error) : ''}</span></div>
-        <span class="poe-acts">${d.status === 'error' && navigator.onLine
-          ? `<span class="pill rejected">Not sent yet</span><span class="poe-why small">${esc(d.error || 'Try again later')}</span><button type="button" class="linkish" data-retry>${d.needGoogle ? 'Sign in to Google and send' : 'Try again'}</button>`
-          : `<span class="pill pending">${d.status === 'uploading' ? 'Sending…' : 'Saved on device — sends when online'}</span>`}<button type="button" class="linkish" data-copy>Save a copy</button></span></li>`);
+    for (const d of local.filter((x) => x.status !== 'sent')) {
+      const [cls, label] = d.status === 'uploading' ? ['pending', 'Sending…'] : d.status === 'error' ? ['rejected', 'Not sent yet'] : ['pending', 'Saved on device'];
+      rows.push({ local: true, id: d._id, unit: d.unitName, item: d.item, version: null, at: d.createdAt, status: 'local', cls, label, note: d.error || '', copy: d._id,
+        retry: d.status === 'error' && navigator.onLine, needGoogle: d.needGoogle });
     }
-    const by = $('#poeSort')?.value || 'new', ORDER = { returned: 0, submitted: 1, approved: 2 };
-    const order = by === 'old' ? (a, b) => String(a.submittedAt).localeCompare(b.submittedAt)
-      : by === 'unit' ? (a, b) => String(a.unitName).localeCompare(String(b.unitName)) || String(a.item).localeCompare(String(b.item))
-        : by === 'status' ? (a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || String(b.submittedAt).localeCompare(a.submittedAt)
-          : (a, b) => String(b.submittedAt).localeCompare(a.submittedAt);
-    for (const e of [...ps.server].sort(order)) {
+    for (const e of ps.server) {
       const [cls, label] = STATUS[e.status] || ['pending', e.status];
-      const mine = local.find((d) => d.serverId === e.id);
-      rows.push(`<li><div><b>${esc(e.unitName)} — ${esc(e.item)} <span class="muted">v${e.version}</span></b>${e.comment ? `<span class="small"><b>Comment(s):</b> ${esc(e.comment)}</span>` : ''}</div>
-        <span class="poe-acts"><span class="pill ${cls}">${label}</span>${mine ? `<button type="button" class="linkish" data-copy data-id="${esc(mine._id)}">Save a copy</button>` : ''}${e.status === 'returned' ? `<button type="button" class="linkish" data-redo="${esc(e.unitCode)}|${esc(e.item)}">Scan again</button>` : ''}</span></li>`);
+      rows.push({ id: e.id, unit: e.unitName, item: e.item, version: e.version, at: e.submittedAt, status: e.status, cls, label, note: e.comment || '',
+        copy: local.find((d) => d.serverId === e.id)?._id || '', redo: e.status === 'returned' ? `${e.unitCode}|${e.item}` : '' });
     }
     $('#poeListCard').hidden = !rows.length;
     if ($('#poeListCount')) $('#poeListCount').textContent = rows.length || '';
-    box.innerHTML = rows.join('');
+    try { if (!localStorage.getItem('tsort:poeMine')) Tables.setSort('poeMine', 'at', -1); } catch { /* private mode */ }   // newest first to start
+    const q = ($('#poeSearch')?.value || '').trim().toLowerCase(), f = $('#poeFilter')?.value || '';
+    const shown = Tables.sort('poeMine', rows.filter((r) => (!f || r.status === f) && (!q || [r.unit, r.item, r.note, r.label].some((x) => String(x || '').toLowerCase().includes(q)))),
+      { unit: (r) => r.unit, item: (r) => r.item, v: (r) => r.version, at: (r) => r.at, status: (r) => r.label }, 'at');
+    const page = Tables.slice('poeMine', shown), first = shown.indexOf(page[0]);
+    $('#poeList').innerHTML = !shown.length ? '<p class="muted small">Nothing matches.</p>'
+      : `<div class="table-wrap"><table class="report-table stu-table"><thead><tr><th class="num">S/N</th>${Tables.th('poeMine', 'unit', 'Document')}${Tables.th('poeMine', 'at', 'Sent')}${Tables.th('poeMine', 'status', 'Status')}</tr></thead>
+        <tbody>${page.map((r, i) => `<tr${r.local ? ` data-local="${esc(r.id)}"` : ''}><td class="num">${first + i + 1}</td>
+          <td><b>${esc(r.item)}</b>${r.version ? ` v${r.version}` : ''}<span class="sub">${esc(r.unit)}</span></td>
+          <td class="small">${esc(shortDate(r.at))}</td>
+          <td><span class="pill ${r.cls}">${esc(r.label)}</span>${r.note ? `<span class="sub">${r.local ? esc(r.note) : `<b>Comment(s):</b> ${esc(r.note)}`}</span>` : ''}
+            <span class="acts">${r.retry ? `<button type="button" class="linkish" data-retry>${r.needGoogle ? 'Sign in to Google and send' : 'Try again'}</button>` : ''}${r.redo ? `<button type="button" class="linkish" data-redo="${esc(r.redo)}">Scan again</button>` : ''}${r.copy ? `<button type="button" class="linkish" data-copy data-id="${esc(r.copy)}">Save a copy</button>` : ''}</span></td></tr>`).join('')}</tbody></table></div>${Tables.bar('poeMine', shown)}`;
   }
 
   /* ---------- drafts: one per unit and item, kept on the device ---------- */
@@ -565,7 +572,9 @@ const POE = (() => {
       else if (Date.now() - started < 4000) openCamera(item);
       else toast('Page added. Tap "Add another page" for the next one.', 'ok');
     });
-    $('#poeSort').addEventListener('change', () => render());
+    $('#poeSearch').addEventListener('input', () => { Tables.reset('poeMine'); renderList(); });
+    $('#poeFilter').addEventListener('change', () => { Tables.reset('poeMine'); renderList(); });
+    Tables.on('poeMine', () => renderList());
     $('#poeGoogle').addEventListener('click', (e) => {
       if (e.target.closest('[data-gsignin]')) googleSignIn().then((ok) => ok && sync());
       if (e.target.closest('[data-gswitch]')) { Google.signOut(); googleSignIn(true).then((ok) => ok && sync()); }
