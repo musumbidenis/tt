@@ -83,7 +83,7 @@ One person can hold several roles, for example an HOD who also teaches.
 
 ### 1.4 Practising on the demo copy
 
-There is a separate **demo copy** of both apps for training sessions. It works exactly like the real app but holds only invented classes, students and registers, so you can try anything (mark, scan, approve, reset) without touching real records. Your trainer or the MIS Officer gives you its address, a demo staff code (DEMO01 to DEMO10, or MIS) and the PIN. Students choose any name on a demo class list.
+There is a separate **demo copy** of both apps for training sessions. It works exactly like the real app but holds only invented classes, students and registers, so you can try anything (mark, scan, approve, reset) without touching real records. Your trainer or the MIS Officer gives you its address, a demo staff code (DEMO02 to DEMO26 for trainers, DEMO01 for the HOD, or MIS) and the PIN. Students choose any name on a demo class list.
 
 - Both demo apps show an orange **DEMO** tag beside the app name. If you see it, nothing you do counts.
 - The demo is wiped and filled again before each training session.

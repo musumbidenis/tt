@@ -7,9 +7,11 @@
 Run from the repository folder, signed in to Cloudflare (npx wrangler login). PINs can also come from the
 environment (DEMO_PIN, DEMO_MIS_PIN); they are never written to the repository.
 
-What goes in (all invented): a term that started three weeks ago, 3 classes of 15 students with 2 units each,
-10 trainers (DEMO01 to DEMO10; DEMO01 is also the HOD) and the MIS Officer (MIS), three weeks of registers,
-some CAT 1 marks, a register waiting for the HOD's approval and a student waiting for the MIS Officer.
+What goes in (all invented): a term that started three weeks ago, 5 classes of 20 students with 5 units each,
+26 trainers and the MIS Officer (MIS), three weeks of registers, some CAT 1 marks, a register waiting for the HOD's
+approval and a student waiting for the MIS Officer. DEMO01 is the HOD (no units: the facilitator's account);
+DEMO02 to DEMO26 teach one unit each, so 50 people can run a paired demo as 25 pairs (demo/demo-day.html).
+This week is left empty, so each pair can mark its own lessons on the day (a unit takes up to 3 a week).
 """
 import argparse, datetime, hashlib, json, os, pathlib, re, secrets, shutil, subprocess, sys, tempfile, time, urllib.request
 
@@ -18,34 +20,55 @@ TOML = ROOT / 'wrangler.demo.toml'
 DB = 'rvnp-demo'
 WHERE = ['--remote']                    # --local when trying the demo on this computer (wrangler dev)
 
-TRAINERS = [('DEMO01', 'ICT AKINYI .J'), ('DEMO02', 'ICT BARASA .K'), ('DEMO03', 'ICT CHEBET .F'), ('DEMO04', 'ICT KAMAU .P'), ('DEMO05', 'ICT MUTUA .D'),
-            ('DEMO06', 'ICT NJERI .E'), ('DEMO07', 'ICT ODHIAMBO .B'), ('DEMO08', 'ICT WAFULA .S'), ('DEMO09', 'ICT WANJIRU .G'), ('DEMO10', 'ICT KIBET .V')]
+SURNAMES = ['AKINYI', 'BARASA', 'CHEBET', 'KAMAU', 'MUTUA', 'NJERI', 'ODHIAMBO', 'WAFULA', 'WANJIRU', 'KIBET', 'OTIENO', 'WEKESA', 'JEPTOO',
+            'KIPROP', 'WAIRIMU', 'NJOROGE', 'ROTICH', 'MUSYOKA', 'NDUKU', 'WAMBUI', 'OMONDI', 'SIMIYU', 'LANGAT', 'MORAA', 'NEKESA', 'ONYANGO']
+TRAINERS = [(f'DEMO{i + 1:02d}', f'ICT {s} .{"ABCDEFGHJKLMNPRSTVW"[(i * 7) % 19]}') for i, s in enumerate(SURNAMES)]
 HOD = 'DEMO01'
-# class code, MIS class, admission prefix, [(unit code, unit name, trainer), (…)]
-CLASSES = [
-    ('ICT L4CS-26SA', 'CSCL4-26-S-RS', 'L4CS/26S/40', [('CE', 'Computer Essentials', 'DEMO01'), ('DDL', 'Demonstrate Digital Literacy', 'DEMO02')]),
-    ('ICT L5CS-26SA', 'CSCL5-26-S-RS', 'L5CS/26S/50', [('DBM', 'Database Management', 'DEMO03'), ('WD', 'Web Design', 'DEMO04')]),
-    ('ICT L6CS-26SA', 'CSCL6-26-S-RS', 'L6CS/26S/60', [('FOP', 'Fundamentals of Programming', 'DEMO05'), ('NET', 'Computer Networking', 'DEMO06')]),
-]
-CLASS_NAMES = {'ICT L4CS-26SA': 'ICT Artisan L4 (demo)', 'ICT L5CS-26SA': 'ICT Certificate L5 (demo)', 'ICT L6CS-26SA': 'ICT Diploma L6 (demo)'}
+# Five units for each class: (code, name). The two streams of a level have the same units.
+UNITS = {
+    '4': [('CE', 'Computer Essentials'), ('DDL', 'Demonstrate Digital Literacy'), ('OHS', 'Occupational Safety and Health'), ('COM', 'Communication Skills'), ('ENT', 'Entrepreneurship')],
+    '5': [('DBM', 'Database Management'), ('WD', 'Web Design'), ('OS', 'Operating Systems'), ('CNW', 'Computer Networks'), ('MAT', 'Business Mathematics')],
+    '6': [('FOP', 'Fundamentals of Programming'), ('NET', 'Network Administration'), ('SAD', 'Systems Analysis and Design'), ('OOP', 'Object-Oriented Programming'), ('CYB', 'Cyber Security')],
+}
+# class code, MIS class, admission prefix, name; units and trainers (DEMO02 onwards, one unit each) are filled in below
+_CLASSES = [('ICT L4CS-26SA', 'CSCL4-26-S-RS', 'L4CS/26S/40', 'ICT Artisan L4 (demo)'),
+            ('ICT L5CS-26SA', 'CSCL5-26-S-RSA', 'L5CS/26S/50', 'ICT Certificate L5 stream A (demo)'),
+            ('ICT L5CS-26SB', 'CSCL5-26-S-RSB', 'L5CS/26S/55', 'ICT Certificate L5 stream B (demo)'),
+            ('ICT L6CS-26SA', 'CSCL6-26-S-RSA', 'L6CS/26S/60', 'ICT Diploma L6 stream A (demo)'),
+            ('ICT L6CS-26SB', 'CSCL6-26-S-RSB', 'L6CS/26S/65', 'ICT Diploma L6 stream B (demo)')]
+CLASSES, CLASS_NAMES, _t = [], {}, 1
+for _code, _mis, _prefix, _name in _CLASSES:
+    _units = []
+    for _u, _n in UNITS[_code.split()[1][1]]:
+        _units.append((_u, _n, TRAINERS[_t][0])); _t += 1
+    CLASSES.append((_code, _mis, _prefix, _units)); CLASS_NAMES[_code] = _name
+PER_CLASS = 20
+BEHIND = ('ICT L6CS-26SB', 'CYB')        # one unit a week behind on marking, for the HOD's overview
 FIRST = ['Achieng', 'Barasa', 'Chebet', 'Cheruiyot', 'Gathoni', 'Kamau', 'Kiprono', 'Kosgei', 'Mutua', 'Mwende', 'Njeri', 'Nyambura', 'Odhiambo', 'Ouma', 'Wafula',
          'Wanjiru', 'Atieno', 'Jepkemoi', 'Kibet', 'Moraa', 'Nekesa', 'Onyango', 'Rotich', 'Wambui', 'Langat', 'Owino', 'Muthoni', 'Kerubo', 'Simiyu', 'Kendi',
          'Juma', 'Adhiambo', 'Kiplagat', 'Nduku', 'Omondi', 'Wekesa', 'Wairimu', 'Chepkoech', 'Musyoka', 'Akinyi', 'Ochieng', 'Nafula', 'Njoroge', 'Jeptoo', 'Mwangi']
-GIVEN = ['Mary', 'Kevin', 'Faith', 'Brian', 'Ruth', 'Peter', 'Collins', 'Allan', 'Dennis', 'Lucy', 'Esther', 'Joy', 'Sharon', 'Felix', 'Sam']
+GIVEN = ['Mary', 'Kevin', 'Faith', 'Brian', 'Ruth', 'Peter', 'Collins', 'Allan', 'Dennis', 'Lucy', 'Esther', 'Joy', 'Sharon', 'Felix', 'Sam', 'Ivy', 'Victor', 'Grace']
 LAST = ['Otieno', 'Wekesa', 'Jeptoo', 'Kiprop', 'Wairimu', 'Njoroge', 'Rotich', 'Kipchumba', 'Musyoka', 'Nduku', 'Wambui', 'Wanjiku', 'Omondi', 'Simiyu', 'Kamau']
 SLOTS = [('7.30', '9.00'), ('9.00', '10.30'), ('10.30', '12.00'), ('13.00', '14.30'), ('14.30', '16.00'), ('16.00', '17.30')]
-# Each class: its first unit on Monday lesson 1 and Wednesday lesson 3, its second on Tuesday lesson 2 and Thursday lesson 4.
-WHEN = [[(0, 1), (2, 3)], [(1, 2), (3, 4)]]
-TOPICS = {'CE': 'Parts of a computer', 'DDL': 'Using e-mail safely', 'DBM': 'Tables and keys', 'WD': 'HTML basics', 'FOP': 'Variables and loops', 'NET': 'Network cables'}
+# Two lessons a week for each of a class's five units, never two at once: (day 0 = Monday, lesson slot).
+WHEN = [[(0, 1), (2, 3)], [(1, 2), (3, 4)], [(0, 4), (3, 1)], [(1, 5), (4, 2)], [(2, 1), (4, 5)]]
+TOPICS = {'CE': 'Parts of a computer', 'DDL': 'Using e-mail safely', 'OHS': 'Safety in the lab', 'COM': 'Writing a memo', 'ENT': 'Business ideas',
+          'DBM': 'Tables and keys', 'WD': 'HTML basics', 'OS': 'Files and folders', 'CNW': 'Network cables', 'MAT': 'Percentages',
+          'FOP': 'Variables and loops', 'NET': 'IP addressing', 'SAD': 'Gathering requirements', 'OOP': 'Classes and objects', 'CYB': 'Strong passwords'}
+_NAMES = []
+for _k in range(400):
+    _n = f'{FIRST[_k % 45]} {GIVEN[(_k * 7 + _k // 45) % len(GIVEN)]} {LAST[(_k * 4 + _k // 15) % 15]}'
+    if _n not in _NAMES: _NAMES.append(_n)
+    if len(_NAMES) == PER_CLASS * len(_CLASSES): break
 
 
 def students(cls_i):
-    code, mis, prefix, _ = CLASSES[cls_i]
-    out = []
-    for i in range(15):
-        k = cls_i * 15 + i
-        out.append({'admNo': f'{prefix}{i + 1:02d}', 'name': f'{FIRST[k]} {GIVEN[(k * 7) % 15]} {LAST[(k * 4 + cls_i) % 15]}'})
-    return out
+    prefix = CLASSES[cls_i][2]
+    return [{'admNo': f'{prefix}{i + 1:02d}', 'name': _NAMES[cls_i * PER_CLASS + i]} for i in range(PER_CLASS)]
+
+
+def trainer_of(code, unit):
+    return next(t for c, _, _, units in CLASSES if c == code for u, _, t in units if u == unit)
 
 
 def npx(*args, capture=True):
@@ -156,7 +179,7 @@ def fill(api, pin, mis_pin):
               'trainers': [{'code': c, 'name': n, 'responsibility': 'HOD' if c == HOD else ''} for c, n in TRAINERS]})
     for i, (code, mis, _, _) in enumerate(CLASSES):
         api.call({'action': 'importClassList', 'auth': M, 'misClass': mis, 'streams': [code], 'students': students(i)})
-    print('  term, loading, 10 trainers and 45 students')
+    print(f'  term, loading, {len(TRAINERS)} trainers and {PER_CLASS * len(CLASSES)} students')
 
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     tokens = {}
@@ -164,7 +187,7 @@ def fill(api, pin, mis_pin):
         roster = students(ci)
         for ui, (unit, uname, trainer) in enumerate(units):
             tok = tokens.get(trainer) or tokens.setdefault(trainer, api.login(trainer, pin))
-            weeks = 2 if unit == 'NET' else 3                          # one unit behind on marking, for the HOD's overview
+            weeks = 2 if (code, unit) == BEHIND else 3                 # one unit behind on marking, for the HOD's overview
             sessions, n = [], 0
             for wk in range(weeks):
                 for day, slot in WHEN[ui]:
@@ -190,9 +213,9 @@ def fill(api, pin, mis_pin):
                     {'admNo': s['admNo'], 'cat1': 45 + (i * 7 + ci * 5) % 50, 'prac1': 55 + (i * 5) % 40, 'updatedAt': now} for i, s in enumerate(roster)]})
     print('  registers for weeks 1 to 3, and marks')
 
-    api.call({'action': 'addStudents', 'auth': tokens['DEMO05'], 'students': [
+    api.call({'action': 'addStudents', 'auth': tokens[trainer_of('ICT L6CS-26SA', 'FOP')], 'students': [
         {'admNo': 'L6CS/26S/6099', 'name': 'Example Late Joiner', 'classCode': 'ICT L6CS-26SA', 'reason': 'Late admission'}]})
-    api.call({'action': 'submitSignoff', 'auth': tokens['DEMO03'], 'classCode': 'ICT L5CS-26SA', 'unitCode': 'DBM', 'unitName': 'Database Management',
+    api.call({'action': 'submitSignoff', 'auth': tokens[trainer_of('ICT L5CS-26SA', 'DBM')], 'classCode': 'ICT L5CS-26SA', 'unitCode': 'DBM', 'unitName': 'Database Management',
               'comment': 'Registers for weeks 1 to 3 are complete.'})
     print('  a register waiting for approval and a student waiting for the MIS Officer')
 
@@ -212,7 +235,7 @@ def reset(url, pin, mis_pin):
     print('filling it…')
     fill(api, pin, mis_pin)
     print(f'\nDemo ready.\n  Staff app:   {url}/\n  Student app: {url}/student.html\n'
-          f'  Trainers DEMO01 to DEMO10 (DEMO01 is also the HOD) with PIN {pin}; MIS Officer: MIS with the MIS PIN.')
+          f'  Trainers DEMO02 to {TRAINERS[-1][0]} (one unit each) and DEMO01 (HOD) with PIN {pin}; MIS Officer: MIS with the MIS PIN.')
 
 
 def main():

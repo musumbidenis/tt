@@ -451,3 +451,4 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Landing page** at `welcome.html`: what The ARK does, who it is for, screens, and links to the demo.
 - **Demo day handout** at `demo/demo-day.html`: pairs (one partner the trainer, the other the student, then swap), the steps for each role, the facilitator's part and checklist. Prints on two pages.
 - **Scan ID cards** no longer turns students who already checked in with the lesson QR absent.
+- **Bigger demo**: 26 demo trainers (DEMO01 the HOD; DEMO02 to DEMO26 one unit each), 5 classes of 20 students with 5 units each, so 50 people can run the paired demo as 25 pairs. The handout lists all 25.
