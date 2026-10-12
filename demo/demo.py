@@ -98,9 +98,28 @@ def create_database():
     print('  database', m.group(1), '(saved in wrangler.demo.toml)')
 
 
+def stage_assets():
+    """A clean copy of the apps' files for the demo: everything .assetsignore does not leave out, and never _redirects
+    (that file is for Cloudflare Pages; the demo's file serving would read it too and break every page)."""
+    import fnmatch
+    skip = [l.strip() for l in (ROOT / '.assetsignore').read_text(encoding='utf-8').splitlines() if l.strip() and not l.startswith('#')] + ['_redirects']
+    out = pathlib.Path(tempfile.mkdtemp(prefix='ark-demo-'))
+    for f in ROOT.rglob('*'):
+        rel = f.relative_to(ROOT).as_posix()
+        if f.is_dir() or any(fnmatch.fnmatch(part, pat) for part in rel.split('/') for pat in skip): continue
+        dest = out / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dest)
+    return out
+
+
 def deploy():
     print('deploying the demo…')
-    out = npx('deploy', '--config', str(TOML))
+    assets = stage_assets()
+    try:
+        out = npx('deploy', '--config', str(TOML), '--assets', str(assets))
+    finally:
+        shutil.rmtree(assets, ignore_errors=True)
     m = re.search(r'https://[a-z0-9.-]+\.workers\.dev', out)
     if not m: sys.exit('Deployed, but the address was not in the output:\n' + out[-1500:])
     url = m.group(0)

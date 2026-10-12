@@ -36,7 +36,7 @@ python demo/demo.py deploy                              # send the latest app co
 ```
 
 - **Reset** puts everything back as described above, with dates moved to the current week. Everyone has to sign in again. A trainer phone used in an earlier demo still holds that demo's registers and sends them back when it syncs, so tap **Profile → Erase this device** on demo phones before a reset, or use them in a private window.
-- **Deploy** is needed after a change to the app, because the demo is not updated by the push to GitHub. Run `reset` after it if the database layout changed.
+- **Deploy** is needed after a change to the app, because the demo is not updated by the push to GitHub. It uploads a clean copy of the app files (never `_redirects`, which is for Cloudflare Pages and would break the demo's pages). Run `reset` after it if the database layout changed.
 
 ## Google, backup and notifications in the demo
 

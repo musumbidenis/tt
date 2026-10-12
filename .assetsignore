@@ -16,3 +16,4 @@ sample-data
 .gitignore
 .assetsignore
 .clasp*
+_redirects
