@@ -18,7 +18,8 @@ Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 
 
 - Trainer app: **https://musumbidenis.github.io/tt/**
 - Student check-in app: **https://musumbidenis.github.io/tt/student.html**
-- Demo copy for training, with invented data: see [demo/README.md](demo/README.md)
+- Demo copy for training, with invented data: see [demo/README.md](demo/README.md); handout for a paired demo: **https://musumbidenis.github.io/tt/demo/demo-day.html**
+- Landing page (to share and advertise): **https://musumbidenis.github.io/tt/welcome.html**
 
 **Documentation**: the [User Guide](docs/USER-GUIDE.md) (trainers, HODs, the MIS Officer and students) and the [Technical Documentation](docs/TECHNICAL.md) (setup, deployment, data model, API and operations) describe the current version. The sections below are the original set-up notes and the change log.
 
@@ -444,3 +445,9 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Backup storage shows the backup account's own use** against the space the college gave it, typed in Manage → Google Drive (**Space (GB)**, default 50). Google's own figures were the whole college's pooled storage (1.3 TB of 100 TB).
 - Manage: the backup and backup-account forms sit on one row; removed **Test connection** (it no longer worked), the "sheets refresh" note and the "every trainer has a folder" line.
 - Student app: **My POE submissions** and **My attendance** are now tables with search, filters (status; unit and mark) and sorting by heading; the scan and save buttons are smaller; a document being scanned shows just its item and page count.
+
+## Changes in 4.17.2
+
+- **Landing page** at `welcome.html`: what The ARK does, who it is for, screens, and links to the demo.
+- **Demo day handout** at `demo/demo-day.html`: pairs (one partner the trainer, the other the student, then swap), the steps for each role, the facilitator's part and checklist. Prints on two pages.
+- **Scan ID cards** no longer turns students who already checked in with the lesson QR absent.

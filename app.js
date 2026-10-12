@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.17.1';
+const APP_VERSION = '4.17.2';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -787,7 +787,7 @@ async function startScan() {
   const s = state.current;
   if (!s.idScan) {
     s.idScan = true;
-    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; stampMark(s, t.admNo); }
+    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo] && !s.viaQr?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; stampMark(s, t.admNo); }
     renderRegister(); markDirty();
     toast('Everyone starts absent; each card scanned marks that student');
   }
@@ -1531,7 +1531,7 @@ async function openLessonQR() {
   if (!s.qr) {
     s.qr = { secret: randomHex(16), intervals: [] };
     // In a QR lesson, trainees who do not scan count as absent unless the trainer marks them.
-    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; stampMark(s, t.admNo); }
+    for (const t of rosterForCurrent()) if (!s.explicit?.[t.admNo] && !s.viaQr?.[t.admNo]) { s.marks[t.admNo] = 'A'; s.names[t.admNo] = t.name; stampMark(s, t.admNo); }
     renderRegister();
     toast('Trainees who don\'t scan are marked absent unless you mark them yourself');
   }

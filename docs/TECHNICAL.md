@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.17.1**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
+Describes app **4.17.2**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -93,7 +93,8 @@ The git repository is the `app` folder. Everything at its root is published to G
 | `apps-script/DriveBridge.gs`, `apps-script/appsscript.json` | The Drive bridge and its manifest. |
 | `apps-script/clasp-init.sh`, `.clasp.json.example`, `.claspignore` | Pushing the bridge with clasp. |
 | `apps-script/Code.gs` | The retired Google Sheet backend. Kept for reference; **never** push it to the bridge project. |
-| `wrangler.demo.toml`, `worker/demo.js`, `.assetsignore`, `demo/` | The demo copy (see [5.4](#54-the-demo-copy)): its Worker configuration, the wrapper that also serves the apps, the list of files it does not serve, and the set-up and reset script. |
+| `welcome.html` | The public landing page (not part of either app; not cached for offline use). |
+| `wrangler.demo.toml`, `worker/demo.js`, `.assetsignore`, `demo/` (with `demo-day.html`, the paired-demo handout) | The demo copy (see [5.4](#54-the-demo-copy)): its Worker configuration, the wrapper that also serves the apps, the list of files it does not serve, and the set-up and reset script. |
 | `loadtest/` | Load-testing tools and results (see [10](#10-load-and-free-plan-budget)). |
 | `sample-data/` | Example CSVs. |
 

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The ARK Demo Day</title>
+<meta name="description" content="Handout for a paired demo of The ARK: one partner plays the trainer, the other the student, then they swap.">
+<style>
+  @font-face { font-family: "Lexend"; src: url("../fonts/lexend.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+  @font-face { font-family: "Source Sans 3"; src: url("../fonts/source-sans-3.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
+  :root { --paper: #f2f5f3; --surface: #fff; --ink: #16211b; --ink-2: #33433a; --muted: #5b6b62; --line: #d3ddd6; --p: #10773c; --p-soft: #e0f2e7; --amber: #a35f00; --amber-soft: #fcefd8;
+    --display: "Lexend", system-ui, sans-serif; --text: "Source Sans 3", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --paper: #0e1511; --surface: #16201a; --ink: #e7efea; --ink-2: #c8d5cd; --muted: #93a79b; --line: #283a2f; --p: #4fcd84; --p-soft: #15301f; --amber: #f0b14d; --amber-soft: #362711; } }
+  :root[data-theme="dark"] { --paper: #0e1511; --surface: #16201a; --ink: #e7efea; --ink-2: #c8d5cd; --muted: #93a79b; --line: #283a2f; --p: #4fcd84; --p-soft: #15301f; --amber: #f0b14d; --amber-soft: #362711; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--text); }
+  .wrap { width: min(980px, 100% - 32px); margin: 0 auto; padding: 1.5rem 0 3rem; }
+  h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.25; margin: 0 0 .4rem; }
+  h1 { font-size: 1.9rem; }
+  h2 { font-size: 1.3rem; margin-top: 2rem; }
+  .muted { color: var(--muted); }
+  header { display: flex; align-items: center; gap: .8rem; margin-bottom: 1rem; }
+  header img { width: 52px; height: 52px; background: #fff; border-radius: 12px; padding: 4px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem; margin: .8rem 0; }
+  .note { background: var(--amber-soft); border-color: transparent; border-left: 5px solid var(--amber); }
+  .links { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+  .links .card { margin: 0; }
+  .links b { display: block; font-family: var(--display); }
+  .links code { font-size: .92rem; word-break: break-all; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--p-soft); font-family: var(--display); font-size: .9rem; }
+  td.blank { min-width: 8rem; }
+  .table-wrap { overflow-x: auto; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; }
+  .role { border-top: 5px solid var(--p); }
+  .role.student { border-top-color: var(--amber); }
+  ol { margin: .3rem 0 0; padding-left: 1.3rem; }
+  li { margin: .35rem 0; }
+  .tag { display: inline-block; padding: 0 .45rem; border-radius: 6px; background: var(--p-soft); color: var(--p); font-weight: 700; font-size: .85em; }
+  .sync { display: inline-block; margin-left: .3rem; padding: 0 .45rem; border-radius: 6px; background: var(--amber-soft); color: var(--amber); font-weight: 700; font-size: .8em; }
+  ul.check { list-style: none; padding: 0; margin: .3rem 0 0; }
+  ul.check li::before { content: "☐ "; color: var(--p); font-weight: 700; }
+  @media (max-width: 720px) { .cols, .links { grid-template-columns: 1fr; } h1 { font-size: 1.5rem; } }
+  @media print {
+    body { background: #fff; font-size: 11.5pt; }
+    .wrap { width: 100%; padding: 0; }
+    .card, table { break-inside: avoid; }
+    .pagebreak { break-before: page; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="../icons/rvnp-logo.png" alt="RVNP crest" width="52" height="52">
+    <div><h1>The ARK: paired demo</h1><p class="muted" style="margin:0">One partner plays the <b>trainer</b>, the other the <b>student</b>. After the first round, swap. About 25 minutes a round.</p></div>
+  </header>
+
+  <div class="links">
+    <div class="card"><b>Trainer app (demo)</b><code>rvnp-attendance-demo.ictpoe.workers.dev</code></div>
+    <div class="card"><b>Student app (demo)</b><code>rvnp-attendance-demo.ictpoe.workers.dev/student.html</code></div>
+  </div>
+  <div class="card note"><b>This is the demo copy.</b> Every screen shows an orange <b>DEMO</b> tag. The classes and students are invented, so try anything. Trainer PIN for every demo account: <b>given by the facilitator</b>. To send evidence, the student partner signs in with their own <b>@rvnp.ac.ke Google account</b>.</div>
+
+  <h2>Pairs</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Pair</th><th>Trainer account</th><th>Class and unit</th><th>Partner A</th><th>Partner B</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><span class="tag">DEMO02</span></td><td>ICT L4CS-26SA · DDL Demonstrate Digital Literacy</td><td class="blank"></td><td class="blank"></td></tr>
+        <tr><td>2</td><td><span class="tag">DEMO03</span></td><td>ICT L5CS-26SA · DBM Database Management</td><td class="blank"></td><td class="blank"></td></tr>
+        <tr><td>3</td><td><span class="tag">DEMO04</span></td><td>ICT L5CS-26SA · WD Web Design</td><td class="blank"></td><td class="blank"></td></tr>
+        <tr><td>4</td><td><span class="tag">DEMO05</span></td><td>ICT L6CS-26SA · FOP Fundamentals of Programming</td><td class="blank"></td><td class="blank"></td></tr>
+        <tr><td>5</td><td><span class="tag">DEMO06</span></td><td>ICT L6CS-26SA · NET Computer Networking</td><td class="blank"></td><td class="blank"></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">Round 1: partner A is the trainer, B the student. Round 2: B is the trainer (same account, on B's own phone) and A the student. The facilitator uses <span class="tag">DEMO01</span> (HOD) and <span class="tag">MIS</span> on the projector.</p>
+
+  <h2>Before you start (each person, 5 minutes)</h2>
+  <div class="card">
+    <ul class="check">
+      <li>Open both demo addresses in Chrome on your phone, with internet, and add each to the home screen (⋮ → Add to Home screen).</li>
+      <li>Allow the camera when asked.</li>
+      <li>Know your college Google password (@rvnp.ac.ke).</li>
+    </ul>
+  </div>
+
+  <div class="pagebreak"></div>
+  <h2>One round, step by step</h2>
+  <p class="muted"><span class="sync">Together</span> marks a step where the two of you work at the same moment.</p>
+  <div class="cols">
+    <div class="card role">
+      <h3>Trainer</h3>
+      <ol>
+        <li>Open the trainer app. Sign in with the pair's <b>DEMO</b> code and the PIN.</li>
+        <li><b>Profile → Connect Google</b>, with your college account. (Students' documents are shared with this address.)</li>
+        <li><b>Att Register(s)</b>: choose your class and unit. Tap <b>today's</b> free slot, then <b>Open register</b>.</li>
+        <li><span class="sync">Together</span> Tap <b>Show lesson QR</b>. Hold it up for your partner to scan. Their name turns present.</li>
+        <li><span class="sync">Together</span> Close the QR. Tap <b>Scan ID cards</b>: everyone turns absent, then scan your partner's <b>Student QR ID</b>. They turn present again.</li>
+        <li>Mark two other students <b>Late</b> and <b>Excused</b>. Tap <b>Save</b>.</li>
+        <li><b>Report(s) → Marks</b>: enter CAT 1 marks for a few students.</li>
+        <li><span class="sync">Together</span> <b>POE</b> tab: open your partner's CAT 1. <b>Return to student</b> with a note, for example "Page 2 is missing".</li>
+        <li><span class="sync">Together</span> When version 2 arrives, open it and <b>Approve</b>.</li>
+        <li><b>Report(s)</b>: see the term register; <b>Export Excel</b>, then <b>Submit to HOD</b>.</li>
+        <li>Optional: switch off Wi-Fi and data, open another slot and mark it. Switch back on: it is sent by itself.</li>
+      </ol>
+    </div>
+    <div class="card role student">
+      <h3>Student</h3>
+      <ol>
+        <li>Open the student app. <b>Set up this device</b>: choose the pair's class and <b>any free name</b> (if it says the name is taken, choose another).</li>
+        <li><span class="sync">Together</span> <b>Check-in → Scan lesson QR</b>: point the camera at your partner's lesson QR.</li>
+        <li><span class="sync">Together</span> Show your <b>Student QR ID</b> (top of the app) for your partner to scan.</li>
+        <li><b>Evidence (POE)</b>: tap <b>Connect Google Drive</b> and sign in with your college account; allow what Google asks.</li>
+        <li>Choose the unit, tap <b>CAT1</b>, and <b>Take photo of a page</b> of any written sheet. Drag the corners if needed, <b>Keep and take the next page</b>, take a second page.</li>
+        <li>Tap <b>Save and send</b>.</li>
+        <li><span class="sync">Together</span> <b>Submissions</b>: see it <i>With your trainer</i>, then <i>Returned</i> with the note. Tap <b>Scan again</b> and send version 2.</li>
+        <li><span class="sync">Together</span> See it change to <i>Approved</i>.</li>
+        <li>Open <b>My attendance</b>: search, filter and sort your lessons. Check your Google Drive: the file is in <b>The ARK - POE</b>.</li>
+        <li>Optional: switch off Wi-Fi and data and scan a lesson QR. It is kept on the phone and sent later.</li>
+      </ol>
+    </div>
+  </div>
+
+  <h2>Swap</h2>
+  <div class="card">
+    <ol>
+      <li>The old trainer opens the <b>student app</b> on their own phone and sets it up with a <b>different free name</b> in the same class. (Their trainer app can stay signed in.)</li>
+      <li>The old student opens the <b>trainer app</b> on their phone, signs in with the <b>same DEMO code</b> and PIN, and taps <b>Profile → Connect Google</b> with their own college account.</li>
+      <li>Do the round again, using a <b>new slot</b> on today's timetable and <b>CAT2</b> for the evidence.</li>
+    </ol>
+  </div>
+
+  <h2>Facilitator, on the projector (10 minutes)</h2>
+  <div class="card">
+    <ol>
+      <li>Sign in as <span class="tag">DEMO01</span> (HOD): <b>Manage → Registers to approve</b>: open a submitted register and approve or return it. <b>Department overview</b>: who is behind. <b>Absences</b>.</li>
+      <li><b>Manage → Student phones</b>: reset a student's phone. <b>Manage → Backup</b>: the storage gauge and <b>Back up now</b>.</li>
+      <li>Sign in as <span class="tag">MIS</span>: the term, the trainer loading, class lists, staff and PINs, and the Google Drive card.</li>
+    </ol>
+  </div>
+
+  <h2>Facilitator checklist</h2>
+  <div class="card">
+    <ul class="check">
+      <li>The day before: run <code>python demo/demo.py reset --pin … --mis-pin …</code> (fresh data with this week as week 4).</li>
+      <li>Hold the demo on a <b>weekday</b> (the timetable runs Monday to Friday) with working Wi-Fi.</li>
+      <li>In Google Cloud, the demo address <code>https://rvnp-attendance-demo.ictpoe.workers.dev</code> is listed under Authorised JavaScript origins.</li>
+      <li>Try one full round yourself first, on two phones.</li>
+      <li>Print this page, fill in the pairs, and tell everyone the PIN.</li>
+      <li>Phones used in an earlier demo: <b>Profile → Erase this device</b> in the trainer app first.</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

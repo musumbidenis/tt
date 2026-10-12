@@ -21,6 +21,10 @@ Both show an orange **DEMO** tag beside the app name.
 
 Students set up a phone by choosing a class and any name on its list. The HOD or MIS Officer can free a name again with **Manage → Student phones → Reset phone**.
 
+## Running a paired demo
+
+`demo/demo-day.html` (on GitHub Pages: https://musumbidenis.github.io/tt/demo/demo-day.html) is a printable handout: five pairs on DEMO02 to DEMO06, one partner the trainer and the other the student, then they swap; the facilitator shows the HOD (DEMO01) and MIS parts on the projector. Hold it on a weekday, after a `reset`.
+
 ## Commands
 
 Run from the repository folder, signed in to Cloudflare once with `npx wrangler login`. Choose the PINs when you run the command: they are not stored in the repository.
@@ -34,9 +38,9 @@ python demo/demo.py deploy                              # send the latest app co
 - **Reset** puts everything back as described above, with dates moved to the current week. Everyone has to sign in again. A trainer phone used in an earlier demo still holds that demo's registers and sends them back when it syncs, so tap **Profile → Erase this device** on demo phones before a reset, or use them in a private window.
 - **Deploy** is needed after a change to the app, because the demo is not updated by the push to GitHub. Run `reset` after it if the database layout changed.
 
-## What does not work in the demo
+## Google, backup and notifications in the demo
 
-- **Sending POE evidence to Google Drive**, and trainers previewing it, need a Drive bridge. The demo has none, so students can scan and save documents but they wait on the phone as *not sent*. A separate demo bridge can be added later (a second Apps Script project, with its own folders, as in the Technical Documentation 4.3), using `npx wrangler secret put BRIDGE_SECRET --config wrangler.demo.toml`.
+- **POE evidence works** with real college Google accounts: the student partner's documents go to their own Drive and are shared with whoever connected Google on the demo trainer account. There is no backup: the demo has no Drive bridge, so **Manage → Backup** never runs.
 - **Student notifications** are off (no notification keys).
 
 Everything else (timetable, registers, Lesson QR check-ins, ID card scanning, reports, marks, approvals, absences, Manage) works as in the real app, online and offline.

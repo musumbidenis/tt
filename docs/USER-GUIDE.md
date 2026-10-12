@@ -1,7 +1,7 @@
 # The ARK — User Guide
 
 **The ARK: Academic Records Keeper.** The RVNP ICT Department's system for attendance, marks and POE evidence.
-Applies to app version 4.17 (server 6.5, Drive bridge 1.4.2). The screenshots show an invented demo department.
+Applies to app version 4.17.2 (server 6.5, Drive bridge 1.4.2). The screenshots show an invented demo department.
 
 The ARK is two apps that work on any phone, tablet or computer with a modern browser:
 
@@ -87,7 +87,7 @@ There is a separate **demo copy** of both apps for training sessions. It works e
 
 - Both demo apps show an orange **DEMO** tag beside the app name. If you see it, nothing you do counts.
 - The demo is wiped and filled again before each training session.
-- Sending evidence to Google Drive does not work in the demo: documents stay on the phone.
+- For a training session in pairs (one partner the trainer, the other the student, then swap), use the handout at https://musumbidenis.github.io/tt/demo/demo-day.html.
 
 ---
 
