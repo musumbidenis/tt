@@ -125,7 +125,7 @@ def wipe_and_staff(pin, mis_pin):
         salt = secrets.token_hex(16)
         h = hashlib.sha256(f'{salt}|{p}'.encode()).hexdigest()
         q = lambda s: "'" + str(s).replace("'", "''") + "'"
-        return f"({q(code)},{q(name)},{q(roles)},{q(resp)},1,{q(h)},{q(salt)},{version},0,{q(datetime.datetime.utcnow().isoformat() + 'Z')})"
+        return f"({q(code)},{q(name)},{q(roles)},{q(resp)},1,{q(h)},{q(salt)},{version},0,{q(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'))})"
     rows = [staff('MIS', 'MIS Officer (demo)', 'MIS', '', mis_pin)]
     rows += [staff(c, n, 'TRAINER, HOD' if c == HOD else 'TRAINER', 'HOD' if c == HOD else '', pin) for c, n in TRAINERS]
     sql = [f'DELETE FROM {t};' for t in tables()]

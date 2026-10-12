@@ -16,4 +16,4 @@ html_handling = "none"      # serve student.html as it is (a redirect to /studen
 [[d1_databases]]
 binding = "DB"
 database_name = "rvnp-demo"
-database_id = "REPLACE_ME"
+database_id = "b60ade02-9b0e-4831-8355-f63bce8e89b5"
