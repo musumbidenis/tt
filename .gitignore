@@ -10,3 +10,6 @@ loadtest/__pycache__/
 .clasp.json
 .clasprc.json
 .clasp-inspect/
+
+# Local Wrangler state (dev server bundles, caches, local database)
+.wrangler/
