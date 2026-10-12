@@ -437,3 +437,4 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **Backup of approved evidence.** Approved documents in students' Drives are copied into *The ARK - Archive* in the backup account's Drive (ictpoe), sorted by class and student. **Manage → Backup** (HOD and MIS Officer): **Back up now**, a repeat setting (daily, weekly or monthly at a chosen hour), the last backup's counts, documents waiting, and **Try these again** for ones that failed.
 - **Storage gauge and warnings.** The backup account's used and total space are shown; from 80% full the HOD and MIS Officer are warned to ask IT for more space or switch to another account, and at 95% backups stop.
+- Drive bridge 1.4.1: the backup reads the account's address and storage from Drive itself (1.4.0 needed a permission the bridge does not have, so backups did not run).

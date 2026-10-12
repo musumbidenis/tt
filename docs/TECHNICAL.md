@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.17.0**, server (Worker) **6.5.0**, database schema **10**, Drive bridge **1.4.0**.
+Describes app **4.17.0**, server (Worker) **6.5.0**, database schema **10**, Drive bridge **1.4.1**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
