@@ -1,14 +1,14 @@
 # The ARK — User Guide
 
 **The ARK: Academic Records Keeper.** The RVNP ICT Department's system for attendance, marks and POE evidence.
-Applies to app version 4.17.2 (server 6.5, Drive bridge 1.4.2). The screenshots show an invented demo department.
+Applies to app version 4.18 (server 6.5, Drive bridge 1.4.2). The screenshots show an invented demo department.
 
 The ARK is two apps that work on any phone, tablet or computer with a modern browser:
 
 | App | Address | Who uses it |
 |---|---|---|
-| **The ARK** (staff app) | https://musumbidenis.github.io/tt/ | Trainers, HODs and the MIS Officer |
-| **Student-POE** (student app) | https://musumbidenis.github.io/tt/student.html | Students |
+| **The ARK** (staff app) | https://ark26.pages.dev/ | Trainers, HODs and the MIS Officer |
+| **Student-POE** (student app) | https://ark26.pages.dev/student | Students |
 
 Both apps keep working with **no internet**. Everything you do is saved on the device straight away and sent to the college database the next time the device is online.
 
@@ -87,7 +87,7 @@ There is a separate **demo copy** of both apps for training sessions. It works e
 
 - Both demo apps show an orange **DEMO** tag beside the app name. If you see it, nothing you do counts.
 - The demo is wiped and filled again before each training session.
-- For a training session in pairs (one partner the trainer, the other the student, then swap), use the handout at https://musumbidenis.github.io/tt/demo/demo-day.html.
+- For a training session in pairs (one partner the trainer, the other the student, then swap), use the handout at https://ark26.pages.dev/demo/demo-day.
 
 ---
 
@@ -682,7 +682,7 @@ The **Submissions** tab has three blocks. Tap a heading to open or close it. **M
 
 ## 15. Asking for a change to a screen
 
-Add **`?notes=1`** to either app's address, for example https://musumbidenis.github.io/tt/?notes=1.
+Add **`?notes=1`** to either app's address, for example https://ark26.pages.dev/?notes=1.
 
 1. A strip appears at the top. While **Pick** is on, tap anything on the screen and type what you want changed (or tap one of the ready phrases such as *Bigger* or *Move it up*), then **Save**.
 2. Turn **Pick** off to move around the app normally, then back on to carry on.

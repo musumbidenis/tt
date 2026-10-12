@@ -3,7 +3,7 @@
 A practice copy of The ARK (Academic Records Keeper) for showing trainers and students how it works. It runs the **same code** as the real app, at its own address, with its **own database** full of invented data. Nothing in it touches the real department, and the real app's data never appears in it.
 
 - Staff app: `https://rvnp-attendance-demo.<subdomain>.workers.dev/`
-- Student app: `https://rvnp-attendance-demo.<subdomain>.workers.dev/student.html`
+- Student app: `https://rvnp-attendance-demo.<subdomain>.workers.dev/student`
 
 Both show an orange **DEMO** tag beside the app name.
 
@@ -23,7 +23,7 @@ Students set up a phone by choosing a class and any name on its list. The HOD or
 
 ## Running a paired demo
 
-`demo/demo-day.html` (on GitHub Pages: https://musumbidenis.github.io/tt/demo/demo-day.html) is a printable handout: up to 25 pairs on DEMO02 to DEMO26 (each pair its own unit), one partner the trainer and the other the student, then they swap; the facilitator shows the HOD (DEMO01) and MIS parts on the projector. Hold it on a weekday, after a `reset`.
+`demo/demo-day.html` (https://ark26.pages.dev/demo/demo-day) is a printable handout: up to 25 pairs on DEMO02 to DEMO26 (each pair its own unit), one partner the trainer and the other the student, then they swap; the facilitator shows the HOD (DEMO01) and MIS parts on the projector. Hold it on a weekday, after a `reset`.
 
 ## Commands
 

@@ -29,7 +29,7 @@ For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ```
  Staff app (index.html)        Student app (student.html)
- Progressive web apps, served by GitHub Pages, cached by a service worker; work offline
+ Progressive web apps, served by Cloudflare Pages, cached by a service worker; work offline
         │  POST JSON (text/plain)             │
         ▼                                     ▼
  ┌──────────────────────────────────────────────────┐        ┌───────────────────────────────┐
@@ -45,7 +45,7 @@ For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 | Part | Technology | Hosted on | Cost |
 |---|---|---|---|
-| Staff and student apps | Plain HTML, CSS and JavaScript (no build step); PouchDB (IndexedDB) on the device | GitHub Pages (`musumbidenis/tt`, branch `main`) | Free |
+| Staff and student apps | Plain HTML, CSS and JavaScript (no build step); PouchDB (IndexedDB) on the device | Cloudflare Pages project `ark26` (https://ark26.pages.dev), built from `musumbidenis/tt`, branch `main` | Free |
 | Server | Cloudflare Worker (ES module, WebCrypto) | Cloudflare, Workers Builds deploys from `main` | Free plan |
 | Database | Cloudflare D1 (SQLite) | Cloudflare | Free plan |
 | Drive bridge | Google Apps Script web app | The school Google Workspace (owner **ictpoe@rvnp.ac.ke**) | Free |
@@ -61,7 +61,7 @@ For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ## 2. Repository layout
 
-The git repository is the `app` folder. Everything at its root is published to GitHub Pages; only `worker/worker.js` is deployed to Cloudflare, and only `apps-script/DriveBridge.gs` (with its manifest) to Apps Script.
+The git repository is the `app` folder. Everything at its root is published to Cloudflare Pages (https://ark26.pages.dev); only `worker/worker.js` is deployed to Cloudflare, and only `apps-script/DriveBridge.gs` (with its manifest) to Apps Script.
 
 | Path | Purpose |
 |---|---|
@@ -197,9 +197,9 @@ Bump these with every release:
 
 The tables create themselves on the first request. Sign in to the staff app with staff code **`MIS`** and the `ADMIN_PIN`, then choose your own PIN.
 
-### 4.2 GitHub Pages
+### 4.2 Cloudflare Pages
 
-Serve the repository root from branch `main` (repository Settings → Pages). The apps are then at `https://<user>.github.io/tt/` and `…/tt/student.html`.
+Cloudflare dashboard → **Workers & Pages → Create application → Pages → Connect to Git** → the repository, production branch `main`, framework preset **None**, no build command, build output directory `/`. The project is `ark26`, so the apps are at `https://ark26.pages.dev/` (staff) and `https://ark26.pages.dev/student` (students); every push to `main` publishes within about a minute. `_redirects` stops Pages redirecting `index.html` and `student.html`, which would break offline use. Other pages get Pages' short addresses (`/welcome`, `/demo/demo-day`). The old GitHub Pages copy (`https://musumbidenis.github.io/tt/`) can stay switched on while people move over; each address keeps its own data on a device.
 
 ### 4.3 Google Drive bridge (about 10 minutes)
 
@@ -228,7 +228,7 @@ As ictpoe@rvnp.ac.ke, at console.cloud.google.com:
 
 1. Create a project (for example `the-ark`) and enable the **Google Drive API** and the **Google Sheets API**.
 2. **OAuth consent screen**: User type **Internal**, app name **The ARK**. Internal apps are limited to the college's accounts and need no Google verification, even for `drive.readonly`.
-3. **Credentials → Create OAuth client ID → Web application**, Authorised JavaScript origins: `https://musumbidenis.github.io` and `https://rvnp-attendance-demo.ictpoe.workers.dev`.
+3. **Credentials → Create OAuth client ID → Web application**, Authorised JavaScript origins: `https://ark26.pages.dev`, `https://rvnp-attendance-demo.ictpoe.workers.dev` (and `https://musumbidenis.github.io` while the old address is in use).
 4. Put the client ID in `config.js` (`googleClientId`) and in `wrangler.demo.toml` (`GOOGLE_CLIENT_ID`); `GOOGLE_DOMAIN` is in both `wrangler.toml` files. Bump `APP_VERSION` and `CACHE`, commit and push.
 5. In the app, the MIS Officer sets the **Backup account** in Manage → Google Drive, and every trainer, HOD and MIS Officer connects Google in Profile.
 
@@ -242,7 +242,7 @@ The client ID is not secret. With it empty, students send evidence through the D
 
 1. Change the files; bump `APP_VERSION` in `app.js` and `CACHE` in `sw.js`.
 2. If you add a file the apps load, add it to `ASSETS` in `sw.js`, or it will not work offline.
-3. Commit and `git push` to `main`. GitHub Pages publishes within about a minute.
+3. Commit and `git push` to `main`. Cloudflare Pages publishes within about a minute.
 4. Devices pick up the new version the next time the app opens online: the new service worker installs, precaches every file, takes over, and the page reloads once.
 
 ### 5.2 The Worker
@@ -294,7 +294,7 @@ By hand: paste the file, Save, **Deploy → Manage deployments → Edit → Vers
 A second Worker, `rvnp-attendance-demo`, with its own D1 database `rvnp-demo`, runs the same code with invented data for training (`demo/README.md` lists what is in it).
 
 - **One Worker serves everything.** `worker/demo.js` wraps `worker/worker.js`: `/exec` is the server, `/config.js` is generated so the apps use that same address (and adds the orange DEMO tag), and every other path is the apps' files from Workers static assets (`[assets]` in `wrangler.demo.toml`, `run_worker_first`, `html_handling = "none"` so `student.html` is not redirected, which would break the service worker). `.assetsignore` keeps the server code, docs and scripts out.
-- **Separate on devices.** Being a different origin from GitHub Pages, the demo apps have their own IndexedDB, `localStorage` and service worker, so a phone can hold both without mixing them.
+- **Separate on devices.** Being a different origin from the real apps (Cloudflare Pages), the demo apps have their own IndexedDB, `localStorage` and service worker, so a phone can hold both without mixing them.
 - **Not deployed by Workers Builds.** Run `python demo/demo.py deploy` after app changes (signed in with `npx wrangler login`).
 - **Reset** (`python demo/demo.py reset --pin … --mis-pin …`) deletes every row of every table named in `worker.js` except the `schema` and `auth_secret` meta keys (a warm Worker caches both), inserts the staff with salted PIN hashes (`sha256(salt|pin)`) and a new `pin_version` so earlier sign-ins stop working, then fills term, loading, class lists, registers, marks, a sign-off and a student request through the normal API.
 - **No Drive bridge, no notifications** unless `BRIDGE_SECRET` (and a separate bridge) or the VAPID secrets are added to this Worker. Never point it at the real bridge.

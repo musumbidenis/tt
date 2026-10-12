@@ -1,8 +1,8 @@
 /* Design notes — for saying what should change on a screen, by pointing at it.
  *
  * Open either app with ?notes=1 on the end of the address, for example
- *   https://musumbidenis.github.io/tt/?notes=1
- *   https://musumbidenis.github.io/tt/student.html?notes=1
+ *   https://ark26.pages.dev/?notes=1
+ *   https://ark26.pages.dev/student?notes=1
  * A strip appears at the top. While Pick is on, tapping anything opens a box: type what you want
  * changed and Save. Turn Pick off to move around the app normally, then back on. Tap Copy and paste
  * the result wherever the change is being asked for.

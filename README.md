@@ -16,10 +16,10 @@ The database is **Cloudflare D1** (a real SQL database), reached through a small
 Phone (works offline) ──when online──▶ Cloudflare Worker ──▶ D1 database
 ```
 
-- Trainer app: **https://musumbidenis.github.io/tt/**
-- Student check-in app: **https://musumbidenis.github.io/tt/student.html**
-- Demo copy for training, with invented data: see [demo/README.md](demo/README.md); handout for a paired demo: **https://musumbidenis.github.io/tt/demo/demo-day.html**
-- Landing page (to share and advertise): **https://musumbidenis.github.io/tt/welcome.html**
+- Trainer app: **https://ark26.pages.dev/**
+- Student app: **https://ark26.pages.dev/student**
+- Demo copy for training, with invented data: see [demo/README.md](demo/README.md); handout for a paired demo: **https://ark26.pages.dev/demo/demo-day**
+- Landing page (to share and advertise): **https://ark26.pages.dev/welcome**
 
 **Documentation**: the [User Guide](docs/USER-GUIDE.md) (trainers, HODs, the MIS Officer and students) and the [Technical Documentation](docs/TECHNICAL.md) (setup, deployment, data model, API and operations) describe the current version. The sections below are the original set-up notes and the change log.
 
@@ -123,7 +123,7 @@ There is one more optional set-up, also about 5 minutes: letting students' phone
 
 ## 2. MIS Officer: start of each term
 
-Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choose your own PIN. Everything below is under **Manage**.
+Sign in at https://ark26.pages.dev/ with `MIS` and the PIN, then choose your own PIN. Everything below is under **Manage**.
 
 1. **Term**:
    - enter the name (for example *Term 3 2026*), the code (*2026-T3*), the duration as printed on registers (*Sep - Dec 2026*) and the first teaching day;
@@ -155,7 +155,7 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 
 ## 3. Trainers: every lesson
 
-1. Open https://musumbidenis.github.io/tt/ in Chrome **while online**, then choose **⋮ → Add to Home screen**. Sign in with your staff code and the PIN from the MIS Officer, then choose your own PIN. Your classes download straight away. From then on, the phone works with or without network.
+1. Open https://ark26.pages.dev/ in Chrome **while online**, then choose **⋮ → Add to Home screen**. Sign in with your staff code and the PIN from the MIS Officer, then choose your own PIN. Your classes download straight away. From then on, the phone works with or without network.
 2. **Mark**:
    - pick your class and unit (only those in your loading), and the **week** (it starts on the current week, written like *Week 5 (Oct 5 - Oct 9)*);
    - a timetable for that week appears: the five days run down the side and the six lessons (7.30–9.00, 9.00–10.30, 10.30–12.00, then lunch, then 13.00–14.30, 14.30–16.00, 16.00–17.30) run across the top. Tap the slot where the class was. For a **double**, tap the next slot too. Registers already taken show in their slots; tap one to open it again;
@@ -203,7 +203,7 @@ Sign in at https://musumbidenis.github.io/tt/ with `MIS` and the PIN, then choos
 ## QR check-in (students mark themselves)
 
 **One-time setup for each student (needs internet once):**
-1. Students open https://musumbidenis.github.io/tt/student.html. Trainers can also share the link from **Me → Student app link**.
+1. Students open https://ark26.pages.dev/student. Trainers can also share the link from **Me → Student app link**.
 2. The student chooses their **class** (as on the MIS list, for example *CSCL6-25-S-RS*), then their **name**, and taps **Register this phone**. The app knows which stream they're in.
 3. The database ties that phone to that student:
    - the phone can only check in that student;
@@ -326,8 +326,8 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
 
 Describing a button in words is slow, and easy to get wrong. Instead, add **`?notes=1`** to the address of either app:
 
-- https://musumbidenis.github.io/tt/?notes=1 — the trainer / HOD / MIS app
-- https://musumbidenis.github.io/tt/student.html?notes=1 — the student app
+- https://ark26.pages.dev/?notes=1 — the trainer / HOD / MIS app
+- https://ark26.pages.dev/student?notes=1 — the student app
 
 A strip appears at the top. While **Pick** is on, whatever you touch is outlined, and tapping it opens a box: type what you want changed there and **Save**. A row of one-tap phrases (*Bigger*, *Move it up*, *Another colour*, *Easier to tap*…) is there too, so a note need not be typed out in full on a phone — tap a few, then add anything else in your own words. The app itself does nothing while you are picking, so a tap on *Sync* leaves a note instead of syncing. Turn **Pick** off to move around the app as usual — open a register, switch tabs, open the lesson QR — then turn it back on and carry on. **Esc** does the same on a computer.
 
@@ -457,3 +457,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **The student app's address is now `/student`** (the old `student.html` keeps working). The Student app link and lesson QR codes use it, and with no network `/student` opens the student app from the device.
 - `_redirects` lets the apps run on Cloudflare Pages, which would otherwise redirect `index.html` and `student.html` and break offline use.
+
+## Moved to Cloudflare Pages
+
+- The apps now live at **https://ark26.pages.dev/** (trainers, HODs, MIS Officer) and **https://ark26.pages.dev/student** (students), on Cloudflare Pages, connected to this repository: every `git push` to `main` updates them. The old GitHub Pages address still works while people move over; each phone keeps its data per address, so send all registers before switching, then add the new address to the home screen.
