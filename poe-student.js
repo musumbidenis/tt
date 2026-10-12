@@ -58,12 +58,16 @@ const POE = (() => {
     const ready = started.filter((d) => pagesOf(d) >= MIN_PAGES).length, short = started.length - ready;
     $('#poeSave').disabled = !ready || short > 0;
     $('#poeSave').textContent = short ? `Add at least ${MIN_PAGES} pages to each item` : ready ? `Save and send ${ready === 1 ? 'the document' : ready + ' documents'}` : `Scan at least ${MIN_PAGES} pages`;
-    // Thumbnails load after the cards exist.
+    // Thumbnails load after the cards exist: the small copy of each page, not the page itself.
+    for (const u of ps.thumbUrls || []) URL.revokeObjectURL(u);
+    ps.thumbUrls = [];
     for (const it of ps.picked) {
       const d = ps.drafts[it]; if (!d) continue;
       (d.pages || []).forEach(async (name, i) => {
         const img = document.querySelector(`[data-doc="${it}"] [data-page="${i}"] img`);
-        if (img && !img.src) img.src = URL.createObjectURL(await attachment(d, name));
+        if (!img || img.src) return;
+        const url = URL.createObjectURL(await attachment(d, d._attachments?.['t-' + name] ? 't-' + name : name));
+        ps.thumbUrls.push(url); img.src = url;
       });
     }
     await renderList(docs);
@@ -113,18 +117,26 @@ const POE = (() => {
     return { _id: id, type: 'evidence', status: 'draft', unitCode: ps.unit, unitName: unitName(ps.unit), item, pages: [], createdAt: nowISO() };
   }
   async function saveDraft(d) { const r = await sdb.put(d); d._rev = r.rev; return d; }
-  async function addPage(item, blob) {
+  async function addPage(item, blob, small) {
     const d = await draft(item);
     const name = `p${Date.now().toString(36)}.jpg`;
     d.pages = [...(d.pages || []), name];
     d._attachments = { ...(d._attachments || {}), [name]: { content_type: 'image/jpeg', data: blob } };
+    if (small) d._attachments['t-' + name] = { content_type: 'image/jpeg', data: small };
     if (d.pdfOnly) { delete d.pdfOnly; delete d._attachments['doc.pdf']; }
     await saveDraft(d);
   }
 
   /* ---------- the crop screen ---------- */
+  /** Closes the crop screen and gives its photo's memory back (a phone closes the page when memory runs out). */
+  function closeCrop() {
+    if ($('#cropDialog').open) $('#cropDialog').close();
+    if (ps.crop) { Scanner.release(ps.crop.canvas); ps.crop = null; }
+    Scanner.release($('#cropCanvas'));
+  }
   async function openCrop(file, item) {
     ps.cropSeq = (ps.cropSeq || 0) + 1;
+    if (ps.crop) { Scanner.release(ps.crop.canvas); ps.crop = null; }
     let canvas;
     try { canvas = await Scanner.load(file); } catch (e) { toast(e.message, 'err'); return; }
     ps.crop = { canvas, quad: Scanner.findCorners(canvas), item };
@@ -157,19 +169,37 @@ const POE = (() => {
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   }
+  /** Straightens the page, saves it (with a small copy for the list) and lets go of the photo. True when kept. */
   async function keepPage() {
-    const { canvas, quad, item } = ps.crop, seq = ps.cropSeq;
-    $('#cropKeep').disabled = true; $('#cropKeep').textContent = 'Straightening…';
+    if (!ps.crop || ps.keeping) return false;
+    const { canvas, quad, item } = ps.crop;
+    ps.keeping = true;
+    for (const b of [$('#cropKeep'), $('#cropNext')]) b.disabled = true;
+    $('#cropKeep').textContent = 'Straightening…';
     await new Promise((r) => setTimeout(r, 30));
+    let flat = null, small = null;
     try {
-      const flat = Scanner.flatten(canvas, quad);
-      await addPage(item, await Scanner.toJpeg(flat, 0.85));
-      if (ps.cropSeq === seq) $('#cropDialog').close();    // unless the next page's photo is already being adjusted
+      flat = Scanner.flatten(canvas, quad);
+      small = Scanner.thumb(flat);
+      const [page, preview] = await Promise.all([Scanner.toJpeg(flat, 0.82), Scanner.toJpeg(small, 0.7)]);
+      Scanner.release(flat); Scanner.release(small); flat = small = null;
+      closeCrop();
+      await addPage(item, page, preview);
       toast('Page added');
       await render();
-    } catch (e) { toast('Could not keep that page: ' + e.message, 'err'); }
-    finally { $('#cropKeep').disabled = false; $('#cropKeep').textContent = 'Keep page'; }
+      return true;
+    } catch (e) { toast('Could not keep that page: ' + e.message, 'err'); return false; }
+    finally {
+      Scanner.release(flat); Scanner.release(small);
+      ps.keeping = false;
+      for (const b of [$('#cropKeep'), $('#cropNext')]) b.disabled = false;
+      $('#cropKeep').textContent = 'Keep page';
+    }
   }
+  /** Opens the camera for the next page of an item (remembered, so the app does not update itself meanwhile). */
+  function openCamera(item) { ps.target = item; ps.cameraAt = Date.now(); $('#poeCamera').click(); }
+  /** True while a page is being taken: the crop screen is open, a page is being saved, or the camera may be up. */
+  const busy = () => !!($('#cropDialog').open || ps.keeping || (ps.cameraAt && Date.now() - ps.cameraAt < 3 * 60e3));
 
   /* ---------- saving: one PDF per item, kept on the device ---------- */
   async function saveAll() {
@@ -185,7 +215,9 @@ const POE = (() => {
           for (const name of d.pages) {
             const c = await Scanner.load(await attachment(d, name));
             const f = Scanner.filter(c, 'document');
-            pages.push({ jpeg: await Scanner.toJpeg(f, 0.68), width: f.width, height: f.height });
+            const page = { jpeg: await Scanner.toJpeg(f, 0.68), width: f.width, height: f.height };
+            Scanner.release(c); if (f !== c) Scanner.release(f);   // one page in memory at a time
+            pages.push(page);
           }
           pdf = await Scanner.pdf(pages);
         }
@@ -357,14 +389,14 @@ const POE = (() => {
     $('#poeDocs').addEventListener('click', async (e) => {
       const card = e.target.closest('[data-doc]'); if (!card) return;
       const item = card.dataset.doc;
-      if (e.target.closest('[data-camera]')) { ps.target = item; $('#poeCamera').click(); return; }
-      if (e.target.closest('[data-gallery]')) { ps.target = item; $('#poeGallery').click(); return; }
+      if (e.target.closest('[data-camera]')) { openCamera(item); return; }
+      if (e.target.closest('[data-gallery]')) { ps.target = item; ps.cameraAt = Date.now(); $('#poeGallery').click(); return; }
       const d = await draft(item);
       const li = e.target.closest('[data-page]');
       if (e.target.closest('[data-clear]')) { if (d._rev) await sdb.remove(d._id, d._rev); ps.picked.delete(item); return render(); }
       if (li && e.target.closest('[data-del]')) {
         const [gone] = d.pages.splice(Number(li.dataset.page), 1);
-        if (d._attachments) delete d._attachments[gone];
+        if (d._attachments) { delete d._attachments[gone]; delete d._attachments['t-' + gone]; }
         await saveDraft(d); return render();
       }
       if (li && e.target.closest('[data-move]')) {
@@ -372,9 +404,9 @@ const POE = (() => {
         [d.pages[i], d.pages[j]] = [d.pages[j], d.pages[i]]; await saveDraft(d); return render();
       }
     });
-    $('#poeCamera').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openCrop(f, ps.target); });
+    $('#poeCamera').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; ps.cameraAt = 0; if (f) openCrop(f, ps.target); });
     $('#poeGallery').addEventListener('change', async (e) => {
-      const files = [...e.target.files]; e.target.value = '';
+      const files = [...e.target.files]; e.target.value = ''; ps.cameraAt = 0;
       const pdf = files.find((f) => f.type === 'application/pdf');
       if (pdf) {
         const text = new TextDecoder('latin1').decode(new Uint8Array(await pdf.arrayBuffer()));
@@ -384,15 +416,26 @@ const POE = (() => {
         Object.assign(d, { pdfOnly: true, pdfName: pdf.name, pdfPages: count || MIN_PAGES, pages: [], _attachments: { 'doc.pdf': { content_type: 'application/pdf', data: pdf } } });
         await saveDraft(d); return render();
       }
-      for (const f of files) { await openCrop(f, ps.target); await new Promise((r) => $('#cropDialog').addEventListener('close', r, { once: true })); }
+      for (const f of files) {
+        await openCrop(f, ps.target);
+        if ($('#cropDialog').open) await new Promise((r) => $('#cropDialog').addEventListener('close', r, { once: true }));
+      }
     });
     $('#cropHandles').addEventListener('pointerdown', dragHandle);
-    $('#cropCancel').addEventListener('click', () => $('#cropDialog').close());
+    $('#cropCancel').addEventListener('click', () => closeCrop());
+    $('#cropDialog').addEventListener('close', () => { if (!ps.keeping && ps.crop) { Scanner.release(ps.crop.canvas); ps.crop = null; } });
     $('#cropRotate').addEventListener('click', () => { ps.crop.canvas = Scanner.rotate(ps.crop.canvas); ps.crop.quad = Scanner.findCorners(ps.crop.canvas); drawCrop(); });
     $('#cropWhole').addEventListener('click', () => { const c = ps.crop.canvas; ps.crop.quad = [[0, 0], [c.width, 0], [c.width, c.height], [0, c.height]]; drawCrop(); });
     $('#cropKeep').addEventListener('click', keepPage);
-    // Keep this page and open the camera for the next one at once (the camera must open on the tap itself).
-    $('#cropNext').addEventListener('click', () => { ps.target = ps.crop.item; keepPage(); $('#poeCamera').click(); });
+    // Keep this page, and only then open the camera for the next one: opening it while the page is still being
+    // straightened is when a phone, short of memory, closes the browser (and the app reloads).
+    $('#cropNext').addEventListener('click', async () => {
+      const item = ps.crop?.item, started = Date.now();
+      if (!item || !(await keepPage())) return;
+      // The browser lets a tap open the camera for a few seconds only; after that the student taps again.
+      if (Date.now() - started < 4000) openCamera(item);
+      else toast('Page added. Tap "Add another page" for the next one.', 'ok');
+    });
     $('#poeSort').addEventListener('change', () => render());
     $('#poeSave').addEventListener('click', saveAll);
     $('#poeList').addEventListener('click', (e) => {
@@ -425,5 +468,5 @@ const POE = (() => {
     await render();
     sync();   // on opening the app: send anything waiting and bring the statuses up to date
   }
-  return { init, render, sync, showEvidence, state: ps };
+  return { init, render, sync, showEvidence, busy, state: ps };
 })();

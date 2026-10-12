@@ -472,7 +472,7 @@ On the **Evidence (POE)** tab:
 2. Tap one or more **items** (CAT1–CAT4, PRAC1–PRAC3). An item already sent shows ✓ approved, • with your trainer, or ↺ returned.
 3. For each item, add the pages. **Every submission needs at least 2 pages.**
    - **Take photo of a page**: the app finds the page edges (drag the corners if needed). Use **Rotate** or **Whole photo** if needed.
-   - **Keep page** adds it; **Keep and take the next page** adds it and opens the camera again straight away.
+   - **Keep page** adds it; **Keep and take the next page** saves the page and then opens the camera for the next one. On a slower phone it may instead say *Page added*: tap **Add another page** to carry on.
    - **From gallery or PDF**: choose photos, or a PDF of at least 2 pages.
    - Move pages with **↑ ↓** or delete one with **✕**.
 4. Tap **Save and send**. The PDF is saved on your device first and sent to the college Drive when you have internet.

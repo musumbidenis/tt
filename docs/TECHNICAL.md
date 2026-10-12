@@ -1,7 +1,7 @@
 # The Ark — Technical Documentation
 
 For whoever sets up, runs and maintains the RVNP ICT attendance system.
-Describes app **4.12.2**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
+Describes app **4.12.3**, server (Worker) **6.2.0**, database schema **8**, Drive bridge **1.3.0**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -470,6 +470,13 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 `unit_marks` holds one row per class, unit and student. On `marksPush`, each changed cell is stamped with the active term, staff code and time in `meta`. A row's newer edit wins (two devices do not undo each other). A cell entered in an ended term is kept as it was unless that term, class and unit is unlocked; the response's `held` count tells the app.
 
 ### 9.6 POE evidence
+
+**Scanning on the device** (`scanner.js`, `poe-student.js`) is built to fit in a phone's memory, because a phone that runs out closes the browser and the app reloads:
+- the JPEG header is read first (size and EXIF orientation) and the photo is decoded already shrunk to at most 2400 px on its long side (`createImageBitmap` with `resizeWidth`); the decoded bitmap is closed at once;
+- straightening reads only the part of the photo the page is in, and the page is kept at most 1800 px (about A4 at 200 dpi), saved as JPEG with a 320 px thumbnail beside it (`t-<page>` attachment), which is what the list of pages shows;
+- every canvas is emptied (`Scanner.release`) as soon as it is used, and the PDF is built one page at a time;
+- **Keep and take the next page** opens the camera only after the page is saved and its memory let go;
+- the student app does not reload for a new version while the crop screen is open, a page is being saved, or the camera may be up (`POE.busy()`); it waits until the student is idle.
 
 1. The student device asks `poeTicket` for a signed upload ticket (6 hours), then posts the PDF to the bridge with it.
 2. The bridge saves `POE / <class> / <adm - name> / <unit> - <item> - v<N>.pdf`, signs what it saved, and the device sends that to `poeDone`. The Worker cannot be told about a file that was not saved.

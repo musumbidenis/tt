@@ -399,3 +399,4 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - The lunch column looks the same for every kind of register; for a lesson its cells cannot be chosen.
 - The student profile shows the college crest with *ICT Department*, and the QR caption reads *Student QR ID: Trainer can scan it to mark attendance*.
 - 4.12.2: the page footer has been removed.
+- 4.12.3: scanning several pages no longer crashes the student app. Photos are decoded already shrunk and every image's memory is let go as soon as it is used; pages show small thumbnails; **Keep and take the next page** opens the camera only after the page is saved; and the app never reloads itself for a new version in the middle of a scan.

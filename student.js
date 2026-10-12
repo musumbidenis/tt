@@ -479,7 +479,16 @@ async function init() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
     const hadController = !!navigator.serviceWorker.controller;
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !scanning) location.reload(); });
+    // A new version is ready: the app reloads to use it, but never in the middle of a scan, with the camera
+    // open or while a page is being saved; it waits until the student is idle and the app is on screen.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      const reloadWhenIdle = () => {
+        if (scanning || POE.busy?.() || document.visibilityState !== 'visible') { setTimeout(reloadWhenIdle, 15000); return; }
+        location.reload();
+      };
+      reloadWhenIdle();
+    });
   }
 }
 

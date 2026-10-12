@@ -1,5 +1,5 @@
 /* Document scanner for POE evidence, all on the phone (no internet needed):
- *   Scanner.load(file)            photo → canvas (no more than 3000 px on the long side, upright)
+ *   Scanner.load(file)            photo → canvas (no more than 2400 px on the long side, upright)
  *   Scanner.findCorners(canvas)   where the sheet of paper is: 4 points (top-left, top-right, bottom-right, bottom-left)
  *   Scanner.flatten(canvas, quad) straightens the sheet (perspective correction) → new canvas
  *   Scanner.filter(canvas, mode)  'document' (clean white page, crisp ink), 'grey' or 'colour'
@@ -8,18 +8,70 @@
 'use strict';
 
 const Scanner = (() => {
-  const MAX_SRC = 3000, MAX_OUT = 2000;
+  // Phones run out of memory with camera-sized images (a 12 MP photo is about 48 MB once decoded) and then the
+  // browser closes the page. So photos are decoded already shrunk, and pages are kept at about A4 at 200 dpi.
+  const MAX_SRC = 2400, MAX_OUT = 1800;
+
+  /** A JPEG's width and height from its header (and whether its EXIF turns it on its side), without decoding it. */
+  async function jpegSize(file) {
+    try {
+      const b = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer());
+      if (b[0] !== 0xFF || b[1] !== 0xD8) return null;
+      let i = 2, turned = false;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xFF) { i++; continue; }
+        const m = b[i + 1], len = (b[i + 2] << 8) | b[i + 3];
+        if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7) || m === 0xFF) { i += m === 0xFF ? 1 : 2; continue; }
+        if (m === 0xE1 && b[i + 4] === 0x45 && b[i + 5] === 0x78 && b[i + 6] === 0x69 && b[i + 7] === 0x66) {   // "Exif"
+          const t = i + 10, le = b[t] === 0x49;
+          const u16 = (o) => (le ? b[o] | (b[o + 1] << 8) : (b[o] << 8) | b[o + 1]);
+          const u32 = (o) => (le ? (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) : ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3])) >>> 0;
+          const ifd = t + u32(t + 4), n = ifd + 2 <= b.length ? u16(ifd) : 0;
+          for (let e = 0; e < n; e++) {
+            const p = ifd + 2 + e * 12;
+            if (p + 10 > b.length) break;
+            if (u16(p) === 0x0112) { turned = u16(p + 8) >= 5; break; }   // orientations 5–8 are on their side
+          }
+        }
+        if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+          const h = (b[i + 5] << 8) | b[i + 6], w = (b[i + 7] << 8) | b[i + 8];
+          return w && h ? (turned ? { w: h, h: w } : { w, h }) : null;
+        }
+        i += 2 + len;
+      }
+    } catch { /* not readable: decoded the ordinary way */ }
+    return null;
+  }
 
   async function load(file) {
-    let bmp;
-    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
-    catch {
-      bmp = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That photo could not be opened')); i.src = URL.createObjectURL(file); });
+    let bmp = null, img = null, url = '';
+    const size = await jpegSize(file);
+    try {
+      // Only the width is given, so the shape is kept whichever way the browser applies the EXIF turn.
+      bmp = size && Math.max(size.w, size.h) > MAX_SRC
+        ? await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: Math.round(size.w * (MAX_SRC / Math.max(size.w, size.h))), resizeQuality: 'high' })
+        : await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch { bmp = null; }
+    if (!bmp) {
+      url = URL.createObjectURL(file);
+      img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That photo could not be opened')); i.src = url; });
     }
-    const w = bmp.width, h = bmp.height, k = Math.min(1, MAX_SRC / Math.max(w, h));
+    const pic = bmp || img, w = pic.width, h = pic.height, k = Math.min(1, MAX_SRC / Math.max(w, h));
     const c = document.createElement('canvas');
     c.width = Math.round(w * k); c.height = Math.round(h * k);
-    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    c.getContext('2d').drawImage(pic, 0, 0, c.width, c.height);
+    bmp?.close?.();                         // let the decoded photo go at once
+    if (url) URL.revokeObjectURL(url);
+    return c;
+  }
+  /** Gives a canvas's memory back straight away instead of waiting for the browser to tidy up. */
+  const release = (c) => { if (c) { c.width = 0; c.height = 0; } };
+  /** A small copy of a page for the list of pages. */
+  function thumb(canvas, size = 320) {
+    const k = Math.min(1, size / Math.max(canvas.width, canvas.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(canvas.width * k)); c.height = Math.max(1, Math.round(canvas.height * k));
+    c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
     return c;
   }
   function rotate(canvas) {
@@ -102,14 +154,17 @@ const Scanner = (() => {
     let W = Math.max(dist(tl, tr), dist(bl, br)), H = Math.max(dist(tl, bl), dist(tr, br));
     const k = Math.min(1, MAX_OUT / Math.max(W, H)); W = Math.max(16, Math.round(W * k)); H = Math.max(16, Math.round(H * k));
     const m = homography([[0, 0], [W, 0], [W, H], [0, H]], quad);
-    const src = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
+    const xs = quad.map((p) => p[0]), ys = quad.map((p) => p[1]);
+    const bx = Math.max(0, Math.floor(Math.min(...xs)) - 1), by = Math.max(0, Math.floor(Math.min(...ys)) - 1);
+    const bw = Math.max(2, Math.min(canvas.width, Math.ceil(Math.max(...xs)) + 2) - bx), bh = Math.max(2, Math.min(canvas.height, Math.ceil(Math.max(...ys)) + 2) - by);
+    const src = canvas.getContext('2d', { willReadFrequently: true }).getImageData(bx, by, bw, bh);
     const sw = src.width, sh = src.height, sp = src.data;
     const out = document.createElement('canvas'); out.width = W; out.height = H;
     const g = out.getContext('2d'), od = g.createImageData(W, H), op = od.data;
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const d = m[6] * x + m[7] * y + 1;
-        let sx = (m[0] * x + m[1] * y + m[2]) / d, sy = (m[3] * x + m[4] * y + m[5]) / d;
+        let sx = (m[0] * x + m[1] * y + m[2]) / d - bx, sy = (m[3] * x + m[4] * y + m[5]) / d - by;
         if (sx < 0) sx = 0; else if (sx > sw - 1.001) sx = sw - 1.001;
         if (sy < 0) sy = 0; else if (sy > sh - 1.001) sy = sh - 1.001;
         const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0, i = (y0 * sw + x0) * 4, o = (y * W + x) * 4;
@@ -150,6 +205,7 @@ const Scanner = (() => {
       p[i] = p[i + 1] = p[i + 2] = r;
     }
     g.putImageData(im, 0, 0);
+    bgC.width = 0; bgC.height = 0; s.width = 0; s.height = 0;   // give the working copies back at once
     return out;
   }
   const toJpeg = (canvas, q = 0.72) => new Promise((res) => canvas.toBlob(res, 'image/jpeg', q));
@@ -182,5 +238,5 @@ const Scanner = (() => {
     return new Blob(parts, { type: 'application/pdf' });
   }
 
-  return { load, rotate, findCorners, defaultQuad, flatten, filter, toJpeg, pdf };
+  return { load, rotate, findCorners, defaultQuad, flatten, filter, toJpeg, pdf, release, thumb };
 })();
