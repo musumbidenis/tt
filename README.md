@@ -406,3 +406,4 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **The camera for evidence is inside the student app.** Opening the phone's own camera app let Android close the browser ("unable to complete previous operation due to low memory"), losing the page. Now **Take photo of a page** shows a live camera in the app; **Keep and take the next page** goes straight back to it, and **Retake** redoes a page.
 - **Screenshots in the guides** come from `docs/make-screenshots.py`, which rebuilds them from the current code with an invented demo department.
 - 4.13.1: smaller text on phones (a 14 px base instead of 16 px; typing boxes stay at 16 px so iPhones do not zoom).
+- 4.13.2: text on phones smaller again (13 px base), in both the staff and student apps.

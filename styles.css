@@ -947,11 +947,11 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .shutter:active { transform: scale(.94); }
 .shutter:disabled { opacity: .5; }
 
-/* ---------- 4.13.1: smaller text on phones ----------
- * Sizes are in rem, so a 14 px base (instead of 16 px) makes all text and spacing about 12% smaller.
+/* ---------- 4.13.2: smaller text on phones, in both apps ----------
+ * Sizes are in rem, so a 13 px base (instead of 16 px) makes all text and spacing about 19% smaller.
  * Typing boxes stay at 16 px: an iPhone zooms the page when you tap into smaller text. */
 @media (max-width: 600px) {
-  html { font-size: 14px; }
-  body { font-size: 14px; }
+  html { font-size: 13px; }
+  body { font-size: 13px; }
   input, select, textarea { font-size: 16px; }
 }
