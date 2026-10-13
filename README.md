@@ -461,3 +461,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Moved to Cloudflare Pages
 
 - The apps now live at **https://ark26.pages.dev/** (trainers, HODs, MIS Officer) and **https://ark26.pages.dev/student** (students), on Cloudflare Pages, connected to this repository: every `git push` to `main` updates them. The old GitHub Pages address still works while people move over; each phone keeps its data per address, so send all registers before switching, then add the new address to the home screen.
+
+## Changes in 4.19
+
+- **Loading from other departments is now a choice.** When the loading workbook has classes from other departments (shared units an ICT trainer teaches), the MIS Officer sees a tick box for each department in the preview. They are left out unless ticked, so uploading the loading no longer adds other departments' classes by itself.

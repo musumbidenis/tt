@@ -485,7 +485,8 @@ The app makes the **12 teaching weeks** and skips the breaks. The card then read
 
 **Trainer loading**
 1. Choose the department loading workbook (`.xlsm` or `.xlsx`). The app reads the **Subject Loading**, **List of Trainers** and **List of Subject** tabs.
-2. Check the preview, then tap **Upload loading**. Every trainer gets an account; anyone listed as HOD gets the HOD role.
+2. If the workbook also has classes from other departments (for example *BCE* or *HT* classes where an ICT trainer teaches a shared unit), the preview lists each department with a tick box. They are **left out** unless you tick them; the totals and the table change as you tick. Your own department's classes always load.
+3. Check the preview, then tap **Upload loading**. Every trainer gets an account; anyone listed as HOD gets the HOD role.
 
 **Class lists**
 1. Tap **Choose class register files** and pick one or more class register PDFs from the MIS system (the same register as Excel or CSV also works).

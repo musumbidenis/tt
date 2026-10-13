@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.18.0**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
+Describes app **4.19.0**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -438,7 +438,7 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `absences` | HOD, MIS | Student-units with more than `limit` lessons missed; `termId` optional. |
 | `setAbsenceLimit` | HOD, MIS | The shared limit. |
 | `saveTerm` | MIS | Create or update the term (`lessonHours`, `catWeeks`, `series`, breaks). A new code closes the old term. |
-| `uploadLoading` | MIS | Replace the term's loading and create staff accounts. |
+| `uploadLoading` | MIS | Replace the term's loading and create staff accounts. Creates a class for every class code it is sent, so the app leaves out other departments' rows (class code's first word differs from the workbook's main one) unless the MIS Officer ticks them. |
 | `importClassList` | MIS | Apply (or preview with `dryRun`) one MIS class register across its streams. |
 | `students`, `updateStudent` | MIS (HOD reads) | A class group's students; move, withdraw or restore one. |
 | `phones`, `resetPhone` | HOD, MIS | Students with a registered device (archived classes left out); `resetPhone` deletes the student's `devices` row(s) and their device's `push_subs`, and is audited. |

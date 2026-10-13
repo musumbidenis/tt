@@ -213,24 +213,45 @@ const Admin = (() => {
     out.innerHTML = '<p class="muted">Reading the workbook…</p>';
     try {
       const L = loadingPreview = await Imports.loading(file);
-      const classes = new Set(L.rows.map((r) => r.classCode)), trainers = new Set(L.rows.map((r) => r.trainerCode));
+      // A class's department is the first word of its code (ICT, BCE, HT…). The workbook's own department is the
+      // one most rows belong to; classes of other departments (shared units an ICT trainer teaches) load only if ticked.
+      const count = new Map();
+      for (const r of L.rows) count.set(deptOf(r.classCode), (count.get(deptOf(r.classCode)) || 0) + 1);
+      L.home = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+      const others = [...count.keys()].filter((d) => d !== L.home).sort();
       const t = state.meta.term;
       const termNote = L.meta.term && t && !new RegExp(`\\b${L.meta.term}\\b`).test(t.name) ? `<p class="warn-text">This workbook says Term ${esc(L.meta.term)} ${esc(L.meta.year)}, but the active term is ${esc(t.name)}.</p>` : '';
       out.innerHTML = `<div class="preview">
         <p><b>${esc(L.fileName)}</b>${L.meta.department ? ` · ${esc(L.meta.department)} department` : ''}${L.meta.term ? ` · Term ${esc(L.meta.term)} ${esc(L.meta.year)}` : ''}</p>
         ${termNote}
-        <p>${L.rows.length} class units · ${classes.size} classes · ${trainers.size} trainers teaching · ${L.trainers.length} on the trainers list · ${L.rows.reduce((a, r) => a + r.hoursPerWeek, 0)} hours a week</p>
-        <div class="table-wrap"><table class="report-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Lessons/wk</th><th class="num">Hrs/wk</th></tr></thead>
-        <tbody>${L.rows.slice(0, 6).map((r) => `<tr><td>${esc(r.classCode)}</td><td>${esc(r.unitCode)} — ${esc(r.unitName)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessonsPerWeek}</td><td class="num">${r.hoursPerWeek}</td></tr>`).join('')}
-        ${L.rows.length > 6 ? `<tr><td colspan="5" class="muted">…and ${L.rows.length - 6} more</td></tr>` : ''}</tbody></table></div>
+        ${others.length ? `<fieldset class="catweeks" id="loadingDepts"><legend>This workbook also has classes from other departments. Tick the ones to load as well (${esc(L.home)} classes always load):</legend>
+          ${others.map((d) => { const n = new Set(L.rows.filter((r) => deptOf(r.classCode) === d).map((r) => r.classCode)).size;
+            return `<label class="kchip"><input type="checkbox" value="${esc(d)}"><span>${esc(d)} · ${n} class${n === 1 ? '' : 'es'}</span></label>`; }).join('')}</fieldset>` : ''}
+        <div id="loadingSummary"></div>
         <button type="button" class="btn primary" id="uploadLoading" ${t ? '' : 'disabled'}>${t ? `Upload loading for ${esc(t.name)}` : 'Set up the term first'}</button></div>`;
+      drawLoadingSummary();
     } catch (e) { out.innerHTML = `<p class="err-text">${esc(e.message)}</p>`; }
+  }
+  const deptOf = (code) => String(code || '').trim().split(/\s+/)[0].toUpperCase();
+  /** The rows that will be uploaded: the workbook's own department plus any other departments ticked. */
+  function loadingRows() {
+    const L = loadingPreview, ticked = new Set($$('#loadingDepts input:checked').map((i) => i.value));
+    return L.rows.filter((r) => deptOf(r.classCode) === L.home || ticked.has(deptOf(r.classCode)));
+  }
+  function drawLoadingSummary() {
+    const L = loadingPreview, rows = loadingRows(), box = $('#loadingSummary');
+    if (!L || !box) return;
+    const classes = new Set(rows.map((r) => r.classCode)), trainers = new Set(rows.map((r) => r.trainerCode)), left = L.rows.length - rows.length;
+    box.innerHTML = `<p>${rows.length} class units · ${classes.size} classes · ${trainers.size} trainers teaching · ${L.trainers.length} on the trainers list · ${rows.reduce((a, r) => a + r.hoursPerWeek, 0)} hours a week${left ? ` <span class="muted">(${left} class unit${left === 1 ? '' : 's'} of other departments left out)</span>` : ''}</p>
+        <div class="table-wrap"><table class="report-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Lessons/wk</th><th class="num">Hrs/wk</th></tr></thead>
+        <tbody>${rows.slice(0, 6).map((r) => `<tr><td>${esc(r.classCode)}</td><td>${esc(r.unitCode)} — ${esc(r.unitName)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessonsPerWeek}</td><td class="num">${r.hoursPerWeek}</td></tr>`).join('')}
+        ${rows.length > 6 ? `<tr><td colspan="5" class="muted">…and ${rows.length - 6} more</td></tr>` : ''}</tbody></table></div>`;
   }
   async function uploadLoading(btn) {
     if (!loadingPreview) return;
     busy(btn, true, 'Uploading…');
     try {
-      const res = need(await api('uploadLoading', { rows: loadingPreview.rows, trainers: loadingPreview.trainers }));
+      const res = need(await api('uploadLoading', { rows: loadingRows(), trainers: loadingPreview.trainers }));
       toast(`Loading saved: ${res.rows} class units, ${res.trainers} trainers${res.newStaff ? ` (${res.newStaff} new — issue their PINs under Staff)` : ''}`, 'ok');
       loadingPreview = null;
       await pullRoster({ silent: true });
@@ -733,6 +754,7 @@ const Admin = (() => {
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
+    if (t.closest('#loadingDepts')) drawLoadingSummary();
     if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
     if (t.id === 'soSort') { soSort = t.value; Tables.reset('signoffs'); Tables.reset('signoffsDone'); drawSignoffs(); }
     if (t.id === 'staffSort') { staffSort = t.value; drawStaff(); }
