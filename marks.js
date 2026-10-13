@@ -92,7 +92,8 @@ const Marks = (() => {
 
   /* ---------- the marks table ---------- */
   async function render() {
-    const cls = $('#rClass').value, unit = $('#rUnit').value, box = $('#marksCard');
+    const cls = reportClassCode(), unit = $('#rUnit').value, box = $('#marksCard');
+    if (!cls && reportGroup() && unit) { box.innerHTML = '<p class="empty">Marks are kept for each stream: choose one stream above.</p>'; return; }
     if (!cls || !unit) { box.innerHTML = '<p class="empty">Choose a class and unit to enter its marks.</p>'; return; }
     const seq = ++ms.seq;
     ms.key = cls + '|' + unit;
@@ -226,7 +227,7 @@ const Marks = (() => {
   }
 
   async function exportXlsx() {
-    const cls = $('#rClass').value, unit = $('#rUnit').value;
+    const cls = reportClassCode(), unit = $('#rUnit').value;
     if (!cls || !unit) return;
     const u = state.units.find((x) => x.classCode === cls && x.code === unit) || { code: unit, name: unit };
     const c = state.classes.find((x) => x.code === cls) || {};

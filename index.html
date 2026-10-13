@@ -98,6 +98,7 @@
         <label>Unit<select id="fUnit" required></select></label>
         <label>Week<select id="fWeek"></select></label>
       </div>
+      <div id="fStreamsBox" class="kind-row streams-row" role="group" aria-label="Streams in this lesson" hidden></div>
       <div class="kind-row" role="radiogroup" aria-label="Register for">
         <label class="kchip"><input type="radio" name="fKind" value="lesson" checked><span>Lesson</span></label>
         <label class="kchip" id="kindCat"><input type="radio" name="fKind" value="cat"><span>CAT</span></label>
@@ -161,6 +162,7 @@
       <label id="rTermBox" hidden>Term<select id="rTerm" aria-label="Term"></select></label>
       <label>Class<select id="rClass"></select></label>
       <label>Unit<select id="rUnit"></select></label>
+      <label id="rStreamBox" hidden>Stream<select id="rStream"></select></label>
       <label>Minimum %<input type="number" id="rThreshold" min="0" max="100" step="1"></label>
     </div>
     <div id="marksCard" class="card marks-card"></div>
@@ -298,6 +300,7 @@
     <p class="muted small">For a student who is attending but not on the class list yet. You can mark them straight away; they show as <b>Pending</b> until the MIS Officer approves them.</p>
     <label>Admission number<input id="asAdm" autocapitalize="characters" placeholder="L6CS/25S/305999" required></label>
     <label>Full name<input id="asName" autocapitalize="words" required></label>
+    <label id="asStreamBox" hidden>Stream<select id="asStream"></select></label>
     <label>Reason<select id="asReason"><option>Late admission</option><option>Transferred from another class</option><option>Missing from the class list</option><option>Other</option></select></label>
     <label>Mark them as<select id="asMark"><option value="P">Present</option><option value="L">Late</option></select></label>
     <p id="asMsg" class="err-text small" role="alert"></p>

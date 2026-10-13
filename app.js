@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.19.0';
+const APP_VERSION = '4.20.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -214,9 +214,62 @@ async function chooseReportTerm(termId) {
 function fillReportClasses() {
   const list = reportUnitList();
   const codes = [...new Set(list.map((u) => u.classCode))].sort();
-  const rep = codes.map((code) => { const c = state.classes.find((x) => x.code === code); return { value: code, label: c ? classLabel(c) : code }; });
+  // A class with streams is listed once; the Stream choice then shows all of them or one.
+  const rep = [], groups = new Set();
+  for (const code of codes) {
+    const g = streamGroup(code);
+    if (g) {
+      if (groups.has(g.base)) continue;
+      groups.add(g.base);
+      const mis = [...new Set(g.codes.map((c) => state.classes.find((x) => x.code === c)?.misClass || ''))];
+      rep.push({ value: 'streams:' + g.base, label: streamsLabel(g) + (mis.length === 1 && mis[0] ? ` (${mis[0]})` : '') });
+      continue;
+    }
+    const c = state.classes.find((x) => x.code === code);
+    rep.push({ value: code, label: c ? classLabel(c) : code });
+  }
   fillSelect($('#rClass'), rep, undefined, rep.length ? null : 'No classes');
   renderReportUnitSelect();
+}
+/** The class with streams chosen in Reports ({ base, codes }), or null for a class without streams. */
+function reportGroup() {
+  const v = $('#rClass').value;
+  if (!v.startsWith('streams:')) return null;
+  const base = v.slice(8), codes = streamGroups().get(base);
+  return codes ? { base, codes } : null;
+}
+/** May this person see this stream's report? The HOD and MIS Officer always; a trainer for the streams they teach. */
+function streamAccess(classCode, unitCode) {
+  if (reportUnitList().some((u) => u.classCode === classCode && u.code === unitCode)) return { ok: true };
+  const u = (state.reportTerm ? state.pastUnits || [] : state.units).find((x) => x.classCode === classCode && x.code === unitCode);
+  return u ? { ok: false, who: u.trainerName || '' } : { ok: false, none: true };
+}
+/** The streams that take the chosen unit and may be seen; "All streams" is offered when that is every stream taking it (2 or more). */
+function streamChoices() {
+  const g = reportGroup(), unit = $('#rUnit').value;
+  const acc = g ? g.codes.map((c) => ({ c, ...streamAccess(c, unit) })) : [];
+  const taking = acc.filter((a) => !a.none);
+  return { acc, all: taking.length > 1 && taking.every((a) => a.ok), open: acc.filter((a) => a.ok).map((a) => a.c) };
+}
+function renderStreamSelect() {
+  const g = reportGroup(), box = $('#rStreamBox'), sel = $('#rStream');
+  if (!g) { box.hidden = true; sel.innerHTML = ''; delete sel.dataset.picked; return; }
+  const prev = sel.value, { acc, all } = streamChoices(), unit = $('#rUnit').value;
+  // Streams taught by someone else are shown but locked; a stream that doesn't take this unit can't be chosen.
+  sel.innerHTML = (all ? '<option value="">All streams</option>' : '')
+    + acc.map((a) => `<option value="${esc(a.c)}"${a.ok ? '' : ' disabled'}>Stream ${esc(streamLetter(a.c))}${a.ok ? '' : a.none ? ` · no ${esc(unit)}` : ` · locked${a.who ? ` (${esc(a.who)})` : ''}`}</option>`).join('');
+  // All streams unless a stream was picked by hand (and can still be seen).
+  const keep = sel.dataset.picked && acc.some((a) => a.ok && a.c === prev);
+  sel.value = keep ? prev : all ? '' : (acc.find((a) => a.ok)?.c || '');
+  box.hidden = false;
+}
+/** The one class the report is for, or '' when all streams are shown together. */
+function reportClassCode() { return reportGroup() ? $('#rStream').value : $('#rClass').value; }
+/** The classes the report covers: one, or every stream of the chosen class that takes the unit. */
+function reportCodes() {
+  const g = reportGroup();
+  if (!g) return $('#rClass').value ? [$('#rClass').value] : [];
+  return $('#rStream').value ? [$('#rStream').value] : streamChoices().open;
 }
 const isMyUnit = (u) => !!u && (!u.trainerCode || lower(u.trainerCode) === lower(me()?.code));
 
@@ -320,11 +373,13 @@ function renderClassSelects() {
  * is opened as soon as its class and unit are available. */
 function applyWantedReport() {
   const w = state.wantReport;
-  if (!w || ![...$('#rClass').options].some((o) => o.value === w.classCode)) return false;
-  $('#rClass').value = w.classCode;
+  const g = w && streamGroup(w.classCode), value = g ? 'streams:' + g.base : w?.classCode;
+  if (!w || ![...$('#rClass').options].some((o) => o.value === value)) return false;
+  $('#rClass').value = value;
   renderReportUnitSelect();
   if (![...$('#rUnit').options].some((o) => o.value === w.unitCode)) return false;
   $('#rUnit').value = w.unitCode;
+  if (g) { $('#rStream').dataset.picked = '1'; renderStreamSelect(); $('#rStream').value = w.classCode; }
   state.wantReport = null;
   if (state.activeTab === 'reports') renderReport();
   return true;
@@ -338,6 +393,7 @@ function openReport(classCode, unitCode) {
 function renderUnitSelect() {
   const opts = unitsFor($('#fClass').value).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
   fillSelect($('#fUnit'), opts, undefined, opts.length ? null : 'No units for this class');
+  renderStreamChoice();
   renderTimetable();
 }
 
@@ -495,46 +551,60 @@ async function openFromForm(e) {
   if (date > todayISO()) { toast('That day has not come yet', 'err'); return; }
   if (kind === 'lesson' && slotNo(period) === LUNCH_SLOT) { toast('Lunch can hold a CAT or extra attendance, not a lesson', 'err'); return; }
   if (state.dirty) await saveCurrent();
-  const id = sessionId(date, classCode, unitCode, period, kind);
-  let doc;
-  try { doc = await db.get(id); }
-  catch (err) {
-    if (err.status !== 404) throw err;
-    const { week, term } = weekInfo(date);
-    if (term && !week) { toast(`${fmtDate(date)} is not in a teaching week of ${term.name}`, 'err'); return; }
-    if (kind === 'cat' && !isCatWeek(TermReport.mondayOf(date))) { toast('CAT registers are for the CAT weeks set by the MIS Officer. Use "Extra CAT attendance" for other weeks.', 'err'); return; }
-    const sameWeek = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
-      && TermReport.mondayOf(s.date) === TermReport.mondayOf(date));
-    const n = slotNo(period);
-    const clash = sameWeek.find((s) => s.date === date && (() => { const a = slotNo(s.period), b = a + (Number(s.slots) === 2 ? 1 : 0); return n <= b && n + slots - 1 >= a; })());
-    if (clash) { toast(`That slot already has a register (${sessionLabel(clash)}); opening it`); setCurrent(clash); return; }
-    if (kind === 'lesson') {
-      const used = sameWeek.filter((s) => kindOf(s) === 'lesson').reduce((a, s) => a + (Number(s.slots) === 2 ? 2 : 1), 0);
-      if (used + slots > MAX_LESSONS_PER_WEEK) {
-        toast(`${unitCode} already has ${used} lesson(s) in ${week ? 'week ' + week : 'this week'}. The register has room for ${MAX_LESSONS_PER_WEEK} a week${slots === 2 ? ' (a double counts as two)' : ''}; open one of those instead.`, 'err');
-        return;
-      }
-    }
-    if (!rosterFor(classCode).length && navigator.onLine && state.auth) {
-      toast('No students on this device for ' + classCode + ' yet — downloading class lists…');
-      await pullRoster({ silent: true });
-    }
-    const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
-    const cls = state.classes.find((c) => c.code === classCode);
-    const marks = {}, names = {};
-    for (const t of rosterFor(classCode)) { marks[t.admNo] = state.settings.defaultStatus || 'P'; names[t.admNo] = t.name; }
-    const catNo = kind === 'cat' ? (state.meta.term?.catWeeks || []).indexOf(week) + 1 : 0;
-    doc = {
-      _id: id, type: 'session', date, classCode, className: cls?.name || classCode,
-      unitCode, unitName: unit?.name || unitCode, period, slots, kind, title: kind === 'cat' ? (title || `CAT ${catNo || ''}`.trim()) : kind === 'extra' ? title : '',
-      periodLabel: slotLabel(period, slots),
-      termId: term?.id || '', week: week || '',
-      trainerId: me()?.code || '', trainerName: trainerLabel(), deviceId: state.deviceId,
-      marks, names, explicit: {}, notes: '', createdAt: nowISO(), updatedAt: nowISO(), editLog: [],
-    };
+  // A combined lesson opens (or starts) the register of every stream ticked, and shows them as one.
+  const codes = chosenStreams(), docs = [];
+  for (const code of codes) {
+    const got = await sessionFor(code, { date, unitCode, period, slots, kind, title }, codes.length > 1);
+    if (!got) return;                                          // the reason was shown
+    if (got.open) { setCurrent(await withPartners(got.open)); return; }
+    docs.push(got.doc);
   }
   state.pick = null;
-  setCurrent(doc, !doc._rev);
+  if (docs.length === 1) { setCurrent(docs[0], !docs[0]._rev); return; }
+  for (const d of docs) d.combined = codes;
+  setCurrent(combineDocs(docs), docs.every((d) => !d._rev));
+  if (docs.some((d) => !d._rev) && docs.some((d) => d._rev)) markDirty();   // a stream added to a saved lesson is saved straight away
+}
+/** The register of one class for the chosen slot: the one on this device, or a new one.
+ * Returns { doc }, { open } (another register already fills that slot: open it instead), or null (a message was shown). */
+async function sessionFor(classCode, { date, unitCode, period, slots, kind, title }, combining) {
+  const id = sessionId(date, classCode, unitCode, period, kind);
+  const who = combining ? `Stream ${streamLetter(classCode)}: ` : '';
+  try { return { doc: await db.get(id) }; }
+  catch (err) { if (err.status !== 404) throw err; }
+  const { week, term } = weekInfo(date);
+  if (term && !week) { toast(`${fmtDate(date)} is not in a teaching week of ${term.name}`, 'err'); return null; }
+  if (kind === 'cat' && !isCatWeek(TermReport.mondayOf(date))) { toast('CAT registers are for the CAT weeks set by the MIS Officer. Use "Extra CAT attendance" for other weeks.', 'err'); return null; }
+  const sameWeek = (await byPrefix('session:')).filter((s) => s.classCode === classCode && s.unitCode === unitCode
+    && TermReport.mondayOf(s.date) === TermReport.mondayOf(date));
+  const n = slotNo(period);
+  const clash = sameWeek.find((s) => s.date === date && (() => { const a = slotNo(s.period), b = a + (Number(s.slots) === 2 ? 1 : 0); return n <= b && n + slots - 1 >= a; })());
+  if (clash && combining) { toast(`${who}that slot already has a register (${sessionLabel(clash)}). Untick stream ${streamLetter(classCode)} or choose another slot.`, 'err'); return null; }
+  if (clash) { toast(`That slot already has a register (${sessionLabel(clash)}); opening it`); return { open: clash }; }
+  if (kind === 'lesson') {
+    const used = sameWeek.filter((s) => kindOf(s) === 'lesson').reduce((a, s) => a + (Number(s.slots) === 2 ? 2 : 1), 0);
+    if (used + slots > MAX_LESSONS_PER_WEEK) {
+      toast(`${who}${unitCode} already has ${used} lesson(s) in ${week ? 'week ' + week : 'this week'}. The register has room for ${MAX_LESSONS_PER_WEEK} a week${slots === 2 ? ' (a double counts as two)' : ''}; open one of those instead.`, 'err');
+      return null;
+    }
+  }
+  if (!rosterFor(classCode).length && navigator.onLine && state.auth) {
+    toast('No students on this device for ' + classCode + ' yet — downloading class lists…');
+    await pullRoster({ silent: true });
+  }
+  const unit = state.units.find((u) => u.classCode === classCode && u.code === unitCode);
+  const cls = state.classes.find((c) => c.code === classCode);
+  const marks = {}, names = {};
+  for (const t of rosterFor(classCode)) { marks[t.admNo] = state.settings.defaultStatus || 'P'; names[t.admNo] = t.name; }
+  const catNo = kind === 'cat' ? (state.meta.term?.catWeeks || []).indexOf(week) + 1 : 0;
+  return { doc: {
+    _id: id, type: 'session', date, classCode, className: cls?.name || classCode,
+    unitCode, unitName: unit?.name || unitCode, period, slots, kind, title: kind === 'cat' ? (title || `CAT ${catNo || ''}`.trim()) : kind === 'extra' ? title : '',
+    periodLabel: slotLabel(period, slots),
+    termId: term?.id || '', week: week || '',
+    trainerId: me()?.code || '', trainerName: trainerLabel(), deviceId: state.deviceId,
+    marks, names, explicit: {}, notes: '', createdAt: nowISO(), updatedAt: nowISO(), editLog: [],
+  } };
 }
 
 function setCurrent(doc, isNew = false) {
@@ -558,13 +628,14 @@ function classParts(classCode) {
   return [classCode, ...parts.map((x) => (prefix && !/\s/.test(x) ? `${prefix} ${x}` : x))];
 }
 function rosterFor(classCode) {
-  const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === classCode).map((r) => lower(r.admNo)));
+  const codes = classParts(classCode);
+  const rejected = new Set(state.meta.rejected.filter((r) => codes.includes(r.classCode)).map((r) => lower(r.admNo)));
   const out = new Map();
-  for (const code of classParts(classCode)) {
+  for (const code of codes) {
     for (const t of activeTraineesFor(code)) if (!out.has(lower(t.admNo))) out.set(lower(t.admNo), { admNo: t.admNo, name: t.name, pending: false, regCode: t.regCode || '' });
   }
-  const pend = [...state.meta.pending.filter((p) => p.classCode === classCode),
-    ...state.addreqs.filter((a) => a.classCode === classCode && !a.done)];
+  const pend = [...state.meta.pending.filter((p) => codes.includes(p.classCode)),
+    ...state.addreqs.filter((a) => codes.includes(a.classCode) && !a.done)];
   for (const p of pend) {
     const k = lower(p.admNo);
     if (!out.has(k) && !rejected.has(k)) out.set(k, { admNo: p.admNo, name: p.name, pending: true });
@@ -578,16 +649,117 @@ function rosterForCurrent() {
   // Students who reach the class list during today's lesson join it with the default mark; older lessons are left as marked.
   if (s.date === todayISO()) for (const t of list) if (!s.marks[t.admNo]) { s.marks[t.admNo] = s.qr ? 'A' : (state.settings.defaultStatus || 'P'); s.names[t.admNo] = t.name; }
   const listed = new Set(list.map((t) => t.admNo));
-  const rejected = new Set(state.meta.rejected.filter((r) => r.classCode === s.classCode).map((r) => r.admNo));
+  const rejected = new Set(state.meta.rejected.filter((r) => classParts(s.classCode).includes(r.classCode)).map((r) => r.admNo));
   for (const adm of Object.keys(s.marks || {})) {
     if (!listed.has(adm) && !rejected.has(adm)) list.push({ admNo: adm, name: s.names?.[adm] || adm, unlisted: true });
   }
   return list.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/* ---------------- streams ----------------
+ * Streams of one class differ only in a last letter: "ICT L6CS-26S-A" / "ICT L6CS-26S-B", "ICT L6CS-25SA" / "SB" / "SC".
+ * A code counts as a stream only when the class list has another stream of it. */
+const STREAM_RE = /^(.*\d{2}-?[A-Z])-?([A-H])$/;
+const streamLetter = (code) => (STREAM_RE.exec(String(code || '')) || [])[2] || '';
+function streamGroups() {
+  if (streamGroups.from === state.classes) return streamGroups.map;
+  const map = new Map();
+  for (const c of state.classes) {
+    const m = STREAM_RE.exec(c.code); if (!m) continue;
+    const base = m[1].replace(/-$/, '');
+    map.set(base, [...(map.get(base) || []), c.code].sort());
+  }
+  for (const [k, v] of map) if (v.length < 2) map.delete(k);
+  streamGroups.from = state.classes; streamGroups.map = map;
+  return map;
+}
+/** { base, codes } for a class that has streams, else null. */
+function streamGroup(code) {
+  const m = STREAM_RE.exec(String(code || '')); if (!m) return null;
+  const base = m[1].replace(/-$/, ''), codes = streamGroups().get(base);
+  return codes && codes.includes(code) ? { base, codes } : null;
+}
+const streamsLabel = (g) => `${g.base} (streams ${g.codes.map(streamLetter).join(', ')})`;
+
+/* A combined lesson: streams taught together in one slot are marked on one register on screen, but each
+ * stream keeps its own register (reports, sign-off, the HOD's overview and Drive stay per stream).
+ * The screen holds a joined copy (_parts = the streams' registers); saving splits it back. */
+const PER_STUDENT = ['marks', 'names', 'explicit', 'marksAt', 'viaQr'];
+function combineDocs(docs) {
+  docs = [...docs].sort((a, b) => a.classCode.localeCompare(b.classCode));
+  const first = docs[0], codes = docs.map((d) => d.classCode);
+  const v = { ...clone(first), classCode: codes.join(', '), className: codes.join(', '), combined: codes, _parts: docs.map(clone) };
+  for (const f of PER_STUDENT) v[f] = Object.assign({}, ...docs.map((d) => d[f] || {}));
+  const logs = new Map();
+  for (const l of docs.flatMap((d) => d.editLog || [])) logs.set(`${l.at}|${l.device || ''}|${l.reason || ''}`, l);
+  v.editLog = [...logs.values()].sort((x, y) => String(x.at).localeCompare(String(y.at)));
+  v.notes = docs.map((d) => d.notes).find(Boolean) || '';
+  v.idScan = docs.some((d) => d.idScan);
+  const qr = docs.find((d) => d.qr)?.qr;
+  if (qr) v.qr = clone(qr); else delete v.qr;
+  v.createdAt = docs.map((d) => d.createdAt).filter(Boolean).sort()[0] || first.createdAt;
+  return v;
+}
+/** Puts each student's marks back on their own stream's register; shared things (notes, QR, edit log) go on all. */
+function splitDoc(v) {
+  const parts = v._parts;
+  const lists = parts.map((p) => new Set(rosterFor(p.classCode).map((t) => lower(t.admNo))));
+  const ownerOf = (adm) => {
+    const k = lower(adm);
+    let i = lists.findIndex((l) => l.has(k));
+    if (i === -1) i = parts.findIndex((p) => p.marks && adm in p.marks);
+    if (i === -1) { const t = state.trainees.find((x) => lower(x.admNo) === k); i = t ? parts.findIndex((p) => p.classCode === t.classCode) : -1; }
+    return i === -1 ? 0 : i;
+  };
+  const out = parts.map(() => Object.fromEntries(PER_STUDENT.map((f) => [f, {}])));
+  for (const f of PER_STUDENT) for (const [adm, val] of Object.entries(v[f] || {})) out[ownerOf(adm)][f][adm] = val;
+  parts.forEach((p, i) => Object.assign(p, out[i], {
+    notes: v.notes, editLog: v.editLog || [], idScan: !!v.idScan, combined: v.combined, updatedAt: v.updatedAt, updatedBy: v.updatedBy, deviceId: v.deviceId,
+    trainerId: p.trainerId || v.trainerId, trainerName: p.trainerName || v.trainerName, ...(v.qr ? { qr: clone(v.qr) } : {}) }));
+  return parts;
+}
+/** A register that was marked together with other streams opens with them again (those on this device). */
+async function withPartners(doc) {
+  const others = (doc.combined || []).filter((c) => c !== doc.classCode);
+  if (!others.length) return doc;
+  const docs = [doc];
+  for (const c of others) { try { docs.push(await db.get(doc._id.replace(`:${doc.classCode}:`, `:${c}:`))); } catch { /* not on this device */ } }
+  return docs.length > 1 ? combineDocs(docs) : doc;
+}
+/** Is this register the one on screen (on its own or as one stream of a combined lesson)? */
+const isOnScreen = (id) => !!state.current && (state.current._id === id || !!state.current._parts?.some((p) => p._id === id));
+/** Streams of the chosen class this trainer teaches the chosen unit in (2 or more: they can be combined). */
+function combinableStreams() {
+  const cls = $('#fClass').value, unit = $('#fUnit').value, g = streamGroup(cls);
+  if (!g) return [];
+  const mine = new Set(markableUnits().filter((u) => u.code === unit).map((u) => u.classCode));
+  return g.codes.filter((c) => mine.has(c));
+}
+function renderStreamChoice() {
+  const box = $('#fStreamsBox'); if (!box) return;
+  const cls = $('#fClass').value, list = combinableStreams();
+  if (list.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
+  const saved = (state.settings.combine || {})[`${streamGroup(cls).base}|${$('#fUnit').value}`] || [];
+  box.hidden = false;
+  box.innerHTML = '<span class="kr-label">Streams in this lesson</span>' + list.map((c) => {
+    const self = c === cls, on = self || (saved.includes(cls) && saved.includes(c));
+    return `<label class="kchip" title="${self ? 'The class chosen above' : 'Tick to mark this stream on the same register (a combined lesson)'}"><input type="checkbox" value="${esc(c)}" ${on ? 'checked' : ''} ${self ? 'disabled' : ''}><span>Stream ${esc(streamLetter(c))}</span></label>`;
+  }).join('');
+}
+const chosenStreams = () => {
+  const cls = $('#fClass').value, box = $('#fStreamsBox');
+  return !box || box.hidden ? [cls] : [cls, ...$$('input:checked:not(:disabled)', box).map((i) => i.value)].sort();
+};
+async function rememberStreams() {
+  const g = streamGroup($('#fClass').value); if (!g) return;
+  const combine = { ...(state.settings.combine || {}) }, key = `${g.base}|${$('#fUnit').value}`, codes = chosenStreams();
+  if (codes.length > 1) combine[key] = codes; else delete combine[key];
+  await saveSettings({ combine });
+}
+
 /** A register of a term that has ended stays as it is, unless the HOD or MIS Officer unlocked its class and unit. */
 const endedTerm = (s) => !!(s?.termId && state.meta.term?.id && s.termId !== state.meta.term.id);
-const isUnlocked = (s) => (state.meta.unlocks || []).some((u) => u.termId === s.termId && u.classCode === s.classCode && u.unitCode === s.unitCode);
+const isUnlocked = (s) => (s._parts || [s]).every((p) => (state.meta.unlocks || []).some((u) => u.termId === p.termId && u.classCode === p.classCode && u.unitCode === p.unitCode));
 const termLocked = (s) => endedTerm(s) && !isUnlocked(s);
 function stampMark(s, adm, at = nowISO()) { s.marksAt = { ...(s.marksAt || {}), [adm]: at }; }
 
@@ -600,7 +772,14 @@ function renderRegister() {
   const s = state.current;
   if (!s) { $('#register').hidden = true; return; }
   $('#register').hidden = false;
-  $('#regTitle').textContent = s.classCode;
+  const g = s._parts && streamGroup(s._parts[0].classCode);
+  $('#regTitle').textContent = s._parts ? (g ? `${g.base} · streams ${s._parts.map((p) => streamLetter(p.classCode)).join(' + ')}` : s.classCode) : s.classCode;
+  // On a combined lesson each student shows their stream.
+  const streamTag = s._parts ? (() => {
+    const of = new Map();
+    for (const p of s._parts) for (const t of rosterFor(p.classCode)) of.set(lower(t.admNo), streamLetter(p.classCode) || p.classCode);
+    return (adm) => (of.has(lower(adm)) ? ` <span class="stag" title="Stream">${esc(of.get(lower(adm)))}</span>` : '');
+  })() : () => '';
   const wk = s.week ? `Week ${s.week} ` : '';
   const day = fmtDate(s.date).replace(/, (?=[0-9]{4}$)/, ' ');
   $('#regSub').textContent = `${s.unitName} — ${wk}(${day})${termLocked(s) ? ' · term ended, locked' : isLocked(s) ? ' · locked' : ''}`;
@@ -619,7 +798,7 @@ function renderRegister() {
     const st = s.marks?.[t.admNo] || '';
     return `<li class="trow${t.unlisted ? ' unlisted' : ''}" data-adm="${esc(t.admNo)}">
       <span class="sn">${t.sn}</span>
-      <div class="tinfo"><span class="tname">${esc(t.name)}${qrTag(s, t.admNo)}${t.pending ? ' <span class="ptag" title="Waiting for the MIS Officer to approve">Pending</span>' : ''}</span><span class="tadm">${esc(t.admNo)}</span></div>
+      <div class="tinfo"><span class="tname">${esc(t.name)}${streamTag(t.admNo)}${qrTag(s, t.admNo)}${t.pending ? ' <span class="ptag" title="Waiting for the MIS Officer to approve">Pending</span>' : ''}</span><span class="tadm">${esc(t.admNo)}</span></div>
       <div class="seg" role="group" aria-label="Status for ${esc(t.name)}">
         ${Object.keys(STATUSES).map((k) => `<button type="button" data-s="${k}" class="${st === k ? 'on' : ''}" title="${STATUSES[k]}" aria-pressed="${st === k}">${k}</button>`).join('')}
       </div></li>`;
@@ -713,24 +892,28 @@ async function doSave() {
   s.updatedBy = trainerLabel();
   s.deviceId = state.deviceId;
   if (!s.trainerId) { s.trainerName = trainerLabel(); s.trainerId = me()?.code || ''; }
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const r = await db.put(clone(s));
-      s._rev = r.rev;
-      if (state.current === s && state.editSeq !== seq) return; // newer edits: the pending timer saves them
-      state.dirty = false;
-      setSaveState('Saved on this device', 'ok');
-      refreshPending();
-      scheduleAutoSync();
-      if (!shownInGrid.has(s)) { shownInGrid.add(s); renderTimetable(); } // a new register appears on the timetable
-      return;
-    } catch (e) {
-      if (e.status === 409) { const latest = await db.get(s._id); s._rev = latest._rev; continue; }
-      setSaveState('Not saved: ' + e.message, 'err');
-      toast('Could not save: ' + e.message, 'err');
-      return;
+  // A combined lesson is saved as each stream's own register.
+  for (const d of s._parts ? splitDoc(s) : [s]) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await db.put(clone(d));
+        d._rev = r.rev;
+        break;
+      } catch (e) {
+        if (e.status === 409 && attempt < 3) { const latest = await db.get(d._id); d._rev = latest._rev; continue; }
+        setSaveState('Not saved: ' + e.message, 'err');
+        toast('Could not save: ' + e.message, 'err');
+        return;
+      }
     }
   }
+  if (s._parts) s._rev = s._parts[0]._rev;
+  if (state.current === s && state.editSeq !== seq) return; // newer edits: the pending timer saves them
+  state.dirty = false;
+  setSaveState('Saved on this device', 'ok');
+  refreshPending();
+  scheduleAutoSync();
+  if (!shownInGrid.has(s)) { shownInGrid.add(s); renderTimetable(); } // a new register appears on the timetable
 }
 
 async function closeRegister() {
@@ -744,6 +927,9 @@ function openAddStudent() {
   if (!state.current) { toast('Open a register first', 'err'); return; }
   $('#addStudentForm').reset();
   $('#asMsg').textContent = '';
+  const parts = state.current._parts;
+  $('#asStreamBox').hidden = !parts;
+  $('#asStream').innerHTML = (parts || []).map((p) => `<option value="${esc(p.classCode)}">Stream ${esc(streamLetter(p.classCode) || p.classCode)} (${esc(p.classCode)})</option>`).join('');
   $('#addStudentDialog').showModal();
   setTimeout(() => $('#asAdm').focus(), 50);
 }
@@ -755,12 +941,14 @@ async function saveAddStudent(e) {
   if (!Imports.isAdm(adm)) { msg.textContent = 'Use the admission number as written on the class list, for example L6CS/25S/305999.'; return; }
   if (name.length < 3) { msg.textContent = 'Enter the student\'s full name.'; return; }
   if (rosterForCurrent().some((t) => lower(t.admNo) === lower(adm) && !t.unlisted)) { msg.textContent = `${adm} is already on this class list.`; return; }
-  const elsewhere = state.trainees.find((t) => lower(t.admNo) === lower(adm) && t.classCode !== s.classCode);
+  // On a combined lesson the student is added to the stream chosen.
+  const classCode = s._parts ? $('#asStream').value : s.classCode;
+  const elsewhere = state.trainees.find((t) => lower(t.admNo) === lower(adm) && !classParts(s.classCode).includes(t.classCode));
   if (!(await ensureEditable())) return;
-  const id = `addreq:${s.classCode}|${adm}`;
+  const id = `addreq:${classCode}|${adm}`;
   let doc;
   try { doc = await db.get(id); } catch { doc = { _id: id }; }
-  Object.assign(doc, { type: 'addreq', admNo: adm, name, classCode: s.classCode, reason: $('#asReason').value, addedAt: nowISO(),
+  Object.assign(doc, { type: 'addreq', admNo: adm, name, classCode, reason: $('#asReason').value, addedAt: nowISO(),
     addedBy: me()?.code || '', sentAt: '', done: false, note: elsewhere ? `On the list of ${elsewhere.classCode}` : '' });
   await db.put(doc);
   state.addreqs = await byPrefix('addreq:');
@@ -873,13 +1061,18 @@ async function openSessionById(id) {
   if (![...$('#fWeek').options].some((o) => o.value === monday)) $('#fWeek').insertAdjacentHTML('beforeend', `<option value="${monday}">Week of ${esc(fmtShort(monday))}</option>`);
   $('#fWeek').value = monday;
   state.pick = null; renderKind();
-  setCurrent(doc);
+  setCurrent(await withPartners(doc));
 }
 
 /* ---------------- Reports: the term register ---------------- */
 function renderReportUnitSelect() {
-  const opts = unitsFor($('#rClass').value, reportUnitList()).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
+  const g = reportGroup(), seen = new Set();
+  // For a class with streams: every unit this person may see in any of its streams.
+  const units = g ? reportUnitList().filter((u) => g.codes.includes(u.classCode) && !seen.has(u.code) && seen.add(u.code)).sort((a, b) => a.code.localeCompare(b.code))
+    : unitsFor($('#rClass').value, reportUnitList());
+  const opts = units.map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
   fillSelect($('#rUnit'), opts, undefined, opts.length ? null : 'No units');
+  renderStreamSelect();
 }
 
 /** Lessons for one class and unit this term: this device's registers, plus the server's copy when online. */
@@ -912,21 +1105,65 @@ async function reportSource(classCode, unitCode) {
 
 async function renderReport() {
   if (state.reportMode === 'marks') return Marks.render();
-  const classCode = $('#rClass').value, unitCode = $('#rUnit').value;
+  const codes = reportCodes(), unitCode = $('#rUnit').value;
   const body = $('#reportBody');
   $('#signoffCard').hidden = true;
-  if (!classCode || !unitCode) {
+  if (!codes.length || !unitCode) {
     state.report = null;
     $('#reportSummary').innerHTML = '<p class="empty">Choose a class and unit to see its term register.</p>';
     body.innerHTML = ''; $('#reportControls').hidden = true; $('#reportLegend').hidden = true; $('#reportSource').textContent = '';
     return;
   }
   const token = (renderReport.seq = (renderReport.seq || 0) + 1);
-  const src = await reportSource(classCode, unitCode);
+  const parts = await Promise.all(codes.map((c) => reportPart(c, unitCode)));
   if (token !== renderReport.seq) return; // a newer choice was made meanwhile
+  // One class, or all streams of a class: each stream's register is built on its own, then the rows are put together.
+  const one = parts.length === 1, p0 = parts[0], g = reportGroup();
+  const r = one ? p0.r : mergeReports(parts);
+  const classCode = one ? p0.classCode : codes.join(', ');
+  renderReportLock(one ? p0.src.server : null, classCode, unitCode);
+  const mis = [...new Set(parts.map((p) => state.classes.find((c) => c.code === p.classCode)?.misClass || ''))];
+  const cls = one ? (state.classes.find((c) => c.code === classCode) || { code: classCode })
+    : { code: g.base, name: g.base, misClass: mis.length === 1 ? mis[0] : '', level: state.classes.find((c) => c.code === codes[0])?.level || '' };
+  state.report = { r, unit: p0.unit, cls, classCode, unitCode, mine: one && p0.mine, signoff: one ? p0.src.server?.signoff || null : null,
+    term: p0.src.server?.term || state.meta.term, parts, streams: one ? null : codes };
+
+  const localCount = parts.reduce((a, p) => a + p.src.localCount, 0), servers = parts.map((p) => p.src.server);
+  $('#reportSource').textContent = (servers.every(Boolean)
+    ? (servers.some((s) => s.cached) ? `From the server as of ${fmtTime(servers.find((s) => s.cached).cached)}` : 'Up to date with the server')
+      + (localCount ? ` · includes this device's ${localCount} register(s)` : '')
+    : localCount ? 'From the registers on this device (connect to include other devices)' : (p0.mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.'))
+    + (one ? '' : ' · Choose one stream to submit or approve its register.');
+  if (!r.list.length) {
+    $('#reportSummary').innerHTML = `<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the register shows up here.</span></div>`;
+    $('#reportControls').hidden = true; $('#reportLegend').hidden = true; $('#signoffCard').hidden = true; $('#catCard').hidden = true;
+    body.innerHTML = '';
+    return;
+  }
+  const helds = parts.map((p) => p.r.lessonsHeld), same = new Set(helds).size === 1;
+  $('#reportSummary').innerHTML = `
+    <div class="stat"><b>${same ? helds[0] : helds.join(' / ')}</b><span>Lessons recorded${same ? '' : ` (${parts.map((p) => p.letter).join(' / ')})`}</span></div>
+    <div class="stat"><b>${r.list.length}</b><span>Trainees${one ? '' : ` in ${parts.length} streams`}</span></div>
+    <div class="stat"><b>${r.avg}%</b><span>Average attendance</span></div>
+    <div class="stat ${r.below ? 'warn' : ''}"><b>${r.below}</b><span>Below ${r.threshold}%</span></div>`;
+  $('#reportControls').hidden = false;
+  $('#chipBelow').textContent = `Below ${r.threshold}% (${r.below})`;
+  const pendingN = r.list.filter((x) => x.pending).length;
+  $('#chipPending').textContent = `Pending (${pendingN})`;
+  $('#chipPending').hidden = !pendingN;
+  $$('.chipbtn').forEach((b) => b.classList.toggle('on', b.dataset.filter === state.reportFilter));
+  $('#legendHours').textContent = `Late counts - ${r.latePct}%, Excused counts - ${r.excusedPct}%`;
+  $('#reportLegend').hidden = false;
+  drawReportBody();
+  if (one) renderSignoff();
+  renderCats(parts.flatMap((p) => (one ? p.src.assessments : p.src.assessments.map((a) => ({ ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} · stream ${p.letter}` })))),
+    parts.flatMap((p) => rosterFor(p.classCode)));
+}
+/** One class's term register for the report. */
+async function reportPart(classCode, unitCode) {
+  const src = await reportSource(classCode, unitCode);
   const unit = src.unit || {};
   const mine = !state.reportTerm && isMyUnit(unit) && (hasRole('TRAINER') || hasRole('HOD'));
-  renderReportLock(src.server, classCode, unitCode);
   const trainer = mine ? { latePct: state.settings.latePct, excusedPct: state.settings.excusedPct }
     : (state.meta.staff?.[unit.trainerCode] || { latePct: 50, excusedPct: 100 });
   const aliases = {};
@@ -939,35 +1176,14 @@ async function renderReport() {
     lessonHours: src.server?.term?.lessonHours || (!state.reportTerm && state.meta.term?.lessonHours) || (unit.hoursPerWeek || 3) / (unit.lessonsPerWeek || 2),
     latePct: trainer.latePct, excusedPct: trainer.excusedPct, threshold,
   });
-  const cls = state.classes.find((c) => c.code === classCode) || { code: classCode };
-  state.report = { r, unit, cls, classCode, unitCode, mine, signoff: src.server?.signoff || null, term: src.server?.term || state.meta.term };
-
-  $('#reportSource').textContent = src.server
-    ? (src.server.cached ? `From the server as of ${fmtTime(src.server.cached)}` : 'Up to date with the server')
-      + (src.localCount ? ` · includes this device's ${src.localCount} register(s)` : '')
-    : src.localCount ? 'From the registers on this device (connect to include other devices)' : (mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.');
-  if (!r.list.length) {
-    $('#reportSummary').innerHTML = `<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the register shows up here.</span></div>`;
-    $('#reportControls').hidden = true; $('#reportLegend').hidden = true; $('#signoffCard').hidden = true; $('#catCard').hidden = true;
-    body.innerHTML = '';
-    return;
-  }
-  $('#reportSummary').innerHTML = `
-    <div class="stat"><b>${r.lessonsHeld}</b><span>Lessons recorded</span></div>
-    <div class="stat"><b>${r.list.length}</b><span>Trainees</span></div>
-    <div class="stat"><b>${r.avg}%</b><span>Average attendance</span></div>
-    <div class="stat ${r.below ? 'warn' : ''}"><b>${r.below}</b><span>Below ${r.threshold}%</span></div>`;
-  $('#reportControls').hidden = false;
-  $('#chipBelow').textContent = `Below ${r.threshold}% (${r.below})`;
-  const pendingN = r.list.filter((x) => x.pending).length;
-  $('#chipPending').textContent = `Pending (${pendingN})`;
-  $('#chipPending').hidden = !pendingN;
-  $$('.chipbtn').forEach((b) => b.classList.toggle('on', b.dataset.filter === state.reportFilter));
-  $('#legendHours').textContent = `Late counts - ${r.latePct}%, Excused counts - ${r.excusedPct}%`;
-  $('#reportLegend').hidden = false;
-  drawReportBody();
-  renderSignoff();
-  renderCats(src.assessments, rosterFor(classCode));
+  return { classCode, letter: streamLetter(classCode) || classCode, src, unit, mine, r };
+}
+/** All streams on one register: every stream's rows, each tagged with its stream. */
+function mergeReports(parts) {
+  const list = parts.flatMap((p) => p.r.list.map((x) => ({ ...x, stream: p.letter })));
+  const withPct = list.filter((x) => x.pct !== null);
+  return { ...parts[0].r, list, overflow: parts.flatMap((p) => p.r.overflow), lessonsHeld: Math.max(...parts.map((p) => p.r.lessonsHeld)),
+    avg: withPct.length ? Math.round(withPct.reduce((a, x) => a + x.pct, 0) / withPct.length) : 0, below: list.filter((x) => x.below).length };
 }
 
 /** An earlier term's register is read only; the HOD and MIS Officer can unlock one class and unit for a week. */
@@ -1034,7 +1250,7 @@ function drawReportBody() {
   }
   $('#reportBody').innerHTML = warn + (list.length ? `<ul class="card rlist">${Tables.slice('report', list).map((x) => `
     <li class="rrow${x.below ? ' below' : ''}">
-      <div class="rinfo"><b>${esc(x.name)}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</b>
+      <div class="rinfo"><b>${esc(x.name)}${x.stream ? ` <span class="stag" title="Stream">${esc(x.stream)}</span>` : ''}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</b>
         <span class="tadm">${esc(x.admNo)}</span>${TermReport.strip(x.cells)}</div>
       <div class="rpct"><b>${x.pct === null ? '–' : x.pct + '%'}</b><span>${x.actual}/${x.possible} h</span></div>
     </li>`).join('')}</ul>${Tables.bar('report', list)}` : '<p class="empty">Nobody matches this filter.</p>');
@@ -1092,14 +1308,16 @@ async function decideSignoff(decision) {
 function registerExportData() {
   const rep = state.report;
   const { r, unit, cls, classCode, unitCode, signoff, term } = rep;
+  // All streams together: one register for the MIS class, with every stream's lecturer.
+  const lecturers = rep.streams ? [...new Set(rep.parts.map((p) => p.unit.trainerName).filter(Boolean))].join(' / ') : '';
   const so = signoff;
   const lect = (rep.mine ? $('#soComment')?.value.trim() : '') || so?.lecturerComment || '';
   const hod = so?.status === 'approved' ? [so.hodComment, `Approved by ${so.hodName}, ${fmtShort(so.decidedAt)}`].filter(Boolean).join(' — ') : (so?.hodComment || '');
   return TermReport.exportData(r, {
-    lecturer: unit.trainerName || (rep.mine ? trainerLabel() : ''), duration: term?.duration || '',
-    classLabel: cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
+    lecturer: lecturers || unit.trainerName || (rep.mine ? trainerLabel() : ''), duration: term?.duration || '',
+    classLabel: rep.streams ? `${cls.misClass ? cls.misClass + ' · ' : ''}${cls.code} streams ${rep.parts.map((p) => p.letter).join(', ')}` : cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
     subject: `${unitCode} - ${unit.name || unitCode}`, misClass: cls.misClass, classCode,
-    sheetName: `${classCode.split(' ').pop()} ${unitCode}`, lecturerComment: lect, hodComment: hod,
+    sheetName: `${cls.code.split(' ').pop()} ${unitCode}`, lecturerComment: lect, hodComment: hod,
   });
 }
 async function exportXlsx() {
@@ -1107,7 +1325,7 @@ async function exportXlsx() {
   try {
     const t = await (await fetch('templates/class-register.xlsx')).arrayBuffer();
     const blob = await Xlsx.registerFile(t, registerExportData());
-    download(`Register_${fileSafe(state.report.classCode)}_${fileSafe(state.report.unitCode)}_${todayISO()}.xlsx`, blob);
+    download(`Register_${fileSafe(state.report.cls.code)}_${fileSafe(state.report.unitCode)}_${todayISO()}.xlsx`, blob);
     toast('Excel register saved', 'ok');
   } catch (e) { toast('Could not make the Excel file: ' + e.message, 'err'); }
 }
@@ -1121,12 +1339,11 @@ function printRegister() {
 }
 
 function printQRCards() {
-  const classCode = $('#rClass').value;
-  const list = activeTraineesFor(classCode);
+  const list = reportCodes().flatMap((c) => activeTraineesFor(c));
   if (!list.length) { toast('No trainees in this class', 'err'); return; }
   $('#printArea').innerHTML = list.map((t) => {
     const qr = qrcode(0, 'M'); qr.addData(t.admNo); qr.make();
-    return `<div class="qr-card">${qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })}<b>${esc(t.name)}</b><small>${esc(t.admNo)}</small><small>${esc(classCode)}</small></div>`;
+    return `<div class="qr-card">${qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })}<b>${esc(t.name)}</b><small>${esc(t.admNo)}</small><small>${esc(t.classCode)}</small></div>`;
   }).join('');
   document.body.classList.add('printing');
   const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
@@ -1217,7 +1434,7 @@ function fromServer(x, local) {
     kind: x.kind || 'lesson', title: x.title || '', periodLabel: x.period || local?.periodLabel || '', termId: x.termId || '', week: x.week || '',
     trainerId: x.trainerId || '', trainerName: x.trainerName || '', deviceId: x.deviceId || local?.deviceId || '',
     marks, names, explicit, marksAt, notes: x.notes || '', createdAt: x.createdAt || '', updatedAt: x.updatedAt || '',
-    editLog: x.editLog || [], viaQr: x.viaQr || {}, ...(x.qr ? { qr: { ...(local?.qr || {}), secret: x.qr.secret, intervals: x.qr.intervals || [] } } : {}) };
+    editLog: x.editLog || [], viaQr: x.viaQr || {}, ...(x.combined?.length > 1 ? { combined: x.combined } : {}), ...(x.qr ? { qr: { ...(local?.qr || {}), secret: x.qr.secret, intervals: x.qr.intervals || [] } } : {}) };
 }
 function mergeDocs(a, b) {
   const newer = String(b.updatedAt || '') >= String(a.updatedAt || '') ? b : a, older = newer === b ? a : b;
@@ -1242,7 +1459,7 @@ const sameRegister = (a, b) => JSON.stringify([Object.entries(a.marks || {}).sor
 /** Brings one register from the server into this device, combined with whatever this device has of it. */
 async function takeServerCopy(x) {
   if (!x?.sessionId) return false;
-  if (state.current?._id === x.sessionId && state.dirty) await saveCurrent();
+  if (isOnScreen(x.sessionId) && state.dirty) await saveCurrent();
   let local = null;
   try { local = await db.get(x.sessionId); } catch (e) { if (e.status !== 404) throw e; }
   const srv = fromServer(x, local);
@@ -1283,7 +1500,7 @@ async function pendingSessions() {
 /** The register whose QR is on screen waits until 2 minutes after its last upload (unless a sync is forced). */
 const qrSentAt = {};
 function heldBack(s) {
-  return $('#lessonQrDialog').open && state.current && s._id === state.current._id && Date.now() - (qrSentAt[s._id] || 0) < QR_UPLOAD_MS;
+  return $('#lessonQrDialog').open && isOnScreen(s._id) && Date.now() - (qrSentAt[s._id] || 0) < QR_UPLOAD_MS;
 }
 async function refreshPending() {
   const pending = await pendingSessions();
@@ -1322,7 +1539,7 @@ function toSheetSession(s) {
     unitCode: s.unitCode, unitName: s.unitName || '', period: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1),
     kind: kindOf(s), title: s.title || '', slots: Number(s.slots) === 2 ? 2 : 1,
     trainerId: s.trainerId || '', trainerName: s.trainerName || '', deviceId: s.deviceId || '',
-    termId: s.termId || '', week: s.week || '',
+    termId: s.termId || '', week: s.week || '', ...(s.combined?.length > 1 ? { combined: s.combined } : {}),
     notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
     edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E }, editLog: s.editLog || [], viaQr: s.viaQr || {},
     marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
@@ -1542,7 +1759,7 @@ async function openLessonQR() {
   // Upload straight away, so the server can confirm students' scans from the first second.
   saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false, force: true }); });
   renderQrLive();
-  $('#lessonQrTitle').textContent = `${s.classCode} · ${s.unitCode} — ${sessionLabel(s)}`;
+  $('#lessonQrTitle').textContent = `${$('#regTitle').textContent} · ${s.unitCode} — ${sessionLabel(s)}`;
   $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
   $('#lessonQrDialog').showModal();
   goLive();
@@ -1555,7 +1772,9 @@ async function openLessonQR() {
       const iv = s.qr.intervals[s.qr.intervals.length - 1];
       if (iv[1] !== w) { iv[1] = w; markDirty(); saveCurrent().then(() => scheduleAutoSync()); }
       const t = await qrToken(s.qr.secret, s._id, w);
-      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: (kindOf(s) === 'lesson' ? '' : (s.title || 'CAT') + ' · ') + s.unitName, p: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1), n: s.trainerName, u: serverUrl(), w, t });
+      // A combined lesson: each other stream's code too, so every student checks in to their own stream's register.
+      const xs = s._parts ? Object.fromEntries(await Promise.all(s._parts.slice(1).map(async (p) => [p.classCode, await qrToken(s.qr.secret, p._id, w)]))) : null;
+      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: (kindOf(s) === 'lesson' ? '' : (s.title || 'CAT') + ' · ') + s.unitName, p: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1), n: s.trainerName, u: serverUrl(), w, t, ...(xs ? { x: xs } : {}) });
       const box = $('#lessonQrCode');
       box.innerHTML = qrSvg(url, 6);
       box.dataset.url = url;
@@ -1647,7 +1866,7 @@ async function pullCheckins() {
   for (const stored of sessions) {
     const list = res.checkins?.[stored._id] || [];
     if (!list.length) continue;
-    const open = state.current && state.current._id === stored._id;
+    const open = isOnScreen(stored._id);   // on screen on its own, or as one stream of a combined lesson
     const doc = open ? state.current : stored;
     const wasSynced = !open && synced[stored._id] === stored._rev;
     doc.viaQr = doc.viaQr || {};
@@ -1902,13 +2121,14 @@ function wire() {
   // Mark
   $('#sessionForm').addEventListener('submit', openFromForm);
   $('#fClass').addEventListener('change', renderUnitSelect);
-  $('#fUnit').addEventListener('change', () => renderTimetable());
+  $('#fUnit').addEventListener('change', () => { renderStreamChoice(); renderTimetable(); });
+  $('#fStreamsBox').addEventListener('change', rememberStreams);
   $('#fWeek').addEventListener('change', () => renderKind());
   $$('input[name="fKind"]').forEach((r) => r.addEventListener('change', renderKind));
   $('#catCard').addEventListener('click', (e) => { const b = e.target.closest('[data-session]'); if (b) openSessionById(b.dataset.session); });
   $('#timetable').addEventListener('click', async (e) => {
     const open = e.target.closest('[data-open]');
-    if (open) { if (state.dirty) await saveCurrent(); setCurrent(await db.get(open.dataset.open)); return; }
+    if (open) { if (state.dirty) await saveCurrent(); setCurrent(await withPartners(await db.get(open.dataset.open))); return; }
     const cell = e.target.closest('.tt-cell[data-slot]');
     if (cell && !cell.disabled) pickSlot(cell.dataset.date, Number(cell.dataset.slot));
   });
@@ -1949,8 +2169,9 @@ function wire() {
   Tables.on('report', () => drawReportBody());
   $('#rTerm').addEventListener('change', (e) => chooseReportTerm(e.target.value));
   $('#reportLock').addEventListener('click', (e) => { const b = e.target.closest('[data-lock]'); if (b) toggleReportLock(b.dataset.lock); });
-  $('#rClass').addEventListener('change', () => { Tables.reset('report'); renderReportUnitSelect(); renderReport(); });
-  $('#rUnit').addEventListener('change', () => { Tables.reset('report'); renderReport(); });
+  $('#rClass').addEventListener('change', () => { delete $('#rStream').dataset.picked; Tables.reset('report'); renderReportUnitSelect(); renderReport(); });
+  $('#rUnit').addEventListener('change', () => { Tables.reset('report'); renderStreamSelect(); renderReport(); });
+  $('#rStream').addEventListener('change', () => { $('#rStream').dataset.picked = '1'; Tables.reset('report'); renderReport(); });
   $('#rThreshold').addEventListener('change', async () => { await saveSettings({ threshold: Number($('#rThreshold').value) || 75 }); renderReport(); });
   $('#rSort').addEventListener('change', (e) => { const col = { list: 'adm', name: 'name', pct: 'pct' }[e.target.value]; if (col) Tables.setSort('report', col, 1); drawReportBody(); });
   $$('.chipbtn').forEach((b) => b.addEventListener('click', () => { Tables.reset('report'); state.reportFilter = b.dataset.filter; $$('.chipbtn').forEach((x) => x.classList.toggle('on', x === b)); drawReportBody(); }));

@@ -159,12 +159,19 @@ Open **Att Register(s)**.
    - Days that have not come yet cannot be chosen.
 6. Tap **Open register**.
 
+**Streams taught together (a combined lesson).** If you teach the same unit to more than one stream of a class (for example *ICT L6CS-26S-A* and *-B*), a row **Streams in this lesson** appears under the class and unit. The stream you chose is always ticked; tick the others you are teaching in the same slot, then choose the slot and tap **Open register**.
+- One register opens with every ticked stream's students, each with a small stream letter (**A**, **B**) next to their name. Mark it as usual.
+- Each stream still keeps **its own register**: every student is saved on their own stream's register, and reports, HOD approval and the department overview stay per stream.
+- The streams you tick are remembered for that class and unit on this device. Untick them for a lesson taught to one stream only.
+- Opening that slot again from either stream opens the combined register.
+- **Add student** asks which stream the student belongs to.
+- If one of the streams already has a register in that slot, or already has 3 lessons that week, the app tells you which stream; untick it or choose another slot.
 
 <p align="center">
 <img src="images/mark-timetable.png" width="280" alt="Choosing a lesson on the weekly timetable">
 </p>
 
-<p align="center"><em>Two lessons already marked; a free slot chosen, ready to open.</em></p>
+<p align="center"><em>Two lessons already marked; stream B ticked for a combined lesson; a free slot chosen, ready to open.</em></p>
 
 **Rules the timetable follows**
 
@@ -230,7 +237,7 @@ You can sign in on several devices, for example a phone and a laptop.
 
 Neither you nor the students need internet during the lesson. The server checks every check-in against your record of which codes were shown and when; a forged, old or other-lesson code is refused, even if it arrives months later.
 
-A student from another class is refused on their own device. In a combined lesson (two classes on one loading row), students of both classes can check in.
+A student from another class is refused on their own device. In a combined lesson (two classes on one loading row, or streams ticked together), students of every class or stream in it can check in, and each check-in goes to the student's own stream's register.
 
 ### 4.2 Scan students' QR IDs
 
@@ -251,6 +258,11 @@ Open **Report(s)** and choose **Attendance** at the top.
 
 - **Term**: the current term is chosen. Earlier terms can be chosen to look back (this needs internet).
 - **Class** and **Unit**: trainers see their own units; the HOD and MIS Officer see every class.
+- **Stream**: a class with streams is listed once, for example *ICT L6CS-26S (streams A, B)*, with a **Stream** choice next to the unit.
+  - **All streams** shows every stream's students on one register, each with their stream letter. It is offered to the HOD and MIS Officer, and to a trainer who teaches that unit in every stream. Choose a stream to see just that stream.
+  - A trainer who teaches the unit in only some streams sees their own stream(s); the others show as **locked**, with the name of the trainer who teaches them.
+  - A stream that does not take the unit shows *no (unit)* and cannot be chosen.
+  - Submitting to the HOD, approving and unlocking are done one stream at a time: choose the stream first.
 - **Minimum %**: the attendance below which a student is flagged (75% to start).
 
 ### 5.2 What it shows
@@ -293,7 +305,7 @@ Choosing an earlier term shows that term's register read-only, with a notice tha
 
 ## 6. Marks (continuous assessment)
 
-Open **Report(s) → Marks** and choose the class and unit.
+Open **Report(s) → Marks** and choose the class and unit. Marks are kept for each stream, so for a class with streams choose one **Stream** (not *All streams*).
 
 | Column | Meaning |
 |---|---|

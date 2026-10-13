@@ -465,3 +465,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Changes in 4.19
 
 - **Loading from other departments is now a choice.** When the loading workbook has classes from other departments (shared units an ICT trainer teaches), the MIS Officer sees a tick box for each department in the preview. They are left out unless ticked, so uploading the loading no longer adds other departments' classes by itself.
+
+## Changes in 4.20
+
+- **Combined lessons for streams.** A trainer who teaches a unit to more than one stream can tick **Streams in this lesson** on the Mark tab and mark all of them on one register in one slot. Each student is still saved on their own stream's register, the lesson QR works for every stream, and opening the slot again from either stream opens the combined register.
+- **Reports by stream.** A class with streams is listed once with a **Stream** choice: **All streams** (each student tagged with their stream) or one stream. The HOD and MIS Officer always get all streams; a trainer who teaches the unit in only some streams sees theirs, with the others locked.

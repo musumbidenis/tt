@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.19.0**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
+Describes app **4.20.0**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -498,6 +498,13 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 - The student's device checks the class offline, stores the check-in and sends it when online.
 - The server accepts a check-in when the code matches a window the trainer's device recorded as shown (with one window either side), or, before that register has synced, when the code is genuine for about now. Until then it stays `pending`.
 - Accepted check-ins mark the student Present unless the trainer marked them explicitly. Check-ins older than 150 days are folded into their register (`qrFolded`) to keep the table small.
+
+### 9.3a Streams and combined lessons
+
+- **Streams** are found from the class codes alone: codes that differ only in a final letter A–H after the intake (`ICT L6CS-26S-A` / `-B`, `ICT L6CS-25SA` / `SB` / `SC`), when at least two such classes exist (`streamGroup` in `app.js`).
+- **Combined lesson**: when a trainer's loading has the same unit in two or more streams, the Mark tab offers **Streams in this lesson**. Opening the slot gets or creates one register per ticked stream (the usual ids, the usual clash and 3-a-week checks per stream), each with `combined: [class codes]`. The screen shows a joined copy (`combineDocs`, with `_parts`); every save splits it back (`splitDoc`): each student's marks, names, times and QR check-ins go to the register of the stream whose class list has them, while notes, the edit log and the QR secret go on all. The server sees ordinary per-stream registers, so reports, sign-offs, the overview and Drive need no changes. `combined` travels in `push` and comes back through `mySessions`, so another device reopens the lesson combined too.
+- **Lesson QR for a combined lesson**: all streams' registers share one secret. The QR's `s` and `t` are the first stream's; `x` maps every other stream's class code to its own code (HMAC of that stream's session id). The student app swaps in its own stream's session id and code before saving, so the server's class check (`classFromSession`) passes and the check-in lands on the right register.
+- **Reports**: a class with streams is one entry (`streams:<base>`) with a **Stream** choice. A stream is open to the viewer when the unit is in their report units (all units for the HOD and MIS Officer); otherwise it is locked (taught by someone else) or absent (not in the loading). **All streams** is offered when every stream taking the unit is open and there are at least two: each stream's term register is built on its own (`TermReport.build`) and the rows are put together with a stream letter (`mergeReports`). Sign-off, the end-of-term lock and Marks need one stream. The Excel and print copies of all streams carry the MIS class and every stream's lecturer.
 
 ### 9.4 Terms, weeks and hours
 

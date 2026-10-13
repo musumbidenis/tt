@@ -454,6 +454,10 @@ body.locked { overflow: hidden; }
 /* ---------- small bits ---------- */
 .hint { display: block; font-size: .8125rem; font-weight: 600; color: var(--p); margin-top: .25rem; min-height: 1.2em; }
 .hint.bad { color: var(--a); }
+/* A student's stream (combined lessons, all-streams reports) */
+.stag { display: inline-flex; align-items: center; margin-left: .35rem; font: 700 .6875rem var(--display); padding: .1rem .45rem; border-radius: 4px; border: 1px solid currentColor; color: var(--forest); vertical-align: 2px; }
+.streams-row { align-items: center; }
+.streams-row .kr-label { font: 600 .8125rem var(--display); margin-right: .25rem; }
 .ptag { display: inline-flex; align-items: center; margin-left: .35rem; font: 600 .6875rem var(--display); padding: .1rem .45rem; border-radius: 4px; background: var(--l-soft); color: var(--l); vertical-align: 2px; }
 .warn-text { color: var(--l); font-weight: 600; }
 .tabs .dot { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--crest-red); color: #fff; font: 700 .6875rem/18px var(--display); text-align: center; }

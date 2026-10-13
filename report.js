@@ -100,7 +100,7 @@ const TermReport = (() => {
     const head2 = '<tr>' + Array.from({ length: CELLS }, (_, k) => `<th class="sub${k % 3 === 2 ? ' end' : ''}">${(k % 3) + 1}</th>`).join('') + '</tr>';
     const body = r.list.map((x, i) => `<tr class="${x.below ? 'below' : ''}">
       <td class="sticky n">${x.sn || i + 1}</td><td class="sticky adm">${esc(x.admNo)}</td>
-      <td class="sticky nm">${esc(x.name)}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</td>
+      <td class="sticky nm">${esc(x.name)}${x.stream ? ` <span class="stag" title="Stream">${esc(x.stream)}</span>` : ''}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</td>
       ${x.cells.map((v, k) => `<td class="c ${v}${k % 3 === 2 ? ' end' : ''}">${v}</td>`).join('')}
       <td class="num">${x.possible || ''}</td><td class="num">${x.actual || ''}</td><td class="num pct">${x.pct === null ? '–' : x.pct + '%'}</td></tr>`).join('');
     return `<table class="sheet-table"><thead>${head1}${head2}</thead><tbody>${body || `<tr><td colspan="${CELLS + 6}" class="empty">No trainees.</td></tr>`}</tbody></table>`;

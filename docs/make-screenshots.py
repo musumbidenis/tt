@@ -23,6 +23,10 @@ NAMES = ['Achieng Mary Otieno', 'Barasa Kevin Wekesa', 'Chebet Faith Jeptoo', 'C
          'Odhiambo Brian Otieno', 'Ouma Kevin Omondi', 'Wafula Sam Simiyu', 'Wanjiru Grace Kamau', 'Atieno Sharon Akinyi', 'Jepkemoi Mercy Chepkoech',
          'Kibet Victor Langat', 'Moraa Diana Kerubo', 'Nekesa Linet Nafula', 'Onyango Felix Ochieng', 'Rotich Ian Kiplagat', 'Wambui Ann Muthoni']
 STUDENTS = [{'admNo': f'L6CS/25S/3040{i + 1:02d}', 'name': n} for i, n in enumerate(NAMES)]
+# Stream B of the same class: FOP is taught to both streams together (a combined lesson).
+NAMES_B = ['Adhiambo Rose Owino', 'Biwott Daniel Kibet', 'Chelangat Mercy Ruto', 'Gitau James Mwangi', 'Jeruto Alice Kemboi', 'Kariuki Paul Ndungu',
+           'Lagat Eric Kirui', 'Muthoni Jane Wanjiku', 'Nafula Agnes Wekesa', 'Ochieng Tom Odhiambo', 'Wairimu Cynthia Njeri', 'Yego Kelvin Kiprotich']
+STUDENTS_B = [{'admNo': f'L6CS/25S/3041{i + 1:02d}', 'name': n} for i, n in enumerate(NAMES_B)]
 shots = []
 
 
@@ -84,28 +88,32 @@ def seed():
     post({'action': 'uploadLoading', 'auth': M, 'trainers': [], 'rows': [
         {'classCode': c, 'unitCode': u, 'unitName': n, 'trainerCode': t, 'trainerName': tn, 'lessonsPerWeek': 2, 'hoursPerWeek': 3} for c, u, n, t, tn in rows]})
     post({'action': 'importClassList', 'auth': M, 'misClass': 'CSCL6-25-S-RS', 'streams': ['ICT L6CS-25SA'], 'students': STUDENTS})
+    post({'action': 'importClassList', 'auth': M, 'misClass': 'CSCL6-25-S-RS', 'streams': ['ICT L6CS-25SB'], 'students': STUDENTS_B})
     post({'action': 'setDefaultPin', 'auth': M, 'pin': '2580'})
     T = token('ICT020', '4826')
     # registers: two lessons a week for weeks 1-3, a few students often away
     away = {'L6CS/25S/304013': 5, 'L6CS/25S/304008': 4, 'L6CS/25S/304021': 2}
     sessions, n = [], 0
+    streams = [('ICT L6CS-25SA', STUDENTS), ('ICT L6CS-25SB', STUDENTS_B)]
     for wk in range(3):
         for day, period, slot in ((0, 'L1', 'Lesson 1 · 7.30–9.00'), (2, 'L3', 'Lesson 3 · 10.30–12.00')):
             date = (start + datetime.timedelta(days=wk * 7 + day)).isoformat()
             at = f'{date}T06:30:00.000Z'
-            marks = []
-            for i, s in enumerate(STUDENTS):
-                st = 'Present'
-                if away.get(s['admNo'], 0) > n: st = 'Absent'
-                elif (i + n) % 11 == 0: st = 'Late'
-                elif (i + n) % 17 == 0: st = 'Excused'
-                marks.append({'admNo': s['admNo'], 'name': s['name'], 'status': st, 'explicit': True, 'at': at})
+            for code, roster in streams:                               # both streams marked together: one register each
+                marks = []
+                for i, s in enumerate(roster):
+                    st = 'Present'
+                    if away.get(s['admNo'], 0) > n: st = 'Absent'
+                    elif (i + n) % 11 == 0: st = 'Late'
+                    elif (i + n) % 17 == 0: st = 'Excused'
+                    marks.append({'admNo': s['admNo'], 'name': s['name'], 'status': st, 'explicit': True, 'at': at})
+                counts = {k: sum(1 for m in marks if m['status'] == v) for k, v in (('P', 'Present'), ('A', 'Absent'), ('L', 'Late'), ('E', 'Excused'))}
+                sessions.append({'sessionId': f'session:{date}:{code}:FOP:{period}', 'date': date, 'classCode': code, 'className': code,
+                                 'unitCode': 'FOP', 'unitName': 'Fundamentals of Programming', 'period': slot, 'kind': 'lesson', 'slots': 1, 'title': '',
+                                 'trainerId': 'ICT020', 'trainerName': 'ICT MUSUMBI .D', 'deviceId': 'demo', 'termId': TERM, 'week': wk + 1,
+                                 'combined': [c for c, _ in streams], 'notes': 'Variables, loops and functions', 'createdAt': at, 'updatedAt': at,
+                                 'edits': 0, 'counts': counts, 'marks': marks})
             n += 1
-            counts = {k: sum(1 for m in marks if m['status'] == v) for k, v in (('P', 'Present'), ('A', 'Absent'), ('L', 'Late'), ('E', 'Excused'))}
-            sessions.append({'sessionId': f'session:{date}:ICT L6CS-25SA:FOP:{period}', 'date': date, 'classCode': 'ICT L6CS-25SA', 'className': 'ICT L6CS-25SA',
-                             'unitCode': 'FOP', 'unitName': 'Fundamentals of Programming', 'period': slot, 'kind': 'lesson', 'slots': 1, 'title': '',
-                             'trainerId': 'ICT020', 'trainerName': 'ICT MUSUMBI .D', 'deviceId': 'demo', 'termId': TERM, 'week': wk + 1,
-                             'notes': 'Variables, loops and functions', 'createdAt': at, 'updatedAt': at, 'edits': 0, 'counts': counts, 'marks': marks})
     post({'action': 'push', 'auth': T, 'deviceId': 'demo', 'sessions': sessions})
     post({'action': 'marksPush', 'auth': T, 'classCode': 'ICT L6CS-25SA', 'unitCode': 'FOP', 'rows': [
         {'admNo': s['admNo'], 'cat1': 55 + (i * 7) % 40, 'cat2': 50 + (i * 11) % 45, 'prac1': 60 + (i * 5) % 35, 'updatedAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')}
@@ -174,7 +182,7 @@ def staff(pw, browser, pdf64):
     shot(pg, 'staff-signin.png')
     pg.fill('#siCode', 'ICT020'); pg.fill('#siPin', '4826'); pg.click('#siBtn')
     pg.wait_for_selector('#signin', state='hidden', timeout=20000)
-    pg.wait_for_function("state.units.length > 0 && state.trainees.length >= 24", timeout=30000)
+    pg.wait_for_function("state.units.length > 0 && state.trainees.length >= 36", timeout=30000)
     pg.evaluate('syncSheets({silent: true})'); pg.wait_for_timeout(2500)
     # Mark: last week, with its registers, and a free slot chosen
     pg.select_option('#fClass', 'ICT L6CS-25SA'); pg.select_option('#fUnit', 'FOP')
@@ -182,6 +190,7 @@ def staff(pw, browser, pdf64):
     cur = pg.input_value('#fWeek')
     prev = weeks[max(0, weeks.index(cur) - 1)] if cur in weeks else weeks[0]
     pg.select_option('#fWeek', prev); pg.wait_for_selector('.tt-cell.have', timeout=10000)
+    pg.locator('#fStreamsBox input[value="ICT L6CS-25SB"]').check()
     free_cell = pg.locator('.tt-cell[data-slot="2"]:not([disabled])').first
     free_cell.click()
     shot(pg, 'mark-timetable.png', '#sessionForm')
@@ -200,9 +209,11 @@ def staff(pw, browser, pdf64):
     pg.click('#closeLessonQr'); pg.click('#closeReg')
     # Reports
     pg.click('.tabs button[data-tab=reports]')
-    pg.select_option('#rClass', 'ICT L6CS-25SA'); pg.select_option('#rUnit', 'FOP')
-    pg.wait_for_selector('#reportBody .rrow', timeout=15000)
+    pg.select_option('#rClass', 'streams:ICT L6CS-25S'); pg.select_option('#rUnit', 'FOP')
+    pg.wait_for_selector('#reportBody .rrow .stag', timeout=15000)
+    pg.evaluate("document.querySelector('#toast').className = ''")   # no leftover message over the list
     shot(pg, 'report-list.png')
+    pg.select_option('#rStream', 'ICT L6CS-25SA')
     pg.click('#reportMode [data-rmode=marks]'); pg.wait_for_selector('#marksCard input.mk', timeout=15000)
     shot(pg, 'marks.png')
     pg.click('#reportMode [data-rmode=attendance]')
@@ -250,7 +261,7 @@ def desktop(browser):
     pg.wait_for_selector('#signin', state='hidden', timeout=30000)
     pg.wait_for_function("state.units.length > 0", timeout=30000)
     pg.click('.tabs button[data-tab=reports]')
-    pg.select_option('#rClass', 'ICT L6CS-25SA'); pg.select_option('#rUnit', 'FOP')
+    pg.select_option('#rClass', 'streams:ICT L6CS-25S'); pg.select_option('#rUnit', 'FOP')
     pg.wait_for_selector('#reportBody .rrow, #reportBody .sheet-table', timeout=15000)
     if pg.locator('#reportBody .sheet-table').count() == 0: pg.click('#viewToggle')
     pg.wait_for_selector('#reportBody .sheet-table', timeout=10000)

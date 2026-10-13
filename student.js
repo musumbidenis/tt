@@ -198,6 +198,9 @@ async function handleLesson(l) {
     await openSetup();
     return;
   }
+  // A combined lesson (streams marked together) carries a code for each stream: use this student's own.
+  const first = String(l.s).split(':')[2] || '';
+  if (l.x && l.x[p.classCode] && p.classCode !== first) l = { ...l, s: String(l.s).replace(`:${first}:`, `:${p.classCode}:`), t: l.x[p.classCode], c: p.classCode };
   if (!classParts(l.c).includes(p.classCode)) {
     showResult('err', 'Not your class', `This code is for ${l.c}. You are registered in ${p.classCode}.`);
     return;
