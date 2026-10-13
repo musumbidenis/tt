@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.24.0';
+const APP_VERSION = '4.24.1';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -750,7 +750,7 @@ function renderStreamChoice() {
   const cls = $('#fClass').value, { all, joint } = lessonPartners();
   if (all.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
   const saved = (state.settings.combine || {})[comboKey(all)];
-  const streamsOnly = !joint.length && !!streamGroup(cls) && all.every((c) => streamGroup(cls).codes.includes(c));
+  const streamsOnly = !!streamGroup(cls) && all.every((c) => streamGroup(cls).codes.includes(c));   // every class here is a stream of one class
   box.hidden = false;
   box.innerHTML = `<span class="kr-label">${streamsOnly ? 'Streams' : 'Classes'} in this lesson</span>` + all.map((c) => {
     // Saved: the classes marked together last time; this one goes with the chosen class only if both were in it.

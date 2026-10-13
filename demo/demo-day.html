@@ -42,10 +42,16 @@
   ul.check { list-style: none; padding: 0; margin: .3rem 0 0; }
   ul.check li::before { content: "☐ "; color: var(--p); font-weight: 700; }
   @media (max-width: 720px) { .cols, .links { grid-template-columns: 1fr; } h1 { font-size: 1.5rem; } }
+  @page { size: A4; margin: 11mm 12mm; }
   @media print {
-    body { background: #fff; font-size: 11.5pt; }
+    body { background: #fff; font-size: 9.5pt; line-height: 1.4; }
     .wrap { width: 100%; padding: 0; }
-    .card, table { break-inside: avoid; }
+    h1 { font-size: 16pt; } h2 { font-size: 12pt; margin-top: .9rem; }
+    header { margin-bottom: .4rem; } header img { width: 40px; height: 40px; }
+    .card { padding: .5rem .8rem; margin: .4rem 0; break-inside: avoid; }
+    .cols, .links { grid-template-columns: 1fr 1fr; gap: .5rem; }
+    th, td { padding: .16rem .45rem; }
+    li { margin: .18rem 0; }
     .pagebreak { break-before: page; }
     a { color: inherit; text-decoration: none; }
   }
@@ -108,7 +114,6 @@
     </ul>
   </div>
 
-  <div class="pagebreak"></div>
   <h2>One round, step by step</h2>
   <p class="muted"><span class="sync">Together</span> marks a step where the two of you work at the same moment.</p>
   <div class="cols">
@@ -121,10 +126,11 @@
         <li><span class="sync">Together</span> Tap <b>Show lesson QR</b>. Hold it up for your partner to scan. Their name turns present.</li>
         <li><span class="sync">Together</span> Close the QR. Tap <b>Scan ID cards</b>: everyone turns absent, then scan your partner's <b>Student QR ID</b>. They turn present again.</li>
         <li>Mark two other students <b>Late</b> and <b>Excused</b>. Tap <b>Save</b>.</li>
+        <li>L5 and L6 pairs (two streams): tap <b>Add student</b>, choose the reason <b>In the wrong stream</b>, and pick a student from the other stream. They are marked at once and show as <b>Pending</b> until the HOD or MIS Officer moves them.</li>
         <li><b>Report(s) → Marks</b>: enter CAT 1 marks for a few students.</li>
         <li><span class="sync">Together</span> <b>POE</b> tab: open your partner's CAT 1. <b>Return to student</b> with a note, for example "Page 2 is missing".</li>
         <li><span class="sync">Together</span> When version 2 arrives, open it and <b>Approve</b>.</li>
-        <li><b>Report(s)</b>: see the term register; <b>Export Excel</b>, then <b>Submit to HOD</b>.</li>
+        <li><b>Report(s)</b>: an L5 or L6 class shows as <i>ICT L5CS-26S (streams A, B)</i>; the <b>Stream</b> choice is on your stream and the other is <b>locked</b>, with its trainer's name. See the term register; <b>Export Excel</b>, then <b>Submit to HOD</b>.</li>
         <li>Optional: switch off Wi-Fi and data, open another slot and mark it. Switch back on: it is sent by itself.</li>
       </ol>
     </div>
@@ -157,7 +163,10 @@
   <h2>Facilitator, on the projector (10 minutes)</h2>
   <div class="card">
     <ol>
-      <li>Sign in as <span class="tag">DEMO01</span> (HOD): <b>Manage → Registers to approve</b>: open a submitted register and approve or return it. <b>Department overview</b>: who is behind. <b>Absences</b>.</li>
+      <li>Sign in as <span class="tag">DEMO01</span> (HOD): <b>Manage → Registers to approve</b>: open a submitted register and approve or return it. <b>Department overview</b>: who is behind (PRJ shows nothing yet: you mark it next). <b>Absences</b>.</li>
+      <li><b>Att Register(s)</b> → ICT L5CS-26SA · <b>PRJ Project</b>: <b>Streams in this lesson</b> already has stream B ticked, because the loading joins both streams for this unit. Open today's slot: one register for both streams, each student tagged A or B. <b>Show lesson QR</b>: students of either stream can check in.</li>
+      <li><b>Report(s)</b> → an L6 class and FOP: <b>All streams</b> puts both streams on one register; switch the <b>Stream</b> choice to one stream. The same in <b>Marks</b>.</li>
+      <li><b>Manage → Students added by trainers</b>: tap <b>Move here</b> for a student a pair added from the wrong stream (the HOD can move students between streams).</li>
       <li><b>Manage → Student phones</b>: reset a student's phone. <b>Manage → Backup</b>: the storage gauge and <b>Back up now</b>.</li>
       <li>Sign in as <span class="tag">MIS</span>: the term, the trainer loading, class lists, staff and PINs, and the Google Drive card.</li>
     </ol>

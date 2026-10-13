@@ -449,7 +449,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Changes in 4.17.2
 
 - **Landing page** at `welcome.html`: what The ARK does, who it is for, screens, and links to the demo.
-- **Demo day handout** at `demo/demo-day.html`: pairs (one partner the trainer, the other the student, then swap), the steps for each role, the facilitator's part and checklist. Prints on two pages.
+- **Demo day handout** at `demo/demo-day.html`: pairs (one partner the trainer, the other the student, then swap), the steps for each role, the facilitator's part and checklist.
 - **Scan ID cards** no longer turns students who already checked in with the lesson QR absent.
 - **Bigger demo**: 26 demo trainers (DEMO01 the HOD; DEMO02 to DEMO26 one unit each), 5 classes of 20 students with 5 units each, so 50 people can run the paired demo as 25 pairs. The handout lists all 25.
 
@@ -493,3 +493,9 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Landing page refresh
 
 - **welcome.html** has a light, static hero (one flat tint, no pictures) with two-tone headlines and black badges to open the staff and student apps; large split cards pairing each feature with its screen on a coloured panel; captioned screen cards; a dark band on safety; a "works wherever you teach" pair; common questions; a split closing call to action; and a column footer.
+
+## Demo handout for the stream features (4.24.1)
+
+- **demo-day handout** covers the new features: pairs add a student from the wrong stream and see their stream (others locked) in Report(s); the facilitator shows all streams in a report and in Marks, moves the added student, and marks a combined lesson.
+- **Demo data**: DEMO01 (HOD) now teaches PRJ (Project) to both L5 streams together, written in the loading as *ICT L5CS-26SA, ICT L5CS-26SB*, so a combined lesson can be shown. A `reset` adds it.
+- The Mark tab says **Streams in this lesson** whenever every class in the lesson is a stream of one class, even when the loading joined them.

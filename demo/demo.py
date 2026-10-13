@@ -9,7 +9,7 @@ environment (DEMO_PIN, DEMO_MIS_PIN); they are never written to the repository.
 
 What goes in (all invented): a term that started three weeks ago, 5 classes of 20 students with 5 units each,
 26 trainers and the MIS Officer (MIS), three weeks of registers, some CAT 1 marks, a register waiting for the HOD's
-approval and a student waiting for the MIS Officer. DEMO01 is the HOD (no units: the facilitator's account);
+approval and a student waiting for the MIS Officer. DEMO01 is the HOD (the facilitator's account; its one unit, PRJ, is taught to both L5 streams together);
 DEMO02 to DEMO26 teach one unit each, so 50 people can run a paired demo as 25 pairs (demo/demo-day.html).
 This week is left empty, so each pair can mark its own lessons on the day (a unit takes up to 3 a week).
 """
@@ -43,6 +43,7 @@ for _code, _mis, _prefix, _name in _CLASSES:
         _units.append((_u, _n, TRAINERS[_t][0])); _t += 1
     CLASSES.append((_code, _mis, _prefix, _units)); CLASS_NAMES[_code] = _name
 PER_CLASS = 20
+JOINT = ('ICT L5CS-26SA, ICT L5CS-26SB', 'PRJ', 'Project')   # DEMO01 teaches it to both L5 streams together
 BEHIND = ('ICT L6CS-26SB', 'CYB')        # one unit a week behind on marking, for the HOD's overview
 FIRST = ['Achieng', 'Barasa', 'Chebet', 'Cheruiyot', 'Gathoni', 'Kamau', 'Kiprono', 'Kosgei', 'Mutua', 'Mwende', 'Njeri', 'Nyambura', 'Odhiambo', 'Ouma', 'Wafula',
          'Wanjiru', 'Atieno', 'Jepkemoi', 'Kibet', 'Moraa', 'Nekesa', 'Onyango', 'Rotich', 'Wambui', 'Langat', 'Owino', 'Muthoni', 'Kerubo', 'Simiyu', 'Kendi',
@@ -194,6 +195,8 @@ def fill(api, pin, mis_pin):
     names = dict(TRAINERS)
     rows = [{'classCode': c, 'unitCode': u, 'unitName': n, 'trainerCode': t, 'trainerName': names[t], 'lessonsPerWeek': 2, 'hoursPerWeek': 3}
             for c, _, _, units in CLASSES for u, n, t in units]
+    # The facilitator's own unit: both L5 streams learn it together (a comma in the loading), to show a combined lesson.
+    rows.append({'classCode': JOINT[0], 'unitCode': JOINT[1], 'unitName': JOINT[2], 'trainerCode': HOD, 'trainerName': names[HOD], 'lessonsPerWeek': 2, 'hoursPerWeek': 3})
     api.call({'action': 'uploadLoading', 'auth': M, 'rows': rows,
               'trainers': [{'code': c, 'name': n, 'responsibility': 'HOD' if c == HOD else ''} for c, n in TRAINERS]})
     for i, (code, mis, _, _) in enumerate(CLASSES):

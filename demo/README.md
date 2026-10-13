@@ -13,8 +13,8 @@ Both show an orange **DEMO** tag beside the app name.
 |---|---|
 | Term | *Demo term*, started three weeks before the last reset (so it is week 4) |
 | Classes | ICT L4CS-26SA, ICT L5CS-26SA and SB, ICT L6CS-26SA and SB: 5 classes of 20 students (invented names) |
-| Units | 5 per class: CE, DDL, OHS, COM, ENT (L4); DBM, WD, OS, CNW, MAT (L5); FOP, NET, SAD, OOP, CYB (L6) |
-| Trainers | DEMO01 to DEMO26, all with the same trainer PIN. **DEMO01 is the HOD** (no units: the facilitator's account). DEMO02 to DEMO26 teach one unit each: enough for 50 people as 25 pairs. |
+| Units | 5 per class: CE, DDL, OHS, COM, ENT (L4); DBM, WD, OS, CNW, MAT (L5); FOP, NET, SAD, OOP, CYB (L6). Also PRJ (Project), taught to L5 streams A and B together: in the loading as *ICT L5CS-26SA, ICT L5CS-26SB* |
+| Trainers | DEMO01 to DEMO26, all with the same trainer PIN. **DEMO01 is the HOD** (the facilitator's account), teaching only PRJ, to show a combined lesson. DEMO02 to DEMO26 teach one unit each: enough for 50 people as 25 pairs. |
 | MIS Officer | Staff code `MIS`, with its own PIN |
 | Registers | Two lessons a week for weeks 1 to 3 (L6 stream B's CYB only weeks 1 and 2, so the HOD's overview shows it behind). This week is left empty for the demo. |
 | Also | CAT 1 and PRAC 1 marks for the first unit of each class, an L5 stream A DBM register waiting for the HOD's approval, a student waiting for the MIS Officer |
@@ -23,7 +23,7 @@ Students set up a phone by choosing a class and any name on its list. The HOD or
 
 ## Running a paired demo
 
-`demo/demo-day.html` (https://ark26.pages.dev/demo/demo-day) is a printable handout: up to 25 pairs on DEMO02 to DEMO26 (each pair its own unit), one partner the trainer and the other the student, then they swap; the facilitator shows the HOD (DEMO01) and MIS parts on the projector. Hold it on a weekday, after a `reset`.
+`demo/demo-day.html` (https://ark26.pages.dev/demo/demo-day) is a printable handout: up to 25 pairs on DEMO02 to DEMO26 (each pair its own unit), one partner the trainer and the other the student, then they swap; the facilitator shows the HOD (DEMO01) and MIS parts on the projector: approvals, all streams in a report, a combined lesson (PRJ) and moving a student a pair found in the wrong stream. Hold it on a weekday, after a `reset`.
 
 ## Commands
 
