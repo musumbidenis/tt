@@ -470,3 +470,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **Combined lessons for streams.** A trainer who teaches a unit to more than one stream can tick **Streams in this lesson** on the Mark tab and mark all of them on one register in one slot. Each student is still saved on their own stream's register, the lesson QR works for every stream, and opening the slot again from either stream opens the combined register.
 - **Reports by stream.** A class with streams is listed once with a **Stream** choice: **All streams** (each student tagged with their stream) or one stream. The HOD and MIS Officer always get all streams; a trainer who teaches the unit in only some streams sees theirs, with the others locked.
+
+## Changes in 4.21
+
+- **Marks by stream, too.** Report(s) → Marks has the same **Stream** choice as Attendance: all streams in one table (each student with their stream letter) or one stream. A mark typed for a student is saved with that student's own stream; only the streams you teach can be changed. The Excel marksheet covers the streams on screen.
+- **Your streams together.** A trainer who teaches a unit in some streams but not all (2 of 3, say) gets **Streams A + C (yours)**, showing those streams together in Attendance and Marks; the other stream stays locked.

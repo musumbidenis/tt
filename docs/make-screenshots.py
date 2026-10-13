@@ -213,7 +213,6 @@ def staff(pw, browser, pdf64):
     pg.wait_for_selector('#reportBody .rrow .stag', timeout=15000)
     pg.evaluate("document.querySelector('#toast').className = ''")   # no leftover message over the list
     shot(pg, 'report-list.png')
-    pg.select_option('#rStream', 'ICT L6CS-25SA')
     pg.click('#reportMode [data-rmode=marks]'); pg.wait_for_selector('#marksCard input.mk', timeout=15000)
     shot(pg, 'marks.png')
     pg.click('#reportMode [data-rmode=attendance]')

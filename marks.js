@@ -8,7 +8,7 @@
 const Marks = (() => {
   const COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
   const HEAD = { cat1: 'CAT 1', cat2: 'CAT 2', cat3: 'CAT 3', prac1: 'PRAC 1', prac2: 'PRAC 2', prac3: 'PRAC 3' };
-  const ms = { q: '', roster: [], edit: false, drawnKey: '', key: '', doc: null, saving: Promise.resolve(), sendTimer: null, sending: false, seq: 0 };
+  const ms = { q: '', roster: [], drawnKey: '', key: '', unit: '', sheets: [], saving: Promise.resolve(), sendTimer: null, sending: false, seq: 0 };
   // One marksheet per class and unit for the unit's whole life, whichever terms and trainers it spans.
   const LIFE = 'unit';
   const docId = (cls, unit) => `marks:${LIFE}:${cls}|${unit}`;
@@ -90,52 +90,68 @@ const Marks = (() => {
   }
   const pendingFor = (d) => Object.keys(d?.dirty || {}).length;
 
-  /* ---------- the marks table ---------- */
+  /* ---------- the marks table ----------
+   * Marks are kept per class and unit. With streams, the chosen streams' marksheets show as one table:
+   * each student's marks are saved in, and sent to, their own stream's marksheet. */
+  const sheetOf = (cls) => ms.sheets.find((s) => s.cls === cls) || ms.sheets[0];
+  const rowFor = (t) => sheetOf(t.cls).doc.rows[lower(t.admNo)] || {};
+  const pendingAll = () => (ms.sheets || []).reduce((n, s) => n + pendingFor(s.doc), 0);
   async function render() {
-    const cls = reportClassCode(), unit = $('#rUnit').value, box = $('#marksCard');
-    if (!cls && reportGroup() && unit) { box.innerHTML = '<p class="empty">Marks are kept for each stream: choose one stream above.</p>'; return; }
-    if (!cls || !unit) { box.innerHTML = '<p class="empty">Choose a class and unit to enter its marks.</p>'; return; }
+    const codes = reportCodes(), unit = $('#rUnit').value, box = $('#marksCard');
+    if (!codes.length || !unit) { box.innerHTML = '<p class="empty">Choose a class and unit to enter its marks.</p>'; return; }
     const seq = ++ms.seq;
-    ms.key = cls + '|' + unit;
-    ms.doc = await load(cls, unit);
-    draw(cls, unit);
+    ms.unit = unit; ms.key = codes.join(',') + '|' + unit;
+    ms.sheets = await Promise.all(codes.map(async (cls) => ({ cls, doc: await load(cls, unit) })));
+    if (seq !== ms.seq) return;
+    draw();
     if (navigator.onLine && state.auth) {
-      let fresh = null;
-      try { await ms.saving; fresh = await pull(cls, unit); } catch (e) { ms.pullError = e.message; }
-      if (seq !== ms.seq || !fresh) return;
-      // Anything typed while the server's copy was on its way stays as typed.
-      const before = ms.doc;
-      for (const k of Object.keys(before.dirty)) {
-        if (!fresh.rows[k] || String(before.rows[k]?.updatedAt) >= String(fresh.rows[k].updatedAt)) { fresh.rows[k] = before.rows[k]; fresh.dirty[k] = true; }
-      }
-      ms.doc = fresh;
-      if ($('#marksCard').contains(document.activeElement)) refreshValues(); else draw(cls, unit);
-      if (pendingFor(ms.doc)) scheduleSend();
+      await ms.saving;
+      const fresh = await Promise.all(ms.sheets.map((s) => pull(s.cls, unit).catch((e) => { ms.pullError = e.message; return null; })));
+      if (seq !== ms.seq) return;
+      ms.sheets.forEach((s, i) => {
+        const f = fresh[i]; if (!f) return;
+        // Anything typed while the server's copy was on its way stays as typed.
+        for (const k of Object.keys(s.doc.dirty)) {
+          if (!f.rows[k] || String(s.doc.rows[k]?.updatedAt) >= String(f.rows[k].updatedAt)) { f.rows[k] = s.doc.rows[k]; f.dirty[k] = true; }
+        }
+        s.doc = f;
+      });
+      if ($('#marksCard').contains(document.activeElement)) refreshValues(); else draw();
+      if (pendingAll()) scheduleSend();
     }
   }
-  function draw(cls, unit) {
-    const u = state.units.find((x) => x.classCode === cls && x.code === unit) || { code: unit, name: unit };
-    const edit = canEdit(u), d = ms.doc;
-    const roster = rosterFor(cls).sort((a, b) => String(a.admNo).localeCompare(String(b.admNo)));
-    // Students who have marks but left the list stay visible so nothing is lost.
-    for (const r of Object.values(d.rows)) if (!roster.some((t) => lower(t.admNo) === lower(r.admNo))) roster.push({ admNo: r.admNo, name: r.admNo, gone: true });
-    if (ms.drawnKey !== cls + '|' + unit) { ms.drawnKey = cls + '|' + unit; ms.q = ''; Tables.reset('marks'); }
-    ms.roster = roster; ms.edit = edit;
+  function draw() {
+    const unit = ms.unit, many = ms.sheets.length > 1;
+    for (const s of ms.sheets) { s.u = state.units.find((x) => x.classCode === s.cls && x.code === unit) || { code: unit, name: unit }; s.edit = canEdit(s.u); }
+    const roster = [];
+    for (const s of ms.sheets) {
+      const tag = many ? streamLetter(s.cls) || s.cls : '';
+      const list = rosterFor(s.cls).map((t) => ({ ...t, cls: s.cls, stream: tag }));
+      // Students who have marks but left the list stay visible so nothing is lost.
+      for (const r of Object.values(s.doc.rows)) if (!list.some((t) => lower(t.admNo) === lower(r.admNo))) list.push({ admNo: r.admNo, name: r.admNo, gone: true, cls: s.cls, stream: tag });
+      roster.push(...list);
+    }
+    roster.sort((a, b) => String(a.admNo).localeCompare(String(b.admNo)));
+    if (ms.drawnKey !== ms.key) { ms.drawnKey = ms.key; ms.q = ''; Tables.reset('marks'); }
+    ms.roster = roster;
+    const edits = ms.sheets.filter((s) => s.edit).length, u = ms.sheets[0].u;
+    const locked = new Map();
+    for (const s of ms.sheets) for (const t of s.doc.lockedTerms || []) locked.set(t.id, t.name);
     $('#marksCard').innerHTML = `
       <div class="marks-head">
-        <div><h2>${esc(u.name)}</h2></div>
+        <div><h2>${esc(u.name)}</h2>${many ? `<p class="muted small">Streams ${ms.sheets.map((s) => esc(streamLetter(s.cls) || s.cls)).join(', ')} together</p>` : ''}</div>
         <span id="marksStatus" class="save-state"></span>
       </div>
       ${!roster.length ? '<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the marks sheet shows up here.</span></div>' : `
-      ${edit ? '<p class="muted small">Marks are percentages (0–100). Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.</p>'
+      ${edits ? `<p class="muted small">Marks are percentages (0–100). Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.${edits < ms.sheets.length ? ' Only the streams you teach can be changed.' : ''}</p>`
         : '<p class="muted small">Only the trainer of this unit can change these marks.</p>'}
-      ${(d.lockedTerms || []).length ? `<div class="report-lock"><span><b>Some marks are locked.</b> Marks entered in ${d.lockedTerms.map((x) => esc(x.name)).join(', ')} cannot change now that the term has ended.</span>
-        ${hasRole('HOD') || hasRole('MIS') ? d.lockedTerms.map((x) => `<button type="button" class="btn small" data-munlock="${esc(x.id)}">Unlock ${esc(x.name)} for 7 days</button>`).join('') : ''}</div>` : ''}
+      ${locked.size ? `<div class="report-lock"><span><b>Some marks are locked.</b> Marks entered in ${[...locked.values()].map(esc).join(', ')} cannot change now that the term has ended.</span>
+        ${hasRole('HOD') || hasRole('MIS') ? [...locked].map(([id, name]) => `<button type="button" class="btn small" data-munlock="${esc(id)}">Unlock ${esc(name)} for 7 days</button>`).join('') : ''}</div>` : ''}
       <input type="search" id="marksSearch" class="marks-search" placeholder="Search name or admission no." aria-label="Search students" value="${esc(ms.q)}">
       <div id="marksTable"></div>
       <div class="row-actions marks-actions">
         <button type="button" class="btn primary" id="marksExport"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel marksheet</button>
-        ${edit ? '<button type="button" class="btn" id="marksSend">Send now</button>' : ''}
+        ${edits ? '<button type="button" class="btn" id="marksSend">Send now</button>' : ''}
       </div>`}`;
     if (roster.length) drawTable();
     status();
@@ -143,27 +159,26 @@ const Marks = (() => {
   /** The table alone (a search or a page change must not rebuild the box being typed in). */
   function drawTable() {
     const box = $('#marksTable'); if (!box) return;
-    const q = (ms.q || '').trim().toLowerCase(), d = ms.doc;
-    const row = (t) => d.rows[lower(t.admNo)] || {};
+    const q = (ms.q || '').trim().toLowerCase();
     const all = Tables.sort('marks', ms.roster.map((t, i) => ({ t, n: i + 1 })).filter(({ t }) => !q || t.name.toLowerCase().includes(q) || String(t.admNo).toLowerCase().includes(q)),
-      { sn: (x) => x.n, name: (x) => x.t.name, cat: (x) => avg(row(x.t), ['cat1', 'cat2', 'cat3']), prac: (x) => avg(row(x.t), ['prac1', 'prac2', 'prac3']) }, 'sn');
+      { sn: (x) => x.n, name: (x) => x.t.name, cat: (x) => avg(rowFor(x.t), ['cat1', 'cat2', 'cat3']), prac: (x) => avg(rowFor(x.t), ['prac1', 'prac2', 'prac3']) }, 'sn');
     all.forEach((x, i) => { x.pos = i + 1; });   // S/N follows the order on screen
     const rows = Tables.slice('marks', all);
     box.innerHTML = all.length ? `<div class="marks-wrap"><table class="marks-table">
         <thead><tr>${Tables.th('marks', 'sn', 'S/N', 'mt-sn', ' rowspan="2"')}${Tables.th('marks', 'name', 'Student', 'mt-name', ' rowspan="2"')}<th colspan="4" class="mt-grp">Oral / Theory (100%)</th><th colspan="4" class="mt-grp prac">Practical (100%)</th></tr>
         <tr>${['cat1', 'cat2', 'cat3'].map((c) => `<th>${HEAD[c]}</th>`).join('')}${Tables.th('marks', 'cat', 'AVG', 'avg')}${['prac1', 'prac2', 'prac3'].map((c) => `<th class="prac">${HEAD[c]}</th>`).join('')}${Tables.th('marks', 'prac', 'AVG', 'avg prac')}</tr></thead>
-        <tbody>${rows.map(({ t, pos }) => rowHtml(t, pos - 1, row(t), ms.edit, d.dirty[lower(t.admNo)])).join('')}</tbody>
+        <tbody>${rows.map(({ t, pos }) => { const s = sheetOf(t.cls); return rowHtml(t, pos - 1, rowFor(t), s.edit, s.doc.dirty[lower(t.admNo)]); }).join('')}</tbody>
       </table></div>${Tables.bar('marks', all)}` : '<p class="empty">Nobody matches that search.</p>';
   }
   function rowHtml(t, i, r, edit, dirty) {
     const cell = (c) => {
       const lock = (r.locked || []).includes(c);
-      return `<td><input class="mk${lock ? ' locked' : ''}" inputmode="decimal" autocomplete="off" data-adm="${esc(t.admNo)}" data-col="${c}" value="${r[c] ?? ''}"
+      return `<td><input class="mk${lock ? ' locked' : ''}" inputmode="decimal" autocomplete="off" data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" data-col="${c}" value="${r[c] ?? ''}"
       aria-label="${esc(t.name)} ${HEAD[c]}"${lock ? ` title="Entered in ${esc(r.terms?.[c] || 'an earlier term')}, which has ended: locked"` : ''} ${edit && !lock ? '' : 'readonly'}></td>`;
     };
-    return `<tr data-adm="${esc(t.admNo)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">
+    return `<tr data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">
       <td class="mt-sn">${i + 1}</td>
-      <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}</b><small>${esc(t.admNo)}${t.regCode ? ' · ' + esc(t.regCode) : ''}${t.pending ? ' · pending' : ''}${t.gone ? ' · not on the list' : ''}</small></div></th>
+      <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}${t.stream ? ` <span class="stag" title="Stream">${esc(t.stream)}</span>` : ''}</b><small>${esc(t.admNo)}${t.regCode ? ' · ' + esc(t.regCode) : ''}${t.pending ? ' · pending' : ''}${t.gone ? ' · not on the list' : ''}</small></div></th>
       ${['cat1', 'cat2', 'cat3'].map(cell).join('')}<td class="avg" data-avg="cat">${show(avg(r, ['cat1', 'cat2', 'cat3']))}</td>
       ${['prac1', 'prac2', 'prac3'].map(cell).join('')}<td class="avg" data-avg="prac">${show(avg(r, ['prac1', 'prac2', 'prac3']))}</td></tr>`;
   }
@@ -171,21 +186,21 @@ const Marks = (() => {
   function refreshValues() {
     for (const inp of $$('#marksCard input.mk')) {
       if (inp === document.activeElement) continue;
-      const r = ms.doc.rows[lower(inp.dataset.adm)] || {};
+      const r = sheetOf(inp.dataset.cls).doc.rows[lower(inp.dataset.adm)] || {};
       inp.value = r[inp.dataset.col] ?? '';
     }
     for (const tr of $$('#marksCard tbody tr')) {
-      const r = ms.doc.rows[lower(tr.dataset.adm)] || {};
+      const r = sheetOf(tr.dataset.cls).doc.rows[lower(tr.dataset.adm)] || {};
       tr.querySelector('[data-avg=cat]').textContent = show(avg(r, ['cat1', 'cat2', 'cat3']));
       tr.querySelector('[data-avg=prac]').textContent = show(avg(r, ['prac1', 'prac2', 'prac3']));
     }
     status();
   }
   function status() {
-    const el = $('#marksStatus'); if (!el || !ms.doc) return;
-    const n = pendingFor(ms.doc);
+    const el = $('#marksStatus'); if (!el || !ms.sheets?.length) return;
+    const n = pendingAll();
     el.className = 'save-state' + (n ? ' pending' : ' ok');
-    el.textContent = n ? (navigator.onLine ? `Sending ${n}…` : `${n} saved on this device`) : ms.doc.sentAt || ms.doc.pulledAt ? 'All sent' : 'Saved';
+    el.textContent = n ? (navigator.onLine ? `Sending ${n}…` : `${n} saved on this device`) : ms.sheets.some((s) => s.doc.sentAt || s.doc.pulledAt) ? 'All sent' : 'Saved';
     if (ms.pullError && !n) { el.textContent = 'Saved on this device'; el.title = ms.pullError; }
   }
 
@@ -193,25 +208,25 @@ const Marks = (() => {
     const res = parse(inp.value);
     inp.classList.toggle('bad', !res.ok);
     if (!res.ok) return;
-    const [cls, unit] = ms.key.split('|'), k = lower(inp.dataset.adm), col = inp.dataset.col;
+    const sheet = sheetOf(inp.dataset.cls), unit = ms.unit, k = lower(inp.dataset.adm), col = inp.dataset.col;
     const tr = inp.closest('tr');
-    const row = ms.doc.rows[k] = { ...(ms.doc.rows[k] || { admNo: inp.dataset.adm }), [col]: res.value, updatedAt: nowISO() };
-    ms.doc.dirty[k] = true;
+    const row = sheet.doc.rows[k] = { ...(sheet.doc.rows[k] || { admNo: inp.dataset.adm }), [col]: res.value, updatedAt: nowISO() };
+    sheet.doc.dirty[k] = true;
     tr.classList.add('dirty');
     tr.querySelector('[data-avg=cat]').textContent = show(avg(row, ['cat1', 'cat2', 'cat3']));
     tr.querySelector('[data-avg=prac]').textContent = show(avg(row, ['prac1', 'prac2', 'prac3']));
     // Saved straight away (one save after another), so closing the app a moment later loses nothing.
-    ms.saving = Promise.resolve(ms.saving).then(() => saveLocal(cls, unit)).catch((e) => toast('Could not save on this device: ' + e.message, 'err'));
+    ms.saving = Promise.resolve(ms.saving).then(() => saveLocal(sheet, unit)).catch((e) => toast('Could not save on this device: ' + e.message, 'err'));
     status();
   }
-  async function saveLocal(cls, unit) {
-    const snap = ms.doc;
+  async function saveLocal(sheet, unit) {
+    const snap = sheet.doc, cls = sheet.cls;
     const saved = await updateLocal(docId(cls, unit), (d) => {
       d.rows = d.rows || {}; d.dirty = d.dirty || {};
       for (const [k, r] of Object.entries(snap.rows)) if (!d.rows[k] || String(r.updatedAt) >= String(d.rows[k].updatedAt)) d.rows[k] = r;
       for (const k of Object.keys(snap.dirty)) d.dirty[k] = true;
     }, { rows: {}, dirty: {} });
-    if (ms.doc === snap && ms.key === cls + '|' + unit) { snap._rev = saved._rev; }
+    if (sheet.doc === snap) snap._rev = saved._rev;
     await updateLocal('marksIndex', (i) => { const k = `${LIFE}:${cls}|${unit}`; i.keys = [...new Set([...(i.keys || []), k])]; }, { keys: [] });
     scheduleSend();
   }
@@ -219,23 +234,28 @@ const Marks = (() => {
     clearTimeout(ms.sendTimer);
     ms.sendTimer = setTimeout(async () => {
       if (!navigator.onLine) return status();
-      const [cls, unit] = ms.key.split('|');
-      try { await push(cls, unit); ms.doc = await load(cls, unit); $$('#marksCard tr.dirty').forEach((tr) => { if (!ms.doc.dirty[lower(tr.dataset.adm)]) tr.classList.remove('dirty'); }); }
-      catch (e) { ms.pullError = e.message; }
+      const sheets = ms.sheets, unit = ms.unit;
+      try {
+        for (const s of sheets) if (pendingFor(s.doc)) { await push(s.cls, unit); s.doc = await load(s.cls, unit); }
+        $$('#marksCard tr.dirty').forEach((tr) => { if (!sheetOf(tr.dataset.cls).doc.dirty[lower(tr.dataset.adm)]) tr.classList.remove('dirty'); });
+      } catch (e) { ms.pullError = e.message; }
       status();
     }, 2500);
   }
 
   async function exportXlsx() {
-    const cls = reportClassCode(), unit = $('#rUnit').value;
-    if (!cls || !unit) return;
-    const u = state.units.find((x) => x.classCode === cls && x.code === unit) || { code: unit, name: unit };
-    const c = state.classes.find((x) => x.code === cls) || {};
-    const d = ms.doc || await load(cls, unit);
-    const students = rosterFor(cls).sort((a, b) => String(a.admNo).localeCompare(String(b.admNo))).map((t) => {
-      const r = d.rows[lower(t.admNo)] || {};
+    const codes = reportCodes(), unit = $('#rUnit').value;
+    if (!codes.length || !unit) return;
+    const sheets = ms.key === codes.join(',') + '|' + unit ? ms.sheets : await Promise.all(codes.map(async (cls) => ({ cls, doc: await load(cls, unit) })));
+    // All streams in one marksheet, under their MIS class when they share one.
+    const g = codes.length > 1 ? reportGroup() : null, cls = g ? g.base : codes[0];
+    const u = state.units.find((x) => x.classCode === codes[0] && x.code === unit) || { code: unit, name: unit };
+    const c = g ? (() => { const mis = [...new Set(codes.map((k) => state.classes.find((x) => x.code === k)?.misClass || ''))]; return { code: g.base, misClass: mis.length === 1 ? mis[0] : '' }; })()
+      : (state.classes.find((x) => x.code === cls) || {});
+    const students = sheets.flatMap((s) => rosterFor(s.cls).map((t) => {
+      const r = s.doc.rows[lower(t.admNo)] || {};
       return { regCode: t.regCode || '', admNo: t.admNo, name: t.name, cat: ['cat1', 'cat2', 'cat3'].map((k) => r[k] ?? ''), prac: ['prac1', 'prac2', 'prac3'].map((k) => r[k] ?? '') };
-    });
+    })).sort((a, b) => String(a.admNo).localeCompare(String(b.admNo)));
     try {
       const tpl = await (await fetch('templates/marksheet.xlsx')).arrayBuffer();
       const blob = await Xlsx.marksheetFile(tpl, { courseCode: c.misClass || cls, courseName: c.name && c.name !== c.code ? c.name : (c.misClass || cls), unitCode: u.code, unitTitle: u.name,
@@ -265,9 +285,11 @@ const Marks = (() => {
       if (e.target.closest('#marksSend')) syncAll().then(() => render());
       const un = e.target.closest('[data-munlock]');
       if (un) {
-        const [cls, unit] = ms.key.split('|');
-        api('unlock', { termId: un.dataset.munlock, classCode: cls, unitCode: unit, days: 7 })
-          .then((r) => { if (!r.ok) throw new Error(r.error); toast('Unlocked for 7 days', 'ok'); render(); })
+        // Every stream on screen whose marks from that term are locked.
+        const term = un.dataset.munlock, unit = ms.unit;
+        const sheets = ms.sheets.filter((s) => (s.doc.lockedTerms || []).some((t) => t.id === term));
+        Promise.all(sheets.map((s) => api('unlock', { termId: term, classCode: s.cls, unitCode: unit, days: 7 }).then((r) => { if (!r.ok) throw new Error(r.error); })))
+          .then(() => { toast('Unlocked for 7 days', 'ok'); render(); })
           .catch((err) => toast(err.message, 'err'));
       }
       const m = e.target.closest('#reportMode [data-rmode]');

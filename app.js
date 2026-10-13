@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.20.0';
+const APP_VERSION = '4.21.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -244,19 +244,20 @@ function streamAccess(classCode, unitCode) {
   const u = (state.reportTerm ? state.pastUnits || [] : state.units).find((x) => x.classCode === classCode && x.code === unitCode);
   return u ? { ok: false, who: u.trainerName || '' } : { ok: false, none: true };
 }
-/** The streams that take the chosen unit and may be seen; "All streams" is offered when that is every stream taking it (2 or more). */
+/** The streams that take the chosen unit, and which of them may be seen. */
 function streamChoices() {
   const g = reportGroup(), unit = $('#rUnit').value;
   const acc = g ? g.codes.map((c) => ({ c, ...streamAccess(c, unit) })) : [];
-  const taking = acc.filter((a) => !a.none);
-  return { acc, all: taking.length > 1 && taking.every((a) => a.ok), open: acc.filter((a) => a.ok).map((a) => a.c) };
+  const taking = acc.filter((a) => !a.none), open = acc.filter((a) => a.ok).map((a) => a.c);
+  // Two or more streams that may be seen are offered together: all of them, or (a trainer of some streams) theirs.
+  return { acc, all: open.length > 1, every: open.length === taking.length, open };
 }
 function renderStreamSelect() {
   const g = reportGroup(), box = $('#rStreamBox'), sel = $('#rStream');
   if (!g) { box.hidden = true; sel.innerHTML = ''; delete sel.dataset.picked; return; }
-  const prev = sel.value, { acc, all } = streamChoices(), unit = $('#rUnit').value;
+  const prev = sel.value, { acc, all, every, open } = streamChoices(), unit = $('#rUnit').value;
   // Streams taught by someone else are shown but locked; a stream that doesn't take this unit can't be chosen.
-  sel.innerHTML = (all ? '<option value="">All streams</option>' : '')
+  sel.innerHTML = (all ? `<option value="">${every ? 'All streams' : `Streams ${open.map((c) => esc(streamLetter(c))).join(' + ')} (yours)`}</option>` : '')
     + acc.map((a) => `<option value="${esc(a.c)}"${a.ok ? '' : ' disabled'}>Stream ${esc(streamLetter(a.c))}${a.ok ? '' : a.none ? ` · no ${esc(unit)}` : ` · locked${a.who ? ` (${esc(a.who)})` : ''}`}</option>`).join('');
   // All streams unless a stream was picked by hand (and can still be seen).
   const keep = sel.dataset.picked && acc.some((a) => a.ok && a.c === prev);

@@ -260,7 +260,7 @@ Open **Report(s)** and choose **Attendance** at the top.
 - **Class** and **Unit**: trainers see their own units; the HOD and MIS Officer see every class.
 - **Stream**: a class with streams is listed once, for example *ICT L6CS-26S (streams A, B)*, with a **Stream** choice next to the unit.
   - **All streams** shows every stream's students on one register, each with their stream letter. It is offered to the HOD and MIS Officer, and to a trainer who teaches that unit in every stream. Choose a stream to see just that stream.
-  - A trainer who teaches the unit in only some streams sees their own stream(s); the others show as **locked**, with the name of the trainer who teaches them.
+  - A trainer who teaches the unit in only some streams sees their own: with two or more of them, the first choice is **Streams A + C (yours)**, which shows those together. The other streams show as **locked**, with the name of the trainer who teaches them.
   - A stream that does not take the unit shows *no (unit)* and cannot be chosen.
   - Submitting to the HOD, approving and unlocking are done one stream at a time: choose the stream first.
 - **Minimum %**: the attendance below which a student is flagged (75% to start).
@@ -305,7 +305,7 @@ Choosing an earlier term shows that term's register read-only, with a notice tha
 
 ## 6. Marks (continuous assessment)
 
-Open **Report(s) → Marks** and choose the class and unit. Marks are kept for each stream, so for a class with streams choose one **Stream** (not *All streams*).
+Open **Report(s) → Marks** and choose the class and unit. For a class with streams, the **Stream** choice works as in [5.1](#51-choose-what-to-see): **All streams** (or your own streams together) puts every student in one table with their stream letter, or choose one stream. Each student's marks are still kept with their own stream, and you can only change the marks of the streams you teach. **Export Excel marksheet** exports the streams on screen in one marksheet.
 
 | Column | Meaning |
 |---|---|
