@@ -499,3 +499,8 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **demo-day handout** covers the new features: pairs add a student from the wrong stream and see their stream (others locked) in Report(s); the facilitator shows all streams in a report and in Marks, moves the added student, and marks a combined lesson.
 - **Demo data**: DEMO01 (HOD) now teaches PRJ (Project) to both L5 streams together, written in the loading as *ICT L5CS-26SA, ICT L5CS-26SB*, so a combined lesson can be shown. A `reset` adds it.
 - The Mark tab says **Streams in this lesson** whenever every class in the lesson is a stream of one class, even when the loading joined them.
+
+## Drive bridge 1.4.3: email groups test
+
+- The bridge runs in the app's Google Cloud project and lists its permissions, adding managing Google Groups and sending email.
+- **`testGroups()`** (new `Groups.gs`) checks that the bridge can make a group, set it to owners-only posting, add and remove a member, email it and delete it, without any admin role. It is the first step towards class, trainer, class-rep and panel email groups kept in step with the app. Setup: TECHNICAL 4.6.

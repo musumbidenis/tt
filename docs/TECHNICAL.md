@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.24.1**, server (Worker) **6.8.0**, database schema **11**, Drive bridge **1.4.2**.
+Describes app **4.24.1**, server (Worker) **6.8.0**, database schema **11**, Drive bridge **1.4.3**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -61,7 +61,7 @@ For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ## 2. Repository layout
 
-The git repository is the `app` folder. Everything at its root is published to Cloudflare Pages (https://ark26.pages.dev); only `worker/worker.js` is deployed to Cloudflare, and only `apps-script/DriveBridge.gs` (with its manifest) to Apps Script.
+The git repository is the `app` folder. Everything at its root is published to Cloudflare Pages (https://ark26.pages.dev); only `worker/worker.js` is deployed to Cloudflare, and only `apps-script/DriveBridge.gs` and `apps-script/Groups.gs` (with their manifest) to Apps Script.
 
 | Path | Purpose |
 |---|---|
@@ -91,6 +91,7 @@ The git repository is the `app` folder. Everything at its root is published to C
 | `worker/dev.js`, `worker/wrangler.test.toml` | Local test harness only (helper endpoints); never deployed. |
 | `wrangler.toml` | Cloudflare deploy configuration for Workers Builds. |
 | `apps-script/DriveBridge.gs`, `apps-script/appsscript.json` | The Drive bridge and its manifest. |
+| `apps-script/Groups.gs` | Google Groups for class and staff email, made and kept by the bridge (1.4.3: `testGroups()` only, [4.6](#46-email-groups-from-bridge-143)). |
 | `apps-script/clasp-init.sh`, `.clasp.json.example`, `.claspignore` | Pushing the bridge with clasp. |
 | `apps-script/Code.gs` | The retired Google Sheet backend. Kept for reference; **never** push it to the bridge project. |
 | `_redirects` | For Cloudflare Pages: serves `/index.html` and `/student.html` without redirecting (a redirected page breaks the service worker). The student app is linked as `/student`, which Pages, GitHub Pages and the demo Worker all serve. |
@@ -159,10 +160,12 @@ database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
 | `POE_FOLDER_ID` | The Drive folder for evidence. |
 | `WEB_APP_URL` | Optional: the web app's `/exec` address, if the detected one is ever wrong. |
 | `SECRET` | Created by `setup()`; must equal the Worker's `BRIDGE_SECRET`. |
+| `GROUPS_CUSTOMER` | The college's Google customer ID (`customers/C0…`), found by `testGroups()` from any group the bridge account is in, or typed in. |
+| `GROUPS_TEST_MEMBER` | Optional: who `testGroups()` adds and removes (default `musumbidenis@<domain>`). |
 
-The bridge also keeps its own working state in Script Properties (`CURSOR`, `PENDING`, `SHEETS`, `MATCHED`, `TRAINERS`, `INDEX_ID`, `NUDGE_*`).
+The bridge also keeps its own working state in Script Properties (`CURSOR`, `PENDING`, `SHEETS`, `MATCHED`, `TRAINERS`, `INDEX_ID`, `NUDGE_*`, `GROUPS_TEST_RESULT`).
 
-**`appsscript.json`** fixes the time zone (`Africa/Nairobi`), the V8 runtime and the web app access: `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS`. OAuth scopes are left to Apps Script to infer.
+**`appsscript.json`** fixes the time zone (`Africa/Nairobi`), the V8 runtime and the web app access: `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS`. From 1.4.3 the OAuth scopes are **listed** (`oauthScopes`), because the group scopes cannot be inferred: Drive, Sheets, external requests, triggers, sending email, the account's email address, `cloud-identity.groups` and `apps.groups.settings`. A listed set replaces inference, so **a new Apps Script service needs its scope added here**, or the bridge stops with an authorisation error. A changed list needs ictpoe to run any function once in the editor and approve.
 
 **Live deployment**: the app and Worker use the web app deployment `AKfycbxRXcPpCld18nabbd31QOFOKDdm7_uY4_8DIEVeZBmhY2y2i9nIe5oNIfn12GdAmkr7`. Always update this deployment in place so its address never changes.
 
@@ -234,6 +237,17 @@ As ictpoe@rvnp.ac.ke, at console.cloud.google.com:
 
 The client ID is not secret. With it empty, students send evidence through the Drive bridge as before.
 
+### 4.6 Email groups (from bridge 1.4.3)
+
+The bridge makes and keeps Google Groups (one per class, all trainers, class reps, coordinators, panels) through the **Cloud Identity Groups API**, as ictpoe. ictpoe needs no admin role: whoever creates a group owns it, and an owner adds and removes members. One email to a group counts as one recipient of the account's daily email allowance.
+
+1. In the Google Cloud project of step 4.5 (number `945611933983`), **APIs & Services → Library**: enable the **Cloud Identity API**, the **Groups Settings API** (posting and privacy settings) and the **Google Drive API** (the bridge's REST calls now run in this project).
+2. OAuth consent screen: user type **Internal** (an External app in Testing signs the bridge out every 7 days).
+3. https://script.google.com as ictpoe → the bridge → **Project Settings → Google Cloud Platform (GCP) Project → Change project** → `945611933983`. Run `setup` once and approve.
+4. Push the bridge ([5.3](#53-the-drive-bridge)), open the editor, choose **testGroups** and **Run**; approve the new permissions. It makes `ark-test@<domain>`, sets owners-only posting, adds and removes `GROUPS_TEST_MEMBER`, emails the group once, deletes it, and logs each step (also kept in `GROUPS_TEST_RESULT`).
+
+If the customer ID cannot be found, create any group at groups.google.com as ictpoe and run the test again, or put the ID in `GROUPS_CUSTOMER`.
+
 ---
 
 ## 5. Deploying changes
@@ -270,7 +284,7 @@ The Apps Script API must be on for that account: https://script.google.com/home/
 Each release:
 
 ```
-npx @google/clasp@3.4.1 show-file-status        # expect only appsscript.json and DriveBridge.gs
+npx @google/clasp@3.4.1 show-file-status        # expect only appsscript.json, DriveBridge.gs and Groups.gs
 npx @google/clasp@3.4.1 push -f                  # replaces the project's files
 npx @google/clasp@3.4.1 create-deployment -i AKfycbxRXcPpCld18nabbd31QOFOKDdm7_uY4_8DIEVeZBmhY2y2i9nIe5oNIfn12GdAmkr7 -d "Drive bridge X.Y.Z"
 ```
@@ -282,7 +296,7 @@ curl -sL "https://script.google.com/macros/s/<deployment id>/exec"     # {"ok":t
 ```
 
 Notes:
-- `push` replaces the **whole** project. `.claspignore` is an allow-list (`appsscript.json`, `DriveBridge.gs`) so the old `Code.gs` is never sent. If unsure what is live, pull into a scratch folder first (a `.clasp.json` there with `"rootDir": "."`, then `clasp pull`).
+- `push` replaces the **whole** project. `.claspignore` is an allow-list (`appsscript.json`, `DriveBridge.gs`, `Groups.gs`) so the old `Code.gs` is never sent. If unsure what is live, pull into a scratch folder first (a `.clasp.json` there with `"rootDir": "."`, then `clasp pull`).
 - `push` alone changes nothing for users: the web app serves the deployed version until `create-deployment -i` points the existing deployment at a new one.
 - The web app runs as whoever deploys it (`USER_DEPLOYING`), so deploy as the folder owner.
 - Run `setup()` again only when a release changes the triggers; it keeps the existing SECRET.
