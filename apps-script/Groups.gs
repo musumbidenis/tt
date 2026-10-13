@@ -16,26 +16,41 @@ function groupsApi_(method, url, body) {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, payload: body ? JSON.stringify(body) : undefined });
   var out = {}; try { out = JSON.parse(res.getContentText() || '{}'); } catch (e) { out = {}; }
   if (res.getResponseCode() >= 300) {
-    var err = new Error((out.error && out.error.message) || ('Google answered ' + res.getResponseCode()));
+    // Google puts the reason for "invalid argument" in error.details (field violations, reasons).
+    var why = ((out.error && out.error.details) || []).map(function (d) {
+      return (d.fieldViolations || []).map(function (v) { return v.field + ': ' + v.description; }).concat(d.reason ? [d.reason] : [], d.detail ? [d.detail] : []).join('; ');
+    }).filter(String).join(' | ');
+    var err = new Error(((out.error && out.error.message) || ('Google answered ' + res.getResponseCode())) + (why ? ' (' + why + ')' : ''));
     err.code = res.getResponseCode(); throw err;
   }
   return out;
 }
 
-/** The college's Google customer ID ("C0…"), which every new group needs. Kept in the Script Property GROUPS_CUSTOMER;
- * found from any group this account already belongs to. */
-function groupsCustomer_() {
+/** The college's Google customer ID ("customers/C0…"), which every new group needs. Kept in the Script Property
+ * GROUPS_CUSTOMER once known. Tried in turn: the account's own directory entry, then any group it belongs to;
+ * failing those, Google's alias for "my own organisation". tried collects what each way answered. */
+function groupsCustomer_(tried) {
   var p = PropertiesService.getScriptProperties(), have = p.getProperty('GROUPS_CUSTOMER');
   if (have) return have;
-  var me = Session.getEffectiveUser().getEmail();
-  var q = "member_key_id == '" + me + "' && '" + FORUM + "' in labels";
-  var found = groupsApi_('get', CI + 'groups/-/memberships:searchDirectGroups?pageSize=5&query=' + encodeURIComponent(q));
-  var first = (found.memberships || [])[0];
-  if (!first) throw new Error('This account is not in any Google Group yet, so the college\'s customer ID is unknown. Create any group at groups.google.com as ' + me + ' (you can delete it afterwards) and run this again, or put the customer ID in the Script Property GROUPS_CUSTOMER.');
-  var parent = groupsApi_('get', CI + first.group).parent;
-  if (!/^customers\//.test(parent || '')) throw new Error('Could not read the customer ID from ' + first.groupKey.id);
-  p.setProperty('GROUPS_CUSTOMER', parent);
-  return parent;
+  tried = tried || [];
+  var me = Session.getEffectiveUser().getEmail(), found = '';
+  var ways = [
+    ['directory entry', function () {
+      var u = groupsApi_('get', 'https://admin.googleapis.com/admin/directory/v1/users/' + encodeURIComponent(me) + '?viewType=domain_public');
+      return u.customerId ? 'customers/' + u.customerId : '';
+    }],
+    ['groups this account is in', function () {
+      var q = "member_key_id == '" + me + "' && '" + FORUM + "' in labels";
+      var first = (groupsApi_('get', CI + 'groups/-/memberships:searchDirectGroups?query=' + encodeURIComponent(q)).memberships || [])[0];
+      return first ? groupsApi_('get', CI + first.group).parent || '' : '';
+    }],
+  ];
+  for (var i = 0; i < ways.length && !found; i++) {
+    try { found = ways[i][1](); tried.push(ways[i][0] + ': ' + (found || 'nothing')); }
+    catch (e) { tried.push(ways[i][0] + ': ' + e.message); }
+  }
+  if (/^customers\/C/.test(found)) { p.setProperty('GROUPS_CUSTOMER', found); return found; }
+  return 'customers/my_customer';
 }
 
 function groupByEmail_(email) {
@@ -55,7 +70,8 @@ function testGroups() {
     try { var r = fn(); log.push('✓ ' + what + (r ? ': ' + r : '')); }
     catch (e) { if (!opt.optional) ok = false; log.push('✗ ' + what + ': ' + e.message); }
   }
-  step('Customer ID', function () { return groupsCustomer_(); });
+  var tried = [];
+  step('Customer ID', function () { var c = groupsCustomer_(tried); return c + (tried.length ? ' [' + tried.join(' · ') + ']' : ''); });
   step('Create ' + email, function () {
     name = groupByEmail_(email);
     if (name) return 'it was already there (' + name + ')';

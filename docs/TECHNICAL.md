@@ -165,7 +165,7 @@ database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
 
 The bridge also keeps its own working state in Script Properties (`CURSOR`, `PENDING`, `SHEETS`, `MATCHED`, `TRAINERS`, `INDEX_ID`, `NUDGE_*`, `GROUPS_TEST_RESULT`).
 
-**`appsscript.json`** fixes the time zone (`Africa/Nairobi`), the V8 runtime and the web app access: `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS`. From 1.4.3 the OAuth scopes are **listed** (`oauthScopes`), because the group scopes cannot be inferred: Drive, Sheets, external requests, triggers, sending email, the account's email address, `cloud-identity.groups` and `apps.groups.settings`. A listed set replaces inference, so **a new Apps Script service needs its scope added here**, or the bridge stops with an authorisation error. A changed list needs ictpoe to run any function once in the editor and approve.
+**`appsscript.json`** fixes the time zone (`Africa/Nairobi`), the V8 runtime and the web app access: `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS`. From 1.4.3 the OAuth scopes are **listed** (`oauthScopes`), because the group scopes cannot be inferred: Drive, Sheets, external requests, triggers, sending email, the account's email address, `cloud-identity.groups`, `apps.groups.settings` and `admin.directory.user.readonly` (to read the college's customer ID from the account's own directory entry). A listed set replaces inference, so **a new Apps Script service needs its scope added here**, or the bridge stops with an authorisation error. A changed list needs ictpoe to run any function once in the editor and approve.
 
 **Live deployment**: the app and Worker use the web app deployment `AKfycbxRXcPpCld18nabbd31QOFOKDdm7_uY4_8DIEVeZBmhY2y2i9nIe5oNIfn12GdAmkr7`. Always update this deployment in place so its address never changes.
 
@@ -246,7 +246,7 @@ The bridge makes and keeps Google Groups (one per class, all trainers, class rep
 3. https://script.google.com as ictpoe → the bridge → **Project Settings → Google Cloud Platform (GCP) Project → Change project** → `945611933983`. Run `setup` once and approve.
 4. Push the bridge ([5.3](#53-the-drive-bridge)), open the editor, choose **testGroups** and **Run**; approve the new permissions. It makes `ark-test@<domain>`, sets owners-only posting, adds and removes `GROUPS_TEST_MEMBER`, emails the group once, deletes it, and logs each step (also kept in `GROUPS_TEST_RESULT`).
 
-If the customer ID cannot be found, create any group at groups.google.com as ictpoe and run the test again, or put the ID in `GROUPS_CUSTOMER`.
+The customer ID is read from ictpoe's directory entry, else from any group ictpoe is in, else Google's `customers/my_customer` alias is tried; the log shows what each way answered. If all fail, put the ID (`customers/C0…`, from the Google admin) in `GROUPS_CUSTOMER`.
 
 ---
 
