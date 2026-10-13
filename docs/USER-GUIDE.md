@@ -202,6 +202,8 @@ The box at the top right of the register says whether it is **Saved on this devi
 
 **Students who are not on the list.** Tap **Add student**, enter the admission number, full name and reason, and choose how to mark them. They are marked straight away and show as **Pending** until the MIS Officer approves them.
 
+**A student in the wrong stream.** If the class has streams, **Add student** also has **From another stream**: a list of every student on the other streams' lists (name, admission number and stream), even streams you don't teach. Pick the student; their details are filled in and the reason is set to *In the wrong stream*. They are marked on your register at once and show as **Pending**. When the MIS Officer approves (**Move here**), the student moves to your stream; until then they stay on their old stream's list too.
+
 **Locked registers.**
 - A register becomes **locked** a set number of hours after it was made (48 by default; see **Profile**). Changing a locked register asks you for a reason, which is recorded.
 - A register from a **term that has ended** cannot be changed at all, unless the HOD or MIS Officer unlocks it (see [9.3](#93-unlocking-an-earlier-terms-registers-and-marks)).
@@ -514,7 +516,7 @@ Uploading a newer list later keeps everyone in their stream; only new students a
 ### 10.2 Students added by trainers
 
 These appear at the top of Manage. For each one:
-- **Approve** adds them to the class (**Move here** if they are on another class's list);
+- **Approve** adds them to the class (**Move here** if they are on another class's list, for example a student a trainer found in the wrong stream);
 - **Same as…** is for a typo or duplicate: their marks count for the student you pick;
 - **Reject** leaves them out of that class's registers and reports.
 

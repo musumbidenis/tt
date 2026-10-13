@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.21.0';
+const APP_VERSION = '4.22.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -931,8 +931,32 @@ function openAddStudent() {
   const parts = state.current._parts;
   $('#asStreamBox').hidden = !parts;
   $('#asStream').innerHTML = (parts || []).map((p) => `<option value="${esc(p.classCode)}">Stream ${esc(streamLetter(p.classCode) || p.classCode)} (${esc(p.classCode)})</option>`).join('');
+  const mates = otherStreamStudents();
+  $('#asPickBox').hidden = !mates.length;
+  $('#asPick').innerHTML = '<option value="">Type a new student below</option>'
+    + mates.map((t) => `<option value="${esc(t.admNo)}">${esc(t.name)} · ${esc(t.admNo)} (stream ${esc(streamLetter(t.classCode) || t.classCode)})</option>`).join('');
+  pickOtherStream();
   $('#addStudentDialog').showModal();
   setTimeout(() => $('#asAdm').focus(), 50);
+}
+/** Students on the list of another stream of this register's class (a student may have been put in the wrong stream). */
+function otherStreamStudents() {
+  const s = state.current; if (!s) return [];
+  const here = (s._parts || [s]).map((p) => p.classCode), seen = new Set(rosterForCurrent().filter((t) => !t.unlisted).map((t) => lower(t.admNo)));
+  const others = new Set(here.flatMap((c) => streamGroup(c)?.codes || []).filter((c) => !here.includes(c)));
+  if (!others.size) return [];
+  // The HOD and MIS Officer have every class list; a trainer gets the other streams' names with the class lists.
+  const pool = [...state.trainees.filter((t) => t.active !== false).map((t) => ({ admNo: t.admNo, name: t.name, classCode: t.classCode })), ...(state.meta.streamMates || [])];
+  const out = new Map();
+  for (const t of pool) if (others.has(t.classCode) && !seen.has(lower(t.admNo)) && !out.has(lower(t.admNo))) out.set(lower(t.admNo), t);
+  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+/** Choosing a student from another stream fills in their details. */
+function pickOtherStream() {
+  const adm = $('#asPick').value, t = adm && otherStreamStudents().find((x) => x.admNo === adm);
+  $('#asAdm').readOnly = $('#asName').readOnly = !!t;
+  if (t) { $('#asAdm').value = t.admNo; $('#asName').value = t.name; $('#asReason').value = 'In the wrong stream'; }
+  else { $('#asAdm').value = ''; $('#asName').value = ''; }
 }
 async function saveAddStudent(e) {
   e.preventDefault();
@@ -944,7 +968,7 @@ async function saveAddStudent(e) {
   if (rosterForCurrent().some((t) => lower(t.admNo) === lower(adm) && !t.unlisted)) { msg.textContent = `${adm} is already on this class list.`; return; }
   // On a combined lesson the student is added to the stream chosen.
   const classCode = s._parts ? $('#asStream').value : s.classCode;
-  const elsewhere = state.trainees.find((t) => lower(t.admNo) === lower(adm) && !classParts(s.classCode).includes(t.classCode));
+  const elsewhere = [...state.trainees, ...(state.meta.streamMates || [])].find((t) => lower(t.admNo) === lower(adm) && !classParts(s.classCode).includes(t.classCode));
   if (!(await ensureEditable())) return;
   const id = `addreq:${classCode}|${adm}`;
   let doc;
@@ -1637,7 +1661,7 @@ async function pullRoster({ silent = false } = {}) {
     const r = await replaceRoster(res);
     await updateLocal('meta', (d) => {
       Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {},
-        terms: res.terms || [], unlocks: res.unlocks || [], archived: res.archived || [] });
+        terms: res.terms || [], unlocks: res.unlocks || [], archived: res.archived || [], streamMates: res.streamMates || [] });
     });
     // Students this device added: done once the MIS Officer has decided (on the list, rejected or merged).
     const stillPending = new Set((res.pending || []).map((p) => `${p.classCode}|${lower(p.admNo)}`));
@@ -2156,6 +2180,7 @@ function wire() {
   $('#allAbsent').addEventListener('click', () => setAll('A'));
   $('#addStudentBtn').addEventListener('click', openAddStudent);
   $('#addStudentForm').addEventListener('submit', saveAddStudent);
+  $('#asPick').addEventListener('change', pickOtherStream);
   $('#cancelAddStudent').addEventListener('click', () => $('#addStudentDialog').close());
   $('#saveReg').addEventListener('click', async () => { state.dirty = true; await saveCurrent(); toast('Register saved on this device', 'ok'); });
   $('#closeReg').addEventListener('click', closeRegister);

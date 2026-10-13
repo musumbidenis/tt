@@ -475,3 +475,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **Marks by stream, too.** Report(s) → Marks has the same **Stream** choice as Attendance: all streams in one table (each student with their stream letter) or one stream. A mark typed for a student is saved with that student's own stream; only the streams you teach can be changed. The Excel marksheet covers the streams on screen.
 - **Your streams together.** A trainer who teaches a unit in some streams but not all (2 of 3, say) gets **Streams A + C (yours)**, showing those streams together in Attendance and Marks; the other stream stays locked.
+
+## Changes in 4.22
+
+- **A student in the wrong stream can be added and marked.** On a class with streams, the register's **Add student** has **From another stream**: every student on the other streams' lists, even streams the trainer doesn't teach. Picking one marks them at once as **Pending**; the MIS Officer's **Move here** moves them to that stream. (Server 6.6.0 sends trainers the names in their classes' other streams.)

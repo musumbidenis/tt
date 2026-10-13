@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.5.1';
+export const VERSION = '6.6.0';
 const SCHEMA_VERSION = '10';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -97,6 +97,8 @@ const rolesList = (roles) => { const have = String(roles || '').toUpperCase().sp
 const hasRole = (roles, role) => rolesList(roles).includes(role);
 const levelOf = (code) => { const m = /L(\d)/i.exec(String(code)); return m ? m[1] : ''; };
 const classFromSession = (id) => String(id).split(':')[2] || '';
+/** Streams of one class differ only in a last letter ("ICT L6CS-26S-A" / "-B", "ICT L6CS-25SA" / "SB"): the shared part, or null. */
+const streamBase = (code) => { const m = /^(.*\d{2}-?[A-Z])-?([A-H])$/.exec(String(code || '')); return m ? m[1].replace(/-$/, '') : null; };
 const unitFromSession = (id) => String(id).split(':')[3] || '';
 /** A combined lesson ("ICT L6ICT-26J, ICT L6ICT-26M-CT") belongs to each class it names. */
 export function classParts(code) {
@@ -493,6 +495,15 @@ async function readRoster(env, b, me, pre) {
   const everyone = mine.size ? await all(env, `SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify([...mine]))
     : await all(env, 'SELECT adm_no, name, class_code, status, reg_code FROM trainees');
   const trainees = everyone.filter((r) => !gone.has(r.class_code));
+  // A trainer also gets the names in the other streams of the classes they teach, so a student placed in the
+  // wrong stream can be added to theirs (marked at once, pending until the MIS Officer moves them).
+  let streamMates = [];
+  if (mine.size) {
+    const bases = new Set([...mine].map(streamBase).filter(Boolean));
+    const others = classRows.map((r) => r.code).filter((c) => !mine.has(c) && !gone.has(c) && bases.has(streamBase(c)));
+    if (others.length) streamMates = (await all(env, `SELECT adm_no, name, class_code, status FROM trainees WHERE class_code IN ${IN}`, JSON.stringify(others)))
+      .filter(active).map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, classCode: r.class_code }));
+  }
   const staff = {};
   for (const r of staffRows) staff[r.code] = { name: r.name, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
   return {
@@ -507,7 +518,7 @@ async function readRoster(env, b, me, pre) {
     pending: reqs.filter((r) => r.status === 'pending').map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, requestedBy: r.requested_name, reason: r.reason })),
     rejected: reqs.filter((r) => r.status === 'rejected').map((r) => ({ admNo: r.adm_no, classCode: r.class_code })),
     aliases: reqs.filter((r) => r.status === 'merged' && r.merged_into).map((r) => ({ from: r.adm_no, to: r.merged_into, classCode: r.class_code })),
-    staff,
+    streamMates, staff,
   };
 }
 

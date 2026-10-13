@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.21.0**, server (Worker) **6.5.1**, database schema **10**, Drive bridge **1.4.2**.
+Describes app **4.22.0**, server (Worker) **6.6.0**, database schema **10**, Drive bridge **1.4.2**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -421,7 +421,7 @@ Checked against the device's registration (`deviceId` + `admNo`).
 |---|---|---|
 | `setPin` | Any | Choose a new PIN; returns a new token. |
 | `me` | Any | The signed-in staff record. |
-| `roster` | Any | Term, weeks, units (loading), classes, trainees, pending/rejected/merged students, staff percentages, all terms, unlocks, archived classes (MIS). Pass `version` to get `{unchanged:true}` cheaply. |
+| `roster` | Any | Term, weeks, units (loading), classes, trainees, pending/rejected/merged students, staff percentages, all terms, unlocks, archived classes (MIS), and for a trainer `streamMates` (admission number, name and class of the active students in the other streams of the classes they teach). Pass `version` to get `{unchanged:true}` cheaply. |
 | `pulse` | Any | The last-change marker (live polling). |
 | `push` | Trainer, HOD | Up to 50 registers. Each result is `added`, `updated`, `merged` (with the merged register), or `locked`. |
 | `mySessions` | Trainer, HOD | The trainer's registers from the server, 120 at a time, from a `{at, id}` cursor. |
@@ -505,6 +505,7 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 - **Combined lesson**: when a trainer's loading has the same unit in two or more streams, the Mark tab offers **Streams in this lesson**. Opening the slot gets or creates one register per ticked stream (the usual ids, the usual clash and 3-a-week checks per stream), each with `combined: [class codes]`. The screen shows a joined copy (`combineDocs`, with `_parts`); every save splits it back (`splitDoc`): each student's marks, names, times and QR check-ins go to the register of the stream whose class list has them, while notes, the edit log and the QR secret go on all. The server sees ordinary per-stream registers, so reports, sign-offs, the overview and Drive need no changes. `combined` travels in `push` and comes back through `mySessions`, so another device reopens the lesson combined too.
 - **Lesson QR for a combined lesson**: all streams' registers share one secret. The QR's `s` and `t` are the first stream's; `x` maps every other stream's class code to its own code (HMAC of that stream's session id). The student app swaps in its own stream's session id and code before saving, so the server's class check (`classFromSession`) passes and the check-in lands on the right register.
 - **Reports**: a class with streams is one entry (`streams:<base>`) with a **Stream** choice. A stream is open to the viewer when the unit is in their report units (all units for the HOD and MIS Officer); otherwise it is locked (taught by someone else) or absent (not in the loading). The joined choice is offered when at least two streams are open: **All streams** when that is every stream taking the unit, else **Streams A + C (yours)**. Each stream's term register is built on its own (`TermReport.build`) and the rows are put together with a stream letter (`mergeReports`). Sign-off and the end-of-term lock need one stream.
+- **Wrong stream**: a trainer's roster carries only the class lists of the classes they teach, plus `streamMates` (names in those classes' other streams). The register's **Add student** dialog lists them under **From another stream**; picking one makes the usual pending request (`addStudents`, reason *In the wrong stream*) for the register's stream, and the student is marked at once. The MIS Officer's **Move here** (`decideRequest` approve) changes the student's `class_code`.
 - **Marks** use the same choice. `marks.js` keeps one sheet per stream on screen (`ms.sheets`: class, its `marks:unit:<class>|<unit>` document, whether it may be edited); every row and input carries its class (`data-cls`), so a typed mark is saved in, and pushed to, that stream's marksheet. Unlocking an ended term's marks unlocks it for each stream on screen that has it locked. The Excel and print copies of all streams carry the MIS class and every stream's lecturer.
 
 ### 9.4 Terms, weeks and hours
