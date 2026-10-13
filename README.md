@@ -489,3 +489,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Changes in 4.24
 
 - **The loading's two ways of joining classes.** A slash (*ICT L5LIS-26S/L6LIM-26S*) is one class for every unit: both MIS lists go into it, and the second no longer marks the first list's students as missing. A comma (*ICT L6ICT-26J, ICT L6ICT-26M-CT*) is classes taught one unit together: each class gets the unit with its own register, report and marksheet, and the Mark tab offers them ticked as one combined lesson. Classes named with a comma are no longer made (old empty ones are removed). Server 6.8.0, schema 11. **Upload the loading again** to apply this to the current term.
+
+## Landing page refresh
+
+- **welcome.html** has a plain, static hero (one colour, no pictures), four coloured highlight cards, a row each for trainers, students and the HOD and MIS Officer with their screens, a numbers band, a swipeable row of screens, common questions and a closing band with the staff and student apps.
