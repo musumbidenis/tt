@@ -210,7 +210,14 @@ const Imports = (() => {
     const same = classCodes.map((c) => [c, codeParts(c)]).filter(([, p]) => p && p.level === m.level && p.year === m.year && p.intake === m.intake
       && m.prog.startsWith(p.prog) && (!m.stream || p.stream === m.stream));
     const best = Math.max(0, ...same.map(([, p]) => p.prog.length));
-    return same.filter(([, p]) => p.prog.length === best).map(([c]) => c).sort();
+    // A class joined for every unit ("ICT L5LIS-26S/L6LIM-26S") is suggested for the MIS list of either part: same level,
+    // year and intake, and a programme code that starts the same (the MIS writes LISL6 for L6LIM).
+    const start = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+    const joined = classCodes.filter((c) => c.includes('/') && c.split(/\s*\/\s*/).some((part) => {
+      const p = codeParts(part);
+      return p && p.level === m.level && p.year === m.year && p.intake === m.intake && start(p.prog, m.prog) >= 2;
+    }));
+    return [...new Set([...same.filter(([, p]) => p.prog.length === best).map(([c]) => c), ...joined])].sort();
   }
 
   return { classList, loading, suggestStreams, parseRegisterLines, toLines, isAdm, pdfLib };

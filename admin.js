@@ -244,6 +244,8 @@ const Admin = (() => {
     if (!L || !box) return;
     const classes = new Set(rows.map((r) => r.classCode)), trainers = new Set(rows.map((r) => r.trainerCode)), left = L.rows.length - rows.length;
     box.innerHTML = `<p>${rows.length} class units · ${classes.size} classes · ${trainers.size} trainers teaching · ${L.trainers.length} on the trainers list · ${rows.reduce((a, r) => a + r.hoursPerWeek, 0)} hours a week${left ? ` <span class="muted">(${left} class unit${left === 1 ? '' : 's'} of other departments left out)</span>` : ''}</p>
+        ${(() => { const j = rows.filter((r) => r.classCode.includes(',')), s = new Set(rows.filter((r) => r.classCode.includes('/') && !r.classCode.includes(',')).map((r) => r.classCode));
+          return j.length || s.size ? `<p class="muted small">${j.length ? `${j.length} unit${j.length === 1 ? ' is' : 's are'} taught to classes together (a comma, e.g. <i>${esc(j[0].classCode)}</i>): each class gets the unit and its trainer marks them as one lesson. ` : ''}${s.size ? `${s.size} class${s.size === 1 ? '' : 'es'} with a slash (e.g. <i>${esc([...s][0])}</i>) ${s.size === 1 ? 'is' : 'are'} one class for every unit.` : ''}</p>` : ''; })()}
         <div class="table-wrap"><table class="report-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Lessons/wk</th><th class="num">Hrs/wk</th></tr></thead>
         <tbody>${rows.slice(0, 6).map((r) => `<tr><td>${esc(r.classCode)}</td><td>${esc(r.unitCode)} — ${esc(r.unitName)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessonsPerWeek}</td><td class="num">${r.hoursPerWeek}</td></tr>`).join('')}
         ${rows.length > 6 ? `<tr><td colspan="5" class="muted">…and ${rows.length - 6} more</td></tr>` : ''}</tbody></table></div>`;

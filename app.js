@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.23.0';
+const APP_VERSION = '4.24.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -282,7 +282,8 @@ function normaliseRoster(input) {
     _id: 'trainee:' + t.admNo, type: 'trainee', admNo: t.admNo, name: t.name || t.admNo, classCode: t.classCode, active: t.active !== false, regCode: t.regCode || '' }));
   const units = (input.units || []).filter((u) => u.classCode && u.code).map((u) => ({
     _id: `unit:${u.classCode}:${u.code}`, type: 'unit', classCode: u.classCode, code: u.code, name: u.name || u.code,
-    trainerCode: u.trainerCode || '', trainerName: u.trainerName || '', lessonsPerWeek: Number(u.lessonsPerWeek) || 2, hoursPerWeek: Number(u.hoursPerWeek) || 3 }));
+    trainerCode: u.trainerCode || '', trainerName: u.trainerName || '', lessonsPerWeek: Number(u.lessonsPerWeek) || 2, hoursPerWeek: Number(u.hoursPerWeek) || 3,
+    ...(Array.isArray(u.joint) && u.joint.length > 1 ? { joint: u.joint } : {}) }));
   for (const x of [...trainees, ...units]) {
     if (!known.has(x.classCode)) { known.add(x.classCode); classes.push({ _id: 'class:' + x.classCode, type: 'class', code: x.classCode, name: x.classCode, level: '', misClass: '' }); }
   }
@@ -731,32 +732,41 @@ async function withPartners(doc) {
 /** Is this register the one on screen (on its own or as one stream of a combined lesson)? */
 const isOnScreen = (id) => !!state.current && (state.current._id === id || !!state.current._parts?.some((p) => p._id === id));
 /** Streams of the chosen class this trainer teaches the chosen unit in (2 or more: they can be combined). */
-function combinableStreams() {
-  const cls = $('#fClass').value, unit = $('#fUnit').value, g = streamGroup(cls);
-  if (!g) return [];
+/** The classes the chosen lesson can be marked with: the other streams this trainer teaches the unit in, and the classes the
+ * loading joins for this unit ("ICT L6ICT-26J, ICT L6ICT-26M-CT"; those start ticked). all includes the chosen class. */
+function lessonPartners() {
+  const cls = $('#fClass').value, unit = $('#fUnit').value;
   const mine = new Set(markableUnits().filter((u) => u.code === unit).map((u) => u.classCode));
-  return g.codes.filter((c) => mine.has(c));
+  const joint = (markableUnits().find((u) => u.classCode === cls && u.code === unit)?.joint || []).filter((c) => mine.has(c) && c !== cls);
+  const streams = (streamGroup(cls)?.codes || []).filter((c) => mine.has(c));
+  const all = [...new Set([cls, ...streams, ...joint])].sort();
+  return { all: all.length > 1 ? all : [], joint };
 }
+/** A short name for a class among others: its stream letter, or the last part of its code. */
+const partTag = (code) => streamLetter(code) || String(code).split(' ').pop();
+const comboKey = (all) => `${$('#fUnit').value}|${all.join(',')}`;
 function renderStreamChoice() {
   const box = $('#fStreamsBox'); if (!box) return;
-  const cls = $('#fClass').value, list = combinableStreams();
-  if (list.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
-  const saved = (state.settings.combine || {})[`${streamGroup(cls).base}|${$('#fUnit').value}`] || [];
+  const cls = $('#fClass').value, { all, joint } = lessonPartners();
+  if (all.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
+  const saved = (state.settings.combine || {})[comboKey(all)];
+  const streamsOnly = !joint.length && !!streamGroup(cls) && all.every((c) => streamGroup(cls).codes.includes(c));
   box.hidden = false;
-  box.innerHTML = '<span class="kr-label">Streams in this lesson</span>' + list.map((c) => {
-    const self = c === cls, on = self || (saved.includes(cls) && saved.includes(c));
-    return `<label class="kchip" title="${self ? 'The class chosen above' : 'Tick to mark this stream on the same register (a combined lesson)'}"><input type="checkbox" value="${esc(c)}" ${on ? 'checked' : ''} ${self ? 'disabled' : ''}><span>Stream ${esc(streamLetter(c))}</span></label>`;
+  box.innerHTML = `<span class="kr-label">${streamsOnly ? 'Streams' : 'Classes'} in this lesson</span>` + all.map((c) => {
+    // Saved: the classes marked together last time; this one goes with the chosen class only if both were in it.
+    const self = c === cls, on = self || (saved ? saved.includes(cls) && saved.includes(c) : joint.includes(c));
+    const title = self ? 'The class chosen above' : joint.includes(c) ? 'The loading has this unit taught to these classes together' : 'Tick to mark this stream on the same register (a combined lesson)';
+    return `<label class="kchip" title="${title}"><input type="checkbox" value="${esc(c)}" ${on ? 'checked' : ''} ${self ? 'disabled' : ''}><span>${streamsOnly ? `Stream ${esc(streamLetter(c))}` : esc(partTag(c))}</span></label>`;
   }).join('');
 }
 const chosenStreams = () => {
   const cls = $('#fClass').value, box = $('#fStreamsBox');
   return !box || box.hidden ? [cls] : [cls, ...$$('input:checked:not(:disabled)', box).map((i) => i.value)].sort();
 };
+/** The classes ticked are remembered for this set of classes and unit (an untick too: joined classes start ticked). */
 async function rememberStreams() {
-  const g = streamGroup($('#fClass').value); if (!g) return;
-  const combine = { ...(state.settings.combine || {}) }, key = `${g.base}|${$('#fUnit').value}`, codes = chosenStreams();
-  if (codes.length > 1) combine[key] = codes; else delete combine[key];
-  await saveSettings({ combine });
+  const { all } = lessonPartners(); if (!all.length) return;
+  await saveSettings({ combine: { ...(state.settings.combine || {}), [comboKey(all)]: chosenStreams() } });
 }
 
 /** A register of a term that has ended stays as it is, unless the HOD or MIS Officer unlocked its class and unit. */
@@ -775,12 +785,13 @@ function renderRegister() {
   if (!s) { $('#register').hidden = true; return; }
   $('#register').hidden = false;
   const g = s._parts && streamGroup(s._parts[0].classCode);
-  $('#regTitle').textContent = s._parts ? (g ? `${g.base} · streams ${s._parts.map((p) => streamLetter(p.classCode)).join(' + ')}` : s.classCode) : s.classCode;
+  const allStreams = g && s._parts.every((p) => g.codes.includes(p.classCode));
+  $('#regTitle').textContent = s._parts ? (allStreams ? `${g.base} · streams ${s._parts.map((p) => streamLetter(p.classCode)).join(' + ')}` : s._parts.map((p) => p.classCode).join(' + ')) : s.classCode;
   // On a combined lesson each student shows their stream.
   const streamTag = s._parts ? (() => {
     const of = new Map();
-    for (const p of s._parts) for (const t of rosterFor(p.classCode)) of.set(lower(t.admNo), streamLetter(p.classCode) || p.classCode);
-    return (adm) => (of.has(lower(adm)) ? ` <span class="stag" title="Stream">${esc(of.get(lower(adm)))}</span>` : '');
+    for (const p of s._parts) for (const t of rosterFor(p.classCode)) of.set(lower(t.admNo), partTag(p.classCode));
+    return (adm) => (of.has(lower(adm)) ? ` <span class="stag" title="Class">${esc(of.get(lower(adm)))}</span>` : '');
   })() : () => '';
   const wk = s.week ? `Week ${s.week} ` : '';
   const day = fmtDate(s.date).replace(/, (?=[0-9]{4}$)/, ' ');
@@ -934,7 +945,7 @@ function openAddStudent() {
   $('#asMsg').textContent = '';
   const parts = state.current._parts;
   $('#asStreamBox').hidden = !parts;
-  $('#asStream').innerHTML = (parts || []).map((p) => `<option value="${esc(p.classCode)}">Stream ${esc(streamLetter(p.classCode) || p.classCode)} (${esc(p.classCode)})</option>`).join('');
+  $('#asStream').innerHTML = (parts || []).map((p) => `<option value="${esc(p.classCode)}">${streamLetter(p.classCode) ? `Stream ${esc(streamLetter(p.classCode))} (${esc(p.classCode)})` : esc(p.classCode)}</option>`).join('');
   $('#asReason').innerHTML = '';
   fillAddStudent();
   $('#addStudentDialog').showModal();

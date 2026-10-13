@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.23.0**, server (Worker) **6.7.0**, database schema **10**, Drive bridge **1.4.2**.
+Describes app **4.24.0**, server (Worker) **6.8.0**, database schema **11**, Drive bridge **1.4.2**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -314,7 +314,7 @@ A second Worker, `rvnp-attendance-demo`, with its own D1 database `rvnp-demo`, r
 | `terms` | `id` | Name, duration, start date, breaks, `status` (one `active`), `cat_weeks`, `series`, `lesson_hours`. |
 | `classes` | `code` | Streams, `mis_class` (the MIS class list they belong to), `status` (`archived` or empty), `archived_at`, `archived_by`. |
 | `units` | `class_code, code` | Units per class (used only when there is no loading). |
-| `loading` | `term_id, class_code, unit_code` | Who teaches what each term: trainer, lessons and hours per week. |
+| `loading` | `term_id, class_code, unit_code` | Who teaches what each term: trainer, lessons and hours per week; `joint` names the classes taught this unit together (from a comma code). |
 | `trainees` | `adm_no` | Official class lists: name, `class_code` (stream), `status`, `mis_class`, `reg_code` (CDACC). |
 | `requests` | `id` | Students added by trainers and the MIS Officer's decision (`pending`, `approved`, `rejected`, `merged` with `merged_into`). |
 | `sessions` | `id` | One row per register: date, class, unit, period, trainer, counts and %, `term_id`, `week`, `kind` (`lesson`, `cat`, `extra`), `slots` (2 = double), `synced_at`, and `data` (the whole register as JSON, including every student's mark and its time). |
@@ -500,6 +500,8 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 - Accepted check-ins mark the student Present unless the trainer marked them explicitly. Check-ins older than 150 days are folded into their register (`qrFolded`) to keep the table small.
 
 ### 9.3a Streams and combined lessons
+
+- **Joined classes in the loading**: a slash (`ICT L5LIS-26S/L6LIM-26S`) is one class for every unit; it stays one `classes` row, takes students from more than one MIS list (the class-list import counts as "missing" only students whose `mis_class` is the list being uploaded, and `Imports.suggestStreams` suggests the slash class for an MIS list matching either part by level, year, intake and the first two letters of the programme). A comma (`ICT L6ICT-26J, ICT L6ICT-26M-CT`) is classes taught that unit together: `uploadLoading` splits it (`jointParts`) into a row per class with `joint` = the classes, and removes classes named with a comma that nothing references. The roster sends `joint` with the unit; the Mark tab offers those classes ticked (`lessonPartners`) and opens them as a combined lesson, below.
 
 - **Streams** are found from the class codes alone: codes that differ only in a final letter A–H after the intake (`ICT L6CS-26S-A` / `-B`, `ICT L6CS-25SA` / `SB` / `SC`), when at least two such classes exist (`streamGroup` in `app.js`).
 - **Combined lesson**: when a trainer's loading has the same unit in two or more streams, the Mark tab offers **Streams in this lesson**. Opening the slot gets or creates one register per ticked stream (the usual ids, the usual clash and 3-a-week checks per stream), each with `combined: [class codes]`. The screen shows a joined copy (`combineDocs`, with `_parts`); every save splits it back (`splitDoc`): each student's marks, names, times and QR check-ins go to the register of the stream whose class list has them, while notes, the edit log and the QR secret go on all. The server sees ordinary per-stream registers, so reports, sign-offs, the overview and Drive need no changes. `combined` travels in `push` and comes back through `mySessions`, so another device reopens the lesson combined too.

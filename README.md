@@ -485,3 +485,7 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Add student starts with the reason.** *In the wrong stream* turns the admission number into a list of the class's other-stream students (the name fills itself in); every other reason keeps typing the admission number and name. The separate *From another stream* box is gone.
 - **Pending students are marked by every trainer of the class**, as Pending, until the decision.
 - **The HOD can move a student between streams** (Move here or Reject on those requests); new students and merges stay with the MIS Officer. (Server 6.7.0.)
+
+## Changes in 4.24
+
+- **The loading's two ways of joining classes.** A slash (*ICT L5LIS-26S/L6LIM-26S*) is one class for every unit: both MIS lists go into it, and the second no longer marks the first list's students as missing. A comma (*ICT L6ICT-26J, ICT L6ICT-26M-CT*) is classes taught one unit together: each class gets the unit with its own register, report and marksheet, and the Mark tab offers them ticked as one combined lesson. Classes named with a comma are no longer made (old empty ones are removed). Server 6.8.0, schema 11. **Upload the loading again** to apply this to the current term.

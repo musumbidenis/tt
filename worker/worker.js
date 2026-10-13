@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.7.0';
-const SCHEMA_VERSION = '10';
+export const VERSION = '6.8.0';
+const SCHEMA_VERSION = '11';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS login_fails (code TEXT PRIMARY KEY COLLATE NOCASE, fa
 CREATE TABLE IF NOT EXISTS terms (id TEXT PRIMARY KEY, name TEXT, duration TEXT, start_date TEXT, weeks INTEGER, breaks TEXT, status TEXT, updated_at TEXT, cat_weeks TEXT);
 CREATE TABLE IF NOT EXISTS classes (code TEXT PRIMARY KEY, name TEXT, level TEXT, mis_class TEXT, population INTEGER);
 CREATE TABLE IF NOT EXISTS units (class_code TEXT, code TEXT, name TEXT, PRIMARY KEY (class_code, code));
-CREATE TABLE IF NOT EXISTS loading (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT COLLATE NOCASE, trainer_name TEXT, lessons_per_week REAL, hours_per_week REAL, population INTEGER, updated_at TEXT, PRIMARY KEY (term_id, class_code, unit_code));
+CREATE TABLE IF NOT EXISTS loading (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT COLLATE NOCASE, trainer_name TEXT, lessons_per_week REAL, hours_per_week REAL, population INTEGER, updated_at TEXT, joint TEXT, PRIMARY KEY (term_id, class_code, unit_code));
 CREATE TABLE IF NOT EXISTS trainees (adm_no TEXT PRIMARY KEY COLLATE NOCASE, name TEXT, class_code TEXT, status TEXT DEFAULT 'active', mis_class TEXT, added_by TEXT, added_at TEXT, updated_by TEXT, updated_at TEXT, note TEXT);
 CREATE INDEX IF NOT EXISTS trainees_class ON trainees (class_code);
 CREATE INDEX IF NOT EXISTS trainees_mis ON trainees (mis_class);
@@ -72,7 +72,9 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   'ALTER TABLE evidence ADD COLUMN shared TEXT', 'ALTER TABLE evidence ADD COLUMN changed_at TEXT',
   // The backup copy of an approved document in the backup account's Drive.
   'ALTER TABLE evidence ADD COLUMN archived_at TEXT', 'ALTER TABLE evidence ADD COLUMN archive_id TEXT', 'ALTER TABLE evidence ADD COLUMN archive_tries INTEGER',
-  'ALTER TABLE evidence ADD COLUMN archive_error TEXT'];
+  'ALTER TABLE evidence ADD COLUMN archive_error TEXT',
+  // Classes taught one unit together ("ICT L6ICT-26J, ICT L6ICT-26M-CT" in the loading): each class's row names them all.
+  'ALTER TABLE loading ADD COLUMN joint TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -100,6 +102,14 @@ const classFromSession = (id) => String(id).split(':')[2] || '';
 /** Streams of one class differ only in a last letter ("ICT L6CS-26S-A" / "-B", "ICT L6CS-25SA" / "SB"): the shared part, or null. */
 const streamBase = (code) => { const m = /^(.*\d{2}-?[A-Z])-?([A-H])$/.exec(String(code || '')); return m ? m[1].replace(/-$/, '') : null; };
 const unitFromSession = (id) => String(id).split(':')[3] || '';
+/** The loading's two ways of joining classes: "ICT L5LIS-26S/L6LIM-26S" is one class taught together for every unit;
+ * "ICT L6ICT-26J, ICT L6ICT-26M-CT" is two classes taught together for that one unit. jointParts gives the classes of the second. */
+export function jointParts(code) {
+  const parts = String(code || '').split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const prefix = (parts[0].match(/^([A-Z]+)\s/) || [])[1];
+  return [...new Set(parts.map((x) => (prefix && !/\s/.test(x) ? `${prefix} ${x}` : x)))];
+}
 /** A combined lesson ("ICT L6ICT-26J, ICT L6ICT-26M-CT") belongs to each class it names. */
 export function classParts(code) {
   const parts = String(code).split(/\s*[,/]\s*/).map((x) => x.trim()).filter(Boolean);
@@ -433,16 +443,26 @@ async function uploadLoading(env, b, me) {
   const seen = new Map();
   for (const r of b.rows || []) {
     if (!r || !r.classCode || !r.unitCode) continue;
-    const k = r.classCode + '|' + r.unitCode;
-    if (!seen.has(k)) seen.set(k, r);
+    // "A, B": the classes are taught this unit together. Each class gets the unit, and its row names the classes taught
+    // together, so the trainer marks them as one lesson. ("A/B" is one class for every unit and stays as it is.)
+    const parts = jointParts(r.classCode);
+    for (const cls of parts || [r.classCode]) {
+      const k = cls + '|' + r.unitCode, had = seen.get(k);
+      if (!had) seen.set(k, { ...r, classCode: cls, joint: parts ? parts.join(', ') : '', population: parts ? null : r.population });
+      else if (parts && !had.joint && lower(had.trainerCode) === lower(r.trainerCode)) had.joint = parts.join(', ');
+    }
   }
   if (!seen.size) fail('No loading rows found in that file');
   const rows = [...seen.values()];
   await run(env, 'DELETE FROM loading WHERE term_id=?', term.id);
-  await upsertMany(env, 'loading', ['term_id', 'class_code', 'unit_code', 'unit_name', 'trainer_code', 'trainer_name', 'lessons_per_week', 'hours_per_week', 'population', 'updated_at'],
+  await upsertMany(env, 'loading', ['term_id', 'class_code', 'unit_code', 'unit_name', 'trainer_code', 'trainer_name', 'lessons_per_week', 'hours_per_week', 'population', 'updated_at', 'joint'],
     rows.map((r) => ({ term_id: term.id, class_code: r.classCode, unit_code: r.unitCode, unit_name: r.unitName || r.unitCode, trainer_code: r.trainerCode || '',
-      trainer_name: r.trainerName || '', lessons_per_week: Number(r.lessonsPerWeek) || 2, hours_per_week: Number(r.hoursPerWeek) || 3, population: Number(r.population) || null, updated_at: now })),
+      trainer_name: r.trainerName || '', lessons_per_week: Number(r.lessonsPerWeek) || 2, hours_per_week: Number(r.hoursPerWeek) || 3, population: Number(r.population) || null, updated_at: now,
+      joint: r.joint || null })),
     ['term_id', 'class_code', 'unit_code']);
+  // Earlier loadings made a class out of each "A, B" code: remove those that nothing uses any more.
+  const unused = (t) => `NOT EXISTS (SELECT 1 FROM ${t} x WHERE x.class_code = classes.code)`;
+  await run(env, `DELETE FROM classes WHERE code LIKE '%,%' AND ${['loading', 'trainees', 'sessions', 'unit_marks', 'marks', 'evidence', 'signoffs', 'requests'].map(unused).join(' AND ')}`);
   // Classes: add new class codes; keep names, levels and MIS links already set.
   const classes = new Map();
   for (const r of rows) if (!classes.has(r.classCode)) classes.set(r.classCode, { code: r.classCode, name: r.classCode, level: levelOf(r.classCode), mis_class: null, population: Number(r.population) || null });
@@ -485,7 +505,7 @@ async function readRoster(env, b, me, pre) {
   loading.splice(0, loading.length, ...loading.filter((r) => keep(r.class_code)));
   const units = loading.length
     ? loading.map((r) => ({ classCode: r.class_code, code: r.unit_code, name: r.unit_name || r.unit_code, trainerCode: r.trainer_code, trainerName: r.trainer_name,
-      lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3 }))
+      lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3, ...(r.joint ? { joint: r.joint.split(/\s*,\s*/) } : {}) }))
     : unitRows.filter((r) => keep(r.class_code)).map((r) => ({ classCode: r.class_code, code: r.code, name: r.name || r.code, lessonsPerWeek: 2, hoursPerWeek: 3 }));
   // Trainers get only the class lists of the classes they teach; the HOD and MIS Officer get all.
   const mine = new Set();
@@ -640,6 +660,7 @@ async function importClassList(env, b, me) {
   const withdraw = new Set((b.withdraw || []).map(lower));
   for (const r of rows) {
     if (seenAdm.has(lower(r.adm_no)) || inStream[r.class_code] === undefined || !active(r)) continue;
+    if (r.mis_class && r.mis_class !== mis) continue;     // from another MIS list (a class like "ICT L5LIS-26S/L6LIM-26S" takes two)
     out.missing.push({ admNo: r.adm_no, name: r.name, classCode: r.class_code });
     if (withdraw.has(lower(r.adm_no))) {
       writes.push({ ...r, status: 'withdrawn', updated_by: me.code, updated_at: now, note: `Not on the ${mis} list ${todayIso()}` });

@@ -159,10 +159,14 @@ Open **Att Register(s)**.
    - Days that have not come yet cannot be chosen.
 6. Tap **Open register**.
 
-**Streams taught together (a combined lesson).** If you teach the same unit to more than one stream of a class (for example *ICT L6CS-26S-A* and *-B*), a row **Streams in this lesson** appears under the class and unit. The stream you chose is always ticked; tick the others you are teaching in the same slot, then choose the slot and tap **Open register**.
+**Classes taught together (a combined lesson).** A row under the class and unit lists the classes you can mark on one register:
+- **Streams in this lesson**: you teach the same unit to more than one stream of a class (for example *ICT L6CS-26S-A* and *-B*). Tick the streams you are teaching in the same slot.
+- **Classes in this lesson**: the loading has this unit taught to classes together (written with a comma, for example *ICT L6ICT-26J, ICT L6ICT-26M-CT*). Those classes **start ticked**; untick one for a lesson taught to one class only.
+
+The class you chose is always ticked. Choose the slot and tap **Open register**.
 - One register opens with every ticked stream's students, each with a small stream letter (**A**, **B**) next to their name. Mark it as usual.
-- Each stream still keeps **its own register**: every student is saved on their own stream's register, and reports, HOD approval and the department overview stay per stream.
-- The streams you tick are remembered for that class and unit on this device. Untick them for a lesson taught to one stream only.
+- Each stream or class still keeps **its own register**: every student is saved on their own class's register, and reports, HOD approval and the department overview stay per class.
+- What you tick is remembered for those classes and that unit on this device.
 - Opening that slot again from either stream opens the combined register.
 - **Add student** asks which stream the student belongs to.
 - If one of the streams already has a register in that slot, or already has 3 lessons that week, the app tells you which stream; untick it or choose another slot.
@@ -244,7 +248,7 @@ You can sign in on several devices, for example a phone and a laptop.
 
 Neither you nor the students need internet during the lesson. The server checks every check-in against your record of which codes were shown and when; a forged, old or other-lesson code is refused, even if it arrives months later.
 
-A student from another class is refused on their own device. In a combined lesson (two classes on one loading row, or streams ticked together), students of every class or stream in it can check in, and each check-in goes to the student's own stream's register.
+A student from another class is refused on their own device. In a combined lesson (streams or classes ticked together), students of every class in it can check in, and each check-in goes to the student's own class's register. A class joined for every unit (a slash) is one class, so all its students check in to it.
 
 ### 4.2 Scan students' QR IDs
 
@@ -506,6 +510,10 @@ The app makes the **12 teaching weeks** and skips the breaks. The card then read
 1. Choose the department loading workbook (`.xlsm` or `.xlsx`). The app reads the **Subject Loading**, **List of Trainers** and **List of Subject** tabs.
 2. If the workbook also has classes from other departments (for example *BCE* or *HT* classes where an ICT trainer teaches a shared unit), the preview lists each department with a tick box. They are **left out** unless you tick them; the totals and the table change as you tick. Your own department's classes always load.
 3. Check the preview, then tap **Upload loading**. Every trainer gets an account; anyone listed as HOD gets the HOD role.
+
+**Two ways of joining classes in the loading** (the preview says how many of each it found):
+- **A slash** (*ICT L5LIS-26S/L6LIM-26S*): the two classes learn **every unit together**. The app treats it as **one class**: one register, one report and one marksheet per unit. Upload **both** MIS class lists (here *LISL5-…* and *LISL6-…*) into it; the app suggests it for either list, and the second list does not mark the first list's students as missing.
+- **A comma** (*ICT L6ICT-26J, ICT L6ICT-26M-CT*): the classes learn **that unit together**, and other units apart. Each class gets the unit, with its own register, report and marksheet; the trainer marks them together as one lesson (see [3.1](#31-choose-the-lesson)). No class called "A, B" is made, and ones left by earlier loadings are removed when nothing uses them.
 
 **Class lists**
 1. Tap **Choose class register files** and pick one or more class register PDFs from the MIS system (the same register as Excel or CSV also works).
