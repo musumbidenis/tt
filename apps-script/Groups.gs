@@ -28,7 +28,7 @@ function groupsApi_(method, url, body) {
 
 /** The college's Google customer ID ("customers/C0…"), which every new group needs. Kept in the Script Property
  * GROUPS_CUSTOMER once known. Tried in turn: the account's own directory entry, then any group it belongs to;
- * failing those, Google's alias for "my own organisation". tried collects what each way answered. */
+ * or a group made by hand (ark-probe). tried collects what each way answered. */
 function groupsCustomer_(tried) {
   var p = PropertiesService.getScriptProperties(), have = p.getProperty('GROUPS_CUSTOMER');
   if (have) return have;
@@ -38,6 +38,12 @@ function groupsCustomer_(tried) {
     ['directory entry', function () {
       var u = groupsApi_('get', 'https://admin.googleapis.com/admin/directory/v1/users/' + encodeURIComponent(me) + '?viewType=domain_public');
       return u.customerId ? 'customers/' + u.customerId : '';
+    }],
+    ['ark-probe group', function () {
+      // A group made by hand at groups.google.com (GROUPS_PROBE, default ark-probe@<domain>): its record names the customer.
+      var probe = p.getProperty('GROUPS_PROBE') || ('ark-probe@' + me.split('@')[1]);
+      var g = groupByEmail_(probe);
+      return g ? groupsApi_('get', CI + g).parent || '' : '';
     }],
     ['groups this account is in', function () {
       var q = "member_key_id == '" + me + "' && '" + FORUM + "' in labels";
@@ -50,7 +56,7 @@ function groupsCustomer_(tried) {
     catch (e) { tried.push(ways[i][0] + ': ' + e.message); }
   }
   if (/^customers\/C/.test(found)) { p.setProperty('GROUPS_CUSTOMER', found); return found; }
-  return 'customers/my_customer';
+  throw new Error('Could not find the college customer ID. Create the group ark-probe@' + me.split('@')[1] + ' at groups.google.com as ' + me + ' and run this again, or put the ID (customers/C0…) in the Script Property GROUPS_CUSTOMER.');
 }
 
 function groupByEmail_(email) {
@@ -71,7 +77,10 @@ function testGroups() {
     catch (e) { if (!opt.optional) ok = false; log.push('✗ ' + what + ': ' + e.message); }
   }
   var tried = [];
-  step('Customer ID', function () { var c = groupsCustomer_(tried); return c + (tried.length ? ' [' + tried.join(' · ') + ']' : ''); });
+  step('Customer ID', function () {
+    try { var c = groupsCustomer_(tried); return c + (tried.length ? ' [' + tried.join(' · ') + ']' : ''); }
+    catch (e) { throw new Error(e.message + ' [' + tried.join(' · ') + ']'); }
+  });
   step('Create ' + email, function () {
     name = groupByEmail_(email);
     if (name) return 'it was already there (' + name + ')';

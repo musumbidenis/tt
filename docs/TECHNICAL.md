@@ -160,7 +160,8 @@ database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
 | `POE_FOLDER_ID` | The Drive folder for evidence. |
 | `WEB_APP_URL` | Optional: the web app's `/exec` address, if the detected one is ever wrong. |
 | `SECRET` | Created by `setup()`; must equal the Worker's `BRIDGE_SECRET`. |
-| `GROUPS_CUSTOMER` | The college's Google customer ID (`customers/C0…`), found by `testGroups()` from any group the bridge account is in, or typed in. |
+| `GROUPS_CUSTOMER` | The college's Google customer ID (`customers/C0…`), read from the `ark-probe` group by `testGroups()`, or typed in. |
+| `GROUPS_PROBE` | Optional: a hand-made group to read the customer ID from (default `ark-probe@<domain>`). |
 | `GROUPS_TEST_MEMBER` | Optional: who `testGroups()` adds and removes (default `musumbidenis@<domain>`). |
 
 The bridge also keeps its own working state in Script Properties (`CURSOR`, `PENDING`, `SHEETS`, `MATCHED`, `TRAINERS`, `INDEX_ID`, `NUDGE_*`, `GROUPS_TEST_RESULT`).
@@ -246,7 +247,7 @@ The bridge makes and keeps Google Groups (one per class, all trainers, class rep
 3. https://script.google.com as ictpoe → the bridge → **Project Settings → Google Cloud Platform (GCP) Project → Change project** → `945611933983`. Run `setup` once and approve.
 4. Push the bridge ([5.3](#53-the-drive-bridge)), open the editor, choose **testGroups** and **Run**; approve the new permissions. It makes `ark-test@<domain>`, sets owners-only posting, adds and removes `GROUPS_TEST_MEMBER`, emails the group once, deletes it, and logs each step (also kept in `GROUPS_TEST_RESULT`).
 
-The customer ID is read from ictpoe's directory entry, else from any group ictpoe is in, else Google's `customers/my_customer` alias is tried; the log shows what each way answered. If all fail, put the ID (`customers/C0…`, from the Google admin) in `GROUPS_CUSTOMER`.
+Every new group needs the college's customer ID, which an ordinary account cannot read directly (its directory entry leaves it out, and Google refuses `customers/my_customer`). Create one group by hand at groups.google.com as ictpoe, `ark-probe@<domain>` (or name another in `GROUPS_PROBE`): the bridge reads the ID from that group's record and keeps it in `GROUPS_CUSTOMER`. The Google admin can also give the ID (Admin console → Account → Account settings) to type in.
 
 ---
 
