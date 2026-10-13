@@ -256,7 +256,7 @@ def reset(url, pin, mis_pin):
     wipe_and_staff(pin, mis_pin)
     print('filling it…')
     fill(api, pin, mis_pin)
-    print(f'\nDemo ready.\n  Staff app:   {url}/\n  Student app: {url}/student.html\n'
+    print(f'\nDemo ready.\n  Staff app:   {url}/\n  Student app: {url}/student\n'
           f'  Trainers DEMO02 to {TRAINERS[-1][0]} (one unit each) and DEMO01 (HOD) with PIN {pin}; MIS Officer: MIS with the MIS PIN.')
 
 
