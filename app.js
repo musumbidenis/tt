@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.22.0';
+const APP_VERSION = '4.23.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -707,7 +707,8 @@ function splitDoc(v) {
   const lists = parts.map((p) => new Set(rosterFor(p.classCode).map((t) => lower(t.admNo))));
   const ownerOf = (adm) => {
     const k = lower(adm);
-    let i = lists.findIndex((l) => l.has(k));
+    const req = state.addreqs.find((a) => !a.done && lower(a.admNo) === k && parts.some((p) => p.classCode === a.classCode));
+    let i = req ? parts.findIndex((p) => p.classCode === req.classCode) : lists.findIndex((l) => l.has(k));
     if (i === -1) i = parts.findIndex((p) => p.marks && adm in p.marks);
     if (i === -1) { const t = state.trainees.find((x) => lower(x.admNo) === k); i = t ? parts.findIndex((p) => p.classCode === t.classCode) : -1; }
     return i === -1 ? 0 : i;
@@ -924,6 +925,9 @@ async function closeRegister() {
 }
 
 /* ---------------- adding a student while marking (pending until the MIS Officer approves) ---------------- */
+const WRONG_STREAM = 'In the wrong stream';
+/** The stream a student is added to: the register's, or on a combined lesson the one chosen. */
+const addTarget = () => (state.current?._parts ? $('#asStream').value : state.current?.classCode);
 function openAddStudent() {
   if (!state.current) { toast('Open a register first', 'err'); return; }
   $('#addStudentForm').reset();
@@ -931,43 +935,53 @@ function openAddStudent() {
   const parts = state.current._parts;
   $('#asStreamBox').hidden = !parts;
   $('#asStream').innerHTML = (parts || []).map((p) => `<option value="${esc(p.classCode)}">Stream ${esc(streamLetter(p.classCode) || p.classCode)} (${esc(p.classCode)})</option>`).join('');
-  const mates = otherStreamStudents();
-  $('#asPickBox').hidden = !mates.length;
-  $('#asPick').innerHTML = '<option value="">Type a new student below</option>'
-    + mates.map((t) => `<option value="${esc(t.admNo)}">${esc(t.name)} · ${esc(t.admNo)} (stream ${esc(streamLetter(t.classCode) || t.classCode)})</option>`).join('');
-  pickOtherStream();
+  $('#asReason').innerHTML = '';
+  fillAddStudent();
   $('#addStudentDialog').showModal();
-  setTimeout(() => $('#asAdm').focus(), 50);
+  setTimeout(() => $('#asReason').focus(), 50);
 }
-/** Students on the list of another stream of this register's class (a student may have been put in the wrong stream). */
-function otherStreamStudents() {
-  const s = state.current; if (!s) return [];
-  const here = (s._parts || [s]).map((p) => p.classCode), seen = new Set(rosterForCurrent().filter((t) => !t.unlisted).map((t) => lower(t.admNo)));
-  const others = new Set(here.flatMap((c) => streamGroup(c)?.codes || []).filter((c) => !here.includes(c)));
-  if (!others.size) return [];
+/** The reason decides how the student is chosen: "In the wrong stream" picks from the other streams' lists; any other reason types them in. */
+function fillAddStudent() {
+  const mates = otherStreamStudents(addTarget()), form = $('#addStudentForm');
+  const reasons = ['Late admission', ...(mates.length ? [WRONG_STREAM] : []), 'Transferred from another class', 'Missing from the class list', 'Other'];
+  const keep = $('#asReason').value;
+  $('#asReason').innerHTML = reasons.map((r) => `<option>${esc(r)}</option>`).join('');
+  $('#asReason').value = reasons.includes(keep) ? keep : reasons[0];
+  const swap = $('#asReason').value === WRONG_STREAM, was = form.dataset.swap === '1';
+  form.dataset.swap = swap ? '1' : '';
+  $('#asPickBox').hidden = !swap; $('#asAdmBox').hidden = swap;
+  $('#asPick').required = swap; $('#asAdm').required = !swap;
+  $('#asName').readOnly = swap;
+  if (swap) {
+    const prev = $('#asPick').value;
+    $('#asPick').innerHTML = '<option value="">Choose the student</option>'
+      + mates.map((t) => `<option value="${esc(t.admNo)}">${esc(t.admNo)} · ${esc(t.name)} (stream ${esc(streamLetter(t.classCode) || t.classCode)})</option>`).join('');
+    $('#asPick').value = mates.some((t) => t.admNo === prev) ? prev : '';
+    $('#asName').value = mates.find((t) => t.admNo === $('#asPick').value)?.name || '';
+  } else if (was) { $('#asAdm').value = ''; $('#asName').value = ''; }
+}
+/** Students on the list of another stream of the class (a student may have been put in the wrong stream). */
+function otherStreamStudents(target) {
+  const g = streamGroup(target); if (!g) return [];
+  const onTarget = new Set(rosterFor(target).map((t) => lower(t.admNo)));
   // The HOD and MIS Officer have every class list; a trainer gets the other streams' names with the class lists.
   const pool = [...state.trainees.filter((t) => t.active !== false).map((t) => ({ admNo: t.admNo, name: t.name, classCode: t.classCode })), ...(state.meta.streamMates || [])];
   const out = new Map();
-  for (const t of pool) if (others.has(t.classCode) && !seen.has(lower(t.admNo)) && !out.has(lower(t.admNo))) out.set(lower(t.admNo), t);
-  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
-/** Choosing a student from another stream fills in their details. */
-function pickOtherStream() {
-  const adm = $('#asPick').value, t = adm && otherStreamStudents().find((x) => x.admNo === adm);
-  $('#asAdm').readOnly = $('#asName').readOnly = !!t;
-  if (t) { $('#asAdm').value = t.admNo; $('#asName').value = t.name; $('#asReason').value = 'In the wrong stream'; }
-  else { $('#asAdm').value = ''; $('#asName').value = ''; }
+  for (const t of pool) if (g.codes.includes(t.classCode) && t.classCode !== target && !onTarget.has(lower(t.admNo)) && !out.has(lower(t.admNo))) out.set(lower(t.admNo), t);
+  return [...out.values()].sort((a, b) => a.admNo.localeCompare(b.admNo, undefined, { numeric: true }));
 }
 async function saveAddStudent(e) {
   e.preventDefault();
   const s = state.current; if (!s) return;
-  const adm = $('#asAdm').value.trim().toUpperCase().replace(/\s+/g, ''), name = $('#asName').value.replace(/\s+/g, ' ').trim();
-  const msg = $('#asMsg');
-  if (!Imports.isAdm(adm)) { msg.textContent = 'Use the admission number as written on the class list, for example L6CS/25S/305999.'; return; }
-  if (name.length < 3) { msg.textContent = 'Enter the student\'s full name.'; return; }
-  if (rosterForCurrent().some((t) => lower(t.admNo) === lower(adm) && !t.unlisted)) { msg.textContent = `${adm} is already on this class list.`; return; }
+  const msg = $('#asMsg'), swap = $('#asReason').value === WRONG_STREAM;
   // On a combined lesson the student is added to the stream chosen.
-  const classCode = s._parts ? $('#asStream').value : s.classCode;
+  const classCode = addTarget();
+  const picked = swap ? otherStreamStudents(classCode).find((t) => t.admNo === $('#asPick').value) : null;
+  if (swap && !picked) { msg.textContent = 'Choose the student from the list.'; return; }
+  const adm = picked ? picked.admNo : $('#asAdm').value.trim().toUpperCase().replace(/\s+/g, ''), name = picked ? picked.name : $('#asName').value.replace(/\s+/g, ' ').trim();
+  if (!picked && !Imports.isAdm(adm)) { msg.textContent = 'Use the admission number as written on the class list, for example L6CS/25S/305999.'; return; }
+  if (name.length < 3) { msg.textContent = 'Enter the student\'s full name.'; return; }
+  if (rosterFor(classCode).some((t) => lower(t.admNo) === lower(adm))) { msg.textContent = `${adm} is already on this class list.`; return; }
   const elsewhere = [...state.trainees, ...(state.meta.streamMates || [])].find((t) => lower(t.admNo) === lower(adm) && !classParts(s.classCode).includes(t.classCode));
   if (!(await ensureEditable())) return;
   const id = `addreq:${classCode}|${adm}`;
@@ -984,7 +998,8 @@ async function saveAddStudent(e) {
   $('#addStudentDialog').close();
   renderRegister();
   markDirty();
-  toast(elsewhere ? `${name} added as pending. They're on ${elsewhere.classCode}'s list; the MIS Officer will decide.` : `${name} added as pending. The MIS Officer will approve them.`, 'ok');
+  toast(picked ? `${name} added as pending. They stay on ${picked.classCode}'s list until the MIS Officer or HOD moves them.`
+    : elsewhere ? `${name} added as pending. They're on ${elsewhere.classCode}'s list; the MIS Officer will decide.` : `${name} added as pending. The MIS Officer will approve them.`, 'ok');
 }
 
 /* ---------------- QR scanning of ID cards ---------------- */
@@ -2180,7 +2195,7 @@ function wire() {
   $('#allAbsent').addEventListener('click', () => setAll('A'));
   $('#addStudentBtn').addEventListener('click', openAddStudent);
   $('#addStudentForm').addEventListener('submit', saveAddStudent);
-  $('#asPick').addEventListener('change', pickOtherStream);
+  for (const id of ['#asReason', '#asStream', '#asPick']) $(id).addEventListener('change', fillAddStudent);
   $('#cancelAddStudent').addEventListener('click', () => $('#addStudentDialog').close());
   $('#saveReg').addEventListener('click', async () => { state.dirty = true; await saveCurrent(); toast('Register saved on this device', 'ok'); });
   $('#closeReg').addEventListener('click', closeRegister);

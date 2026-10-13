@@ -76,7 +76,7 @@ Installing matters: the browser then keeps the app's data permanently, and on iP
 | Role | What they can do |
 |---|---|
 | **Trainer** | Mark registers for the classes and units in their loading (also offline). Add a student who is not on the list. Show a lesson QR code and scan students' QR IDs. Enter marks. See, export and submit their units' term registers. Review the POE evidence students send for their units. |
-| **HOD** | Everything a trainer can do for their own units, plus: approve or return term registers, see every class's register, the department overview and the Absences list, and unlock a register or marks from a term that has ended. |
+| **HOD** | Everything a trainer can do for their own units, plus: approve or return term registers, see every class's register, the department overview and the Absences list, move a student a trainer found in the wrong stream, and unlock a register or marks from a term that has ended. |
 | **MIS Officer** | Set up the term, upload the trainer loading and class lists, approve students added by trainers, manage staff, PINs and roles, receive approved POE evidence, see the Absences list, unlock ended terms, connect Google Drive, and archive or delete classes. |
 
 One person can hold several roles, for example an HOD who also teaches.
@@ -200,9 +200,14 @@ The box at the top right of the register says whether it is **Saved on this devi
 
 **A new register starts with everyone present** (you can change this to everyone absent under **Profile → How attendance is counted**).
 
-**Students who are not on the list.** Tap **Add student**, enter the admission number, full name and reason, and choose how to mark them. They are marked straight away and show as **Pending** until the MIS Officer approves them.
+**Students who are not on the list.** Tap **Add student** and choose the **Reason** first: it decides how you give the student.
+- **Late admission**, **Transferred from another class**, **Missing from the class list** or **Other**: type the admission number and full name.
+- **In the wrong stream** (only for a class with streams): the admission number becomes a list of every student on the class's other streams (admission number, name and stream), even streams you don't teach. Pick the student; the name fills itself in.
 
-**A student in the wrong stream.** If the class has streams, **Add student** also has **From another stream**: a list of every student on the other streams' lists (name, admission number and stream), even streams you don't teach. Pick the student; their details are filled in and the reason is set to *In the wrong stream*. They are marked on your register at once and show as **Pending**. When the MIS Officer approves (**Move here**), the student moves to your stream; until then they stay on their old stream's list too.
+Choose how to mark them and tap **Add and mark**. They are marked straight away and show as **Pending**.
+- A pending student is on that class's registers for **every trainer** of the class, not only yours, so other units' trainers mark them too, as **Pending**.
+- A new student waits for the MIS Officer. A student in the wrong stream waits for the **MIS Officer or the HOD** to tap **Move here**; until then they stay on their old stream's list too.
+- On a combined lesson, **Add to stream** says which stream the student joins.
 
 **Locked registers.**
 - A register becomes **locked** a set number of hours after it was made (48 by default; see **Profile**). Changing a locked register asks you for a reason, which is recorded.
@@ -516,7 +521,7 @@ Uploading a newer list later keeps everyone in their stream; only new students a
 ### 10.2 Students added by trainers
 
 These appear at the top of Manage. For each one:
-- **Approve** adds them to the class (**Move here** if they are on another class's list, for example a student a trainer found in the wrong stream);
+- **Approve** adds them to the class (**Move here** if they are on another class's list, for example a student a trainer found in the wrong stream; the HOD can also move or reject those);
 - **Same as…** is for a typo or duplicate: their marks count for the student you pick;
 - **Reject** leaves them out of that class's registers and reports.
 

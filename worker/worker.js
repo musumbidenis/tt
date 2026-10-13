@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.6.0';
+export const VERSION = '6.7.0';
 const SCHEMA_VERSION = '10';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -263,7 +263,7 @@ const ACTIONS = {
   phones: { role: ['HOD', 'MIS'], fn: (env) => listPhones(env) },
   resetPhone: { role: ['HOD', 'MIS'], fn: (env, b, me) => resetPhone(env, b, me) },
   requests: { role: ['MIS', 'HOD'], fn: (env) => listRequests(env) },
-  decideRequest: { role: ['MIS'], fn: (env, b, me) => decideRequest(env, b, me) },
+  decideRequest: { role: ['MIS', 'HOD'], fn: (env, b, me) => decideRequest(env, b, me) },
   staff: { role: ['MIS'], fn: (env) => listStaff(env) },
   updateStaff: { role: ['MIS'], fn: (env, b, me) => updateStaff(env, b, me) },
   poeList: { fn: (env, b, me) => poeList(env, b, me) },
@@ -721,6 +721,12 @@ async function listRequests(env) {
 async function decideRequest(env, b, me) {
   const r = await one(env, 'SELECT * FROM requests WHERE id=?', b.id);
   if (!r) fail('That request no longer exists');
+  // The HOD decides moves between streams of one class; everything else is the MIS Officer's.
+  if (!me.roles.includes('MIS')) {
+    const t = await one(env, 'SELECT class_code FROM trainees WHERE adm_no=?', r.adm_no);
+    const base = streamBase(r.class_code);
+    if (!t || !base || t.class_code === r.class_code || streamBase(t.class_code) !== base || b.decision === 'merge') fail('Only the MIS Officer can decide this one');
+  }
   const now = nowIso();
   if (b.decision === 'approve') {
     const t = await one(env, 'SELECT * FROM trainees WHERE adm_no=?', r.adm_no);

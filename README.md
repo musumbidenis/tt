@@ -479,3 +479,9 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 ## Changes in 4.22
 
 - **A student in the wrong stream can be added and marked.** On a class with streams, the register's **Add student** has **From another stream**: every student on the other streams' lists, even streams the trainer doesn't teach. Picking one marks them at once as **Pending**; the MIS Officer's **Move here** moves them to that stream. (Server 6.6.0 sends trainers the names in their classes' other streams.)
+
+## Changes in 4.23
+
+- **Add student starts with the reason.** *In the wrong stream* turns the admission number into a list of the class's other-stream students (the name fills itself in); every other reason keeps typing the admission number and name. The separate *From another stream* box is gone.
+- **Pending students are marked by every trainer of the class**, as Pending, until the decision.
+- **The HOD can move a student between streams** (Move here or Reject on those requests); new students and merges stay with the MIS Officer. (Server 6.7.0.)

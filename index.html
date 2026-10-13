@@ -298,11 +298,11 @@
   <form id="addStudentForm" method="dialog">
     <div class="scan-head"><strong>Add a student to this class</strong><button type="button" class="btn small ghost" id="cancelAddStudent">Cancel</button></div>
     <p class="muted small">For a student who is attending but not on the class list yet. You can mark them straight away; they show as <b>Pending</b> until the MIS Officer approves them.</p>
-    <label id="asPickBox" hidden>From another stream<select id="asPick"></select></label>
-    <label>Admission number<input id="asAdm" autocapitalize="characters" placeholder="L6CS/25S/305999" required></label>
+    <label id="asStreamBox" hidden>Add to stream<select id="asStream"></select></label>
+    <label>Reason<select id="asReason"></select></label>
+    <label id="asPickBox" hidden>Admission number<select id="asPick"></select></label>
+    <label id="asAdmBox">Admission number<input id="asAdm" autocapitalize="characters" placeholder="L6CS/25S/305999" required></label>
     <label>Full name<input id="asName" autocapitalize="words" required></label>
-    <label id="asStreamBox" hidden>Stream<select id="asStream"></select></label>
-    <label>Reason<select id="asReason"><option>Late admission</option><option>In the wrong stream</option><option>Transferred from another class</option><option>Missing from the class list</option><option>Other</option></select></label>
     <label>Mark them as<select id="asMark"><option value="P">Present</option><option value="L">Late</option></select></label>
     <p id="asMsg" class="err-text small" role="alert"></p>
     <button class="btn primary big" id="asSave">Add and mark</button>

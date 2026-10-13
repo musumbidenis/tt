@@ -124,14 +124,15 @@ const Admin = (() => {
       cache.requests = need(await api('requests')).requests;
       const pending = cache.requests.filter((r) => r.status === 'pending');
       const decided = cache.requests.filter((r) => r.status !== 'pending').slice(0, 30);
-      const can = hasRole('MIS');
+      // The MIS Officer decides every request; the HOD decides moves between streams of one class.
+      const can = hasRole('MIS'), canMove = (r) => can || (hasRole('HOD') && isStreamMove(r.admNo, r.classCode, r.existing?.classCode));
       const item = (r) => `<li class="req" data-id="${esc(r.id)}">
         <div><b>${esc(r.name)}</b> <span class="tadm">${esc(r.admNo)}</span>
           <small>${esc(r.classCode)} · added by ${esc(r.requestedBy)} ${r.requestedAt ? fmtShort(r.requestedAt) : ''}${r.reason ? ' · ' + esc(r.reason) : ''}</small>
           ${r.existing ? `<small class="warn-text">Already on the list of ${esc(r.existing.classCode)} as ${esc(r.existing.name)}${r.existing.active ? '' : ' (withdrawn)'}</small>` : ''}
           ${r.status !== 'pending' ? `<small>${esc(r.status)}${r.mergedInto ? ' into ' + esc(r.mergedInto) : ''}${r.note ? ' · ' + esc(r.note) : ''}</small>` : ''}</div>
-        ${can && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small primary" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
-          <button type="button" class="btn small" data-decide="merge">Same as…</button><button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
+        ${canMove(r) && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small primary" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
+          ${can ? '<button type="button" class="btn small" data-decide="merge">Same as…</button>' : ''}<button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
       fill('m-requests', (pending.length ? `<ul class="mlist reqs">${pending.map(item).join('')}</ul>` : '<p class="muted">No students are waiting. When a trainer adds a student while marking, they appear here.</p>')
         + (decided.length ? `<details class="mdone"><summary>Decided recently (${decided.length})</summary><ul class="mlist reqs">${decided.map(item).join('')}</ul></details>` : ''));
     } catch (e) { fill('m-requests', `<p class="err-text">${esc(e.message)}</p>`); }
@@ -674,10 +675,16 @@ const Admin = (() => {
   }
 
   /* ---------- badge on the Manage tab ---------- */
+  /** Is this request a move from one stream of a class to another? */
+  function isStreamMove(adm, classCode, from) {
+    const now = from || state.trainees.find((t) => lower(t.admNo) === lower(adm))?.classCode;
+    return !!now && now !== classCode && !!streamGroup(classCode)?.codes.includes(now);
+  }
   function refreshBadge() {
     const dot = $('#manageCount'); if (!dot) return;
     let n = 0;
     if (hasRole('MIS')) n += (state.meta.pending || []).length;
+    else if (hasRole('HOD')) n += (state.meta.pending || []).filter((p) => isStreamMove(p.admNo, p.classCode)).length;   // stream moves to decide
     if (hasRole('HOD')) n += cache.signoffs.filter((s) => s.status === 'submitted').length;
     if (cache.backup && cache.backup.level !== 'ok') n += 1;       // the backup account's Drive is filling up
     dot.hidden = !n;
