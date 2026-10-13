@@ -8,197 +8,179 @@
 <meta property="og:title" content="The ARK - Academic Records Keeper">
 <meta property="og:description" content="Attendance, marks and POE evidence for the RVNP ICT Department. On any phone. Even offline.">
 <meta property="og:image" content="docs/images/register.png">
-<meta name="theme-color" content="#0b5d2e">
+<meta name="theme-color" content="#eaf4ee">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <style>
   @font-face { font-family: "Lexend"; src: url("fonts/lexend.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
   @font-face { font-family: "Source Sans 3"; src: url("fonts/source-sans-3.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
   :root {
-    --paper: #f2f5f3; --surface: #ffffff; --sunk: #e8eee9; --ink: #16211b; --ink-2: #33433a; --muted: #5b6b62; --line: #d3ddd6;
-    --p: #10773c; --p-soft: #e0f2e7; --accent: #b9f3cf;
-    --hero-bg: #0b5d2e;                       /* the hero: one flat colour, no picture */
-    --c1: #10773c; --c2: #123d2a; --c3: #a35f00; --c4: #33598a;   /* the four highlight cards */
+    --paper: #ffffff; --soft: #f3f5f4; --tint: #eaf4ee; --ink: #122b1f; --ink-2: #33433a; --muted: #5b6b62; --line: #e1e8e3;
+    --deep: #123d2a;        /* first line of a headline, the dark band */
+    --p: #10773c;           /* second line of a headline, buttons */
+    --p-soft: #d9f0e2; --amber-soft: #fbe9cf; --blue-soft: #dde7f5;
+    --on-deep: #ffffff; --on-deep-2: rgba(255, 255, 255, .78); --deep-line: rgba(255, 255, 255, .2);
     --display: "Lexend", system-ui, sans-serif; --text: "Source Sans 3", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --r: 16px; --shadow: 0 14px 30px rgba(10, 40, 22, .14);
+    --r: 28px; --shadow: 0 18px 40px rgba(18, 43, 31, .12);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --paper: #0e1511; --surface: #16201a; --sunk: #121c16; --ink: #e7efea; --ink-2: #c8d5cd; --muted: #93a79b; --line: #283a2f;
-      --p: #4fcd84; --p-soft: #15301f; --hero-bg: #0a3a1f; --c2: #1d4a35; --shadow: 0 14px 30px rgba(0, 0, 0, .45);
+      --paper: #0e1511; --soft: #131c17; --tint: #12221a; --ink: #e7efea; --ink-2: #c8d5cd; --muted: #93a79b; --line: #24352b;
+      --deep: #bfe9cf; --p: #4fcd84; --p-soft: #183826; --amber-soft: #3a2c14; --blue-soft: #1c2a3d; --shadow: 0 18px 40px rgba(0, 0, 0, .45);
     }
   }
   :root[data-theme="dark"] {
-    --paper: #0e1511; --surface: #16201a; --sunk: #121c16; --ink: #e7efea; --ink-2: #c8d5cd; --muted: #93a79b; --line: #283a2f;
-    --p: #4fcd84; --p-soft: #15301f; --hero-bg: #0a3a1f; --c2: #1d4a35; --shadow: 0 14px 30px rgba(0, 0, 0, .45);
+    --paper: #0e1511; --soft: #131c17; --tint: #12221a; --ink: #e7efea; --ink-2: #c8d5cd; --muted: #93a79b; --line: #24352b;
+    --deep: #bfe9cf; --p: #4fcd84; --p-soft: #183826; --amber-soft: #3a2c14; --blue-soft: #1c2a3d; --shadow: 0 18px 40px rgba(0, 0, 0, .45);
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 var(--text); overflow-x: hidden; }
-  h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -.015em; line-height: 1.2; margin: 0 0 .5rem; }
+  h1, h2, h3 { font-family: var(--display); font-weight: 400; letter-spacing: -.02em; line-height: 1.15; margin: 0; color: var(--deep); }
+  /* two-tone headlines: the second line in the brand colour */
+  .two em { font-style: normal; color: var(--p); display: block; }
   a { color: var(--p); }
   img { max-width: 100%; display: block; }
   .wrap { width: min(1120px, 100% - 32px); margin: 0 auto; }
 
-  /* pill buttons */
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 50px; padding: .7rem 1.6rem; border-radius: 999px;
-    font: 600 1rem var(--display); text-decoration: none; border: 2px solid transparent; transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease; }
-  .btn:hover { transform: translateY(-2px); }
-  .btn svg { width: 18px; height: 18px; }
-  .btn.light { background: #fff; color: #0b5d2e; box-shadow: 0 8px 20px rgba(0, 0, 0, .2); }
-  .btn.ghost { color: #fff; border-color: rgba(255, 255, 255, .75); }
-  .btn.ghost:hover { background: rgba(255, 255, 255, .1); }
-  .btn.solid { background: var(--p); color: #fff; box-shadow: 0 8px 18px color-mix(in srgb, var(--p) 30%, transparent); }
-  .btn.outline { color: var(--p); border-color: var(--p); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 46px; padding: .6rem 1.4rem; border-radius: 999px;
+    font: 500 1rem var(--display); text-decoration: none; border: 1.5px solid transparent; transition: background-color .15s ease, transform .15s ease; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.solid { background: var(--p); color: #fff; }
+  .btn.solid:hover { background: color-mix(in srgb, var(--p) 88%, #000); }
+  .btn.outline { color: var(--p); border-color: var(--p); background: transparent; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.solid { color: #08200f; } }
   :root[data-theme="dark"] .btn.solid { color: #08200f; }
 
+  /* black badges, like store badges: open the staff or student app */
+  .badges { display: flex; flex-wrap: wrap; gap: .8rem; }
+  .badge { display: inline-flex; align-items: center; gap: .65rem; min-height: 54px; padding: .45rem 1.1rem .45rem .85rem; border-radius: 10px; background: #000; color: #fff;
+    text-decoration: none; border: 1px solid #3a3a3a; transition: transform .15s ease; }
+  .badge:hover { transform: translateY(-1px); }
+  .badge svg { width: 26px; height: 26px; flex: 0 0 auto; }
+  .badge small { display: block; font-size: .72rem; line-height: 1.1; opacity: .85; }
+  .badge b { display: block; font: 500 1.12rem/1.15 var(--display); }
+
   /* header */
-  .top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--paper) 90%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
-  .top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 64px; }
+  .top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 70px; }
   .brand { display: flex; align-items: center; gap: .6rem; text-decoration: none; color: var(--ink); }
   .brand img { width: 40px; height: 40px; background: #fff; border-radius: 10px; padding: 3px; }
-  .brand b { font: 700 1.15rem var(--display); display: block; line-height: 1.1; }
+  .brand b { font: 600 1.15rem var(--display); display: block; line-height: 1.1; color: var(--deep); }
   .brand small { color: var(--muted); font-size: .8rem; }
-  .top nav { display: flex; align-items: center; gap: 1.2rem; }
-  .top nav a { text-decoration: none; color: var(--ink-2); font-weight: 600; }
+  .top nav { display: flex; align-items: center; gap: 1.6rem; }
+  .top nav a:not(.btn) { text-decoration: none; color: var(--deep); font-weight: 600; }
   .top nav a:not(.btn):hover { color: var(--p); }
-  .top nav .btn { min-height: 40px; padding: .4rem 1.1rem; }
-  @media (max-width: 820px) { .top nav a:not(.btn) { display: none; } }
+  .top .acts { display: flex; gap: .6rem; }
+  .top .btn { min-height: 40px; padding: .35rem 1.1rem; }
+  @media (max-width: 900px) { .top nav { display: none; } }
+  @media (max-width: 460px) { .top .acts .outline { display: none; } }
 
-  /* hero: a static, plain background */
-  .hero { background: var(--hero-bg); color: #fff; text-align: center; }
-  .hero .wrap { padding: 5rem 0 8.5rem; max-width: 52rem; }
-  .eyebrow { display: inline-block; padding: .3rem .85rem; border-radius: 999px; background: rgba(255, 255, 255, .14); font: 600 .85rem var(--display); letter-spacing: .05em; }
-  .hero h1 { font-size: clamp(2.3rem, 6vw, 3.9rem); margin: 1.1rem 0 .9rem; }
-  .hero h1 span { color: var(--accent); }
-  .hero p.lead { font-size: 1.2rem; color: rgba(255, 255, 255, .9); max-width: 40rem; margin: 0 auto 2rem; }
-  .cta { display: flex; flex-wrap: wrap; gap: .8rem; justify-content: center; }
-  .ticks { display: flex; flex-wrap: wrap; justify-content: center; gap: .4rem 1.4rem; margin: 1.8rem 0 0; padding: 0; list-style: none; color: rgba(255, 255, 255, .85); font-size: .95rem; }
-  .ticks li { display: flex; align-items: center; gap: .4rem; }
-  .ticks svg { width: 18px; height: 18px; color: var(--accent); }
-  @media (max-width: 600px) { .hero .wrap { padding: 3.5rem 0 7.5rem; } }
+  /* hero: a flat, static tint; no pictures */
+  .hero { background: var(--tint); text-align: center; }
+  .hero .wrap { padding: 4.5rem 0 5rem; max-width: 62rem; }
+  .app-icon { width: 76px; height: 76px; margin: 0 auto 1.6rem; border-radius: 20px; background: #fff; padding: 8px; box-shadow: 0 10px 22px rgba(18, 61, 42, .18); }
+  .hero h1 { font-size: clamp(2.5rem, 6.4vw, 4.1rem); }
+  .hero p { font-size: 1.15rem; color: var(--ink-2); max-width: 36rem; margin: 1.3rem auto 2rem; }
+  .hero .badges { justify-content: center; }
+  .hero .demo { margin: 1.4rem 0 0; color: var(--muted); font-size: .95rem; }
+  @media (max-width: 600px) { .hero .wrap { padding: 3.2rem 0 3.6rem; } }
 
-  /* the four highlight cards, lifted over the hero's lower edge */
-  .highlights { margin-top: -5.5rem; position: relative; }
-  .highlights .wrap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; }
-  .hl { color: #fff; border-radius: var(--r); padding: 1.6rem 1.4rem; box-shadow: var(--shadow); transition: transform .2s ease; }
-  .hl:hover { transform: translateY(-4px); }
-  .hl:nth-child(1) { background: var(--c1); } .hl:nth-child(2) { background: var(--c2); } .hl:nth-child(3) { background: var(--c3); } .hl:nth-child(4) { background: var(--c4); }
-  .hl .dot { width: 56px; height: 56px; border-radius: 50%; background: #fff; display: grid; place-items: center; margin-bottom: 1rem; transition: transform .2s ease; }
-  .hl:hover .dot { transform: scale(1.08); }
-  .hl:nth-child(1) .dot { color: var(--c1); } .hl:nth-child(2) .dot { color: #123d2a; } .hl:nth-child(3) .dot { color: var(--c3); } .hl:nth-child(4) .dot { color: var(--c4); }
-  .hl .dot svg { width: 26px; height: 26px; }
-  .hl h3 { font-size: 1.15rem; color: #fff; }
-  .hl p { margin: 0; color: rgba(255, 255, 255, .9); font-size: .97rem; }
-  @media (max-width: 900px) { .highlights .wrap { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 480px) { .highlights .wrap { grid-template-columns: 1fr; } }
+  section.block { padding: 5.5rem 0; }
+  .lead { max-width: 40rem; margin-bottom: 2.8rem; }
+  .lead h2 { font-size: clamp(2rem, 4.2vw, 2.9rem); }
+  .lead p { color: var(--ink-2); margin: .9rem 0 0; font-size: 1.08rem; }
 
-  .intro { text-align: center; max-width: 46rem; margin: 3.5rem auto 0; font: 500 clamp(1.15rem, 2.4vw, 1.4rem)/1.55 var(--display); color: var(--ink-2); }
-
-  /* section titles: one word in colour, a short dashed line under */
-  section.block { padding: 5rem 0; }
-  .head { text-align: center; max-width: 44rem; margin: 0 auto 3rem; }
-  .head h2 { font-size: clamp(1.8rem, 3.8vw, 2.5rem); }
-  .head h2 span { color: var(--p); }
-  .head::after { content: ""; display: block; width: 80px; margin: 1rem auto 0; border-bottom: 2px dashed var(--p); opacity: .7; }
-  .head p { color: var(--muted); font-size: 1.1rem; margin: .4rem 0 0; }
-
-  /* alternating text and phone rows */
-  .show { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: center; }
-  .show + .show { margin-top: 5rem; }
-  .show.flip .show-text { order: 2; }
-  .kicker { font: 700 .82rem var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--p); }
-  .show h3 { font-size: clamp(1.5rem, 3vw, 2rem); margin: .4rem 0 .8rem; }
-  .show p { color: var(--ink-2); margin: 0 0 1rem; }
-  .checks { list-style: none; padding: 0; margin: 0 0 1.5rem; }
-  .checks li { display: flex; gap: .6rem; align-items: flex-start; margin: .5rem 0; color: var(--ink-2); }
-  .checks svg { flex: 0 0 auto; width: 22px; height: 22px; color: var(--p); margin-top: .15rem; }
-  .show-art { display: flex; justify-content: center; align-items: flex-end; gap: 1rem; }
-  .phone { width: 230px; border-radius: 30px; padding: 8px; background: #0b1410; box-shadow: 0 25px 45px rgba(0, 0, 0, .25); }
-  .phone img { border-radius: 23px; aspect-ratio: 390 / 760; object-fit: cover; object-position: top; width: 100%; }
-  .show-art .phone:nth-child(2) { width: 200px; transform: translateY(-1.5rem); }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .phone { box-shadow: 0 0 0 1px #34503f, 0 25px 45px rgba(0, 0, 0, .5); } }
-  :root[data-theme="dark"] .phone { box-shadow: 0 0 0 1px #34503f, 0 25px 45px rgba(0, 0, 0, .5); }
-  .laptop { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); }
-  @media (max-width: 860px) {
-    .show { grid-template-columns: 1fr; gap: 2rem; }
-    .show.flip .show-text { order: 0; }
-    .phone { width: 46%; max-width: 220px; }
-    .show-art .phone:nth-child(2) { width: 42%; }
+  /* big split cards: words on the left, a coloured panel with a phone on the right */
+  .split { display: grid; grid-template-columns: 1fr 1fr; border: 6px solid var(--soft); border-radius: var(--r); overflow: hidden; background: var(--paper); }
+  .split + .split { margin-top: 1.4rem; }
+  .split .words { padding: 3rem 2.6rem; display: flex; flex-direction: column; justify-content: space-between; gap: 2rem; min-height: 340px; }
+  .split h3 { font-size: clamp(1.6rem, 3vw, 2.1rem); max-width: 18rem; }
+  .split p { margin: 0; color: var(--ink-2); max-width: 22rem; }
+  .split .panel { position: relative; display: flex; justify-content: center; align-items: flex-start; padding-top: 2.6rem; overflow: hidden; border-radius: 0 calc(var(--r) - 6px) calc(var(--r) - 6px) 0; }
+  .panel.g { background: var(--p-soft); } .panel.d { background: #123d2a; } .panel.a { background: var(--amber-soft); } .panel.b { background: var(--blue-soft); }
+  @media (max-width: 820px) {
+    .split { grid-template-columns: 1fr; }
+    .split .words { min-height: 0; padding: 2rem 1.6rem 1.6rem; gap: 1rem; }
+    .split .panel { border-radius: 0 0 calc(var(--r) - 6px) calc(var(--r) - 6px); height: 360px; }
   }
 
-  /* features */
-  .alt { background: var(--sunk); }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 1.5rem; transition: transform .2s ease, box-shadow .2s ease; }
-  .card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
-  .card .ic { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--p-soft); color: var(--p); margin-bottom: .9rem; }
-  .card .ic svg { width: 24px; height: 24px; }
-  .card h3 { font-size: 1.15rem; }
-  .card p { color: var(--ink-2); margin: 0; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  /* phones: a dark screen edge inside a light rim */
+  .phone { width: 260px; border-radius: 38px; padding: 9px; background: #1b1f1d; box-shadow: 0 0 0 2px #a7b0ac, 0 24px 44px rgba(0, 0, 0, .28); flex: 0 0 auto; }
+  .phone img { width: 100%; border-radius: 30px; aspect-ratio: 390 / 800; object-fit: cover; object-position: top; }
+  .panel .phone { margin-bottom: -120px; }
+  .tilt { transform: rotate(-8deg); }
 
-  /* counters */
-  .stats { background: var(--hero-bg); color: #fff; padding: 3.5rem 0; }
-  .stats .wrap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; text-align: center; }
-  .stats b { display: block; font: 700 clamp(2.2rem, 5vw, 3rem)/1.1 var(--display); color: var(--accent); }
-  .stats span { color: rgba(255, 255, 255, .88); }
-  @media (max-width: 760px) { .stats .wrap { grid-template-columns: 1fr 1fr; row-gap: 2rem; } }
+  /* image cards with a white caption box */
+  .soft { background: var(--soft); }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem; }
+  .tile { position: relative; height: 380px; border-radius: 24px; overflow: hidden; background: #123d2a; display: flex; justify-content: center; padding-top: 2rem; }
+  .tile:nth-child(2) { background: #2b4a6e; } .tile:nth-child(3) { background: #6b4a12; }
+  .tile .phone { width: 210px; }
+  .tile .cap { position: absolute; left: 12px; right: 12px; bottom: 12px; background: var(--paper); border-radius: 14px; padding: .9rem 1rem; }
+  .tile .cap h3 { font-size: 1.08rem; font-weight: 500; }
+  .tile .cap p { margin: .25rem 0 0; color: var(--ink-2); font-size: .95rem; line-height: 1.45; }
+  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr; } .tile { height: 360px; } }
 
-  /* how it works */
-  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; counter-reset: s; }
-  .step { position: relative; padding: 1.6rem 1.2rem 1.2rem; background: var(--surface); border-radius: var(--r); border: 1px solid var(--line); }
-  .step::before { counter-increment: s; content: counter(s); position: absolute; top: -18px; left: 1.2rem; width: 38px; height: 38px; border-radius: 50%;
-    background: var(--p); color: #fff; display: grid; place-items: center; font: 700 1rem var(--display); box-shadow: 0 0 0 5px var(--paper); }
-  .step h3 { font-size: 1.05rem; margin-top: .4rem; }
-  .step p { margin: 0; color: var(--ink-2); font-size: .97rem; }
-  @media (max-width: 900px) { .steps { grid-template-columns: 1fr 1fr; row-gap: 2.2rem; } }
-  @media (max-width: 520px) { .steps { grid-template-columns: 1fr; } }
+  /* the dark band: outlined cards with soft icon tiles */
+  .dark { background: #123d2a; color: var(--on-deep); }
+  .dark h2 { color: #fff; font-size: clamp(2rem, 4.2vw, 2.9rem); }
+  .dark h2 em { color: #9fe3b9; font-style: normal; }
+  .outlined { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-top: 2.6rem; }
+  .outlined article { display: flex; gap: 1.1rem; align-items: flex-start; border: 2px solid var(--deep-line); border-radius: 22px; padding: 1.5rem 1.6rem; }
+  .ico { flex: 0 0 auto; width: 52px; height: 52px; border-radius: 14px; background: #d9f0e2; color: #123d2a; display: grid; place-items: center; }
+  .ico svg { width: 26px; height: 26px; }
+  .outlined h3 { color: #fff; font-size: 1.15rem; font-weight: 500; }
+  .outlined p { margin: .3rem 0 0; color: var(--on-deep-2); }
+  @media (max-width: 760px) { .outlined { grid-template-columns: 1fr; } }
 
-  /* screenshots: a row to swipe through */
-  .shots { display: grid; grid-auto-flow: column; grid-auto-columns: 210px; gap: 1.2rem; overflow-x: auto; scroll-snap-type: x mandatory; padding: .5rem 4px 1.2rem; scrollbar-width: thin; }
-  .shots figure { margin: 0; scroll-snap-align: start; }
-  .shots .phone { width: 100%; padding: 6px; border-radius: 24px; box-shadow: 0 12px 24px rgba(0, 0, 0, .18); }
-  .shots .phone img { border-radius: 19px; }
-  .shots figcaption { text-align: center; color: var(--muted); font-size: .92rem; margin-top: .6rem; }
-  .swipe { text-align: center; color: var(--muted); font-size: .9rem; margin: .2rem 0 0; }
-  @media (min-width: 1100px) { .swipe { display: none; } }
-
-  /* trust */
-  .trust { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; }
-  .trust .card { display: flex; gap: 1rem; }
-  .trust .card .ic { flex: 0 0 auto; margin: 0; }
-  @media (max-width: 760px) { .trust { grid-template-columns: 1fr; } }
+  /* words beside a phone in a tinted panel */
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: center; }
+  .pair h2 { font-size: clamp(2.1rem, 4.6vw, 3.1rem); }
+  .chips { display: flex; gap: .8rem; margin: 1.6rem 0; }
+  .chips span { width: 52px; height: 52px; border-radius: 14px; background: var(--paper); box-shadow: 0 6px 16px rgba(18, 43, 31, .12); display: grid; place-items: center; color: var(--p); }
+  .chips svg { width: 24px; height: 24px; }
+  .pair p { color: var(--ink-2); margin: 0 0 1.6rem; max-width: 30rem; }
+  .pair .art { background: var(--p-soft); border-radius: var(--r); height: 420px; display: flex; justify-content: center; align-items: flex-start; padding-top: 2.4rem; overflow: hidden; }
+  .pair .art .phone { width: 250px; margin-top: -10px; }
+  @media (max-width: 860px) { .pair { grid-template-columns: 1fr; gap: 2rem; } .pair .art { height: 380px; } }
 
   /* questions */
-  .faq { max-width: 48rem; margin: 0 auto; }
-  .faq details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: .7rem; }
-  .faq summary { cursor: pointer; list-style: none; padding: 1rem 1.2rem; font: 600 1.05rem var(--display); display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+  .faq { max-width: 50rem; }
+  .faq details { border-bottom: 1px solid var(--line); }
+  .faq summary { cursor: pointer; list-style: none; padding: 1.2rem 0; font: 500 1.12rem var(--display); color: var(--deep); display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
   .faq summary::-webkit-details-marker { display: none; }
-  .faq summary::after { content: "+"; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; background: var(--p-soft); color: var(--p); display: grid; place-items: center; font-size: 1.2rem; transition: transform .2s ease; }
-  .faq details[open] summary::after { transform: rotate(45deg); }
-  .faq details[open] summary { color: var(--p); }
-  .faq details p { margin: 0; padding: 0 1.2rem 1.1rem; color: var(--ink-2); }
+  .faq summary::after { content: ""; flex: 0 0 auto; width: 12px; height: 12px; border-right: 2px solid var(--p); border-bottom: 2px solid var(--p); transform: rotate(45deg); margin-top: -6px; transition: transform .2s ease; }
+  .faq details[open] summary::after { transform: rotate(225deg); margin-top: 6px; }
+  .faq details p { margin: 0; padding: 0 0 1.3rem; color: var(--ink-2); max-width: 44rem; }
 
-  /* closing band */
-  .final { background: var(--hero-bg); color: #fff; border-radius: 24px; padding: 3.2rem 2rem; text-align: center; }
-  .final h2 { font-size: clamp(1.7rem, 3.8vw, 2.4rem); }
-  .final h2 span { color: var(--accent); }
-  .final p { color: rgba(255, 255, 255, .9); max-width: 38rem; margin: 0 auto 1.6rem; }
-  .final .small { font-size: .95rem; margin: 1.4rem auto 0; }
-  .final a:not(.btn) { color: #fff; }
+  /* closing split: a panel with phones beside the call to act */
+  .close { display: grid; grid-template-columns: 1fr 1fr; background: var(--soft); }
+  .close .art { background: #123d2a; display: flex; justify-content: center; align-items: flex-start; gap: 1rem; padding-top: 3rem; height: 460px; overflow: hidden; }
+  .close .art .phone { width: 220px; }
+  .close .art .phone + .phone { margin-top: 3rem; }
+  .close .words { padding: 3.5rem clamp(1.4rem, 5vw, 4.5rem); display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+  .pill { display: inline-block; padding: .3rem .8rem; border-radius: 999px; background: var(--p-soft); color: var(--deep); font: 500 .85rem var(--display); margin-bottom: 1.2rem; }
+  .close h2 { font-size: clamp(2.1rem, 4.6vw, 3.1rem); }
+  .close p { color: var(--ink-2); margin: 1rem 0 1.6rem; max-width: 28rem; }
+  .note { display: flex; align-items: center; gap: .5rem; margin-top: 1.2rem; color: var(--ink-2); font-size: .95rem; }
+  .note svg { width: 22px; height: 22px; color: var(--p); }
+  @media (max-width: 860px) { .close { grid-template-columns: 1fr; } .close .art { height: 340px; order: 2; } }
 
-  footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .92rem; }
-  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--line); padding-top: 1.5rem; }
-  footer a { color: var(--muted); }
+  footer { padding: 3.5rem 0 3rem; }
+  .cols { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.2fr; gap: 2rem; }
+  .cols h4 { font: 500 1.05rem var(--display); color: var(--deep); margin: 0 0 .8rem; }
+  .cols a:not(.badge):not(.brand) { display: block; color: var(--ink-2); text-decoration: none; margin: .45rem 0; }
+  .cols a:not(.badge):not(.brand):hover { color: var(--p); }
+  .cols .about { color: var(--muted); font-size: .95rem; margin: .8rem 0 0; max-width: 18rem; }
+  .cols .badges { flex-direction: column; align-items: flex-start; gap: .6rem; }
+  .cols .badge { margin: 0; }
+  .legal { margin-top: 2.5rem; padding-top: 1.4rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 480px) { .cols { grid-template-columns: 1fr; } }
 
   .reveal { opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s ease; }
   .reveal.in { opacity: 1; transform: none; }
-  @media (prefers-reduced-motion: reduce) {
-    .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; }
-    .btn:hover, .hl:hover, .card:hover { transform: none; } .hl:hover .dot { transform: none; }
-  }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } .btn:hover, .badge:hover { transform: none; } }
 </style>
 </head>
 <body>
@@ -208,234 +190,152 @@
     <symbol id="i-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v8H4v-8M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z"/></symbol>
     <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></symbol>
-    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></symbol>
-    <symbol id="i-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12.5l2.7 2.7L16 9.8"/></symbol>
-    <symbol id="i-qr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v.01M14 21h3M21 17v4"/></symbol>
-    <symbol id="i-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
-    <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 16v-5M12 16V7M17 16v-8"/></symbol>
-    <symbol id="i-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-staff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v.01M14 21h3M21 17v4"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></symbol>
-    <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
     <symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.3A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
-    <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></symbol>
   </defs>
 </svg>
 
 <header class="top">
   <div class="wrap">
     <a class="brand" href="#top"><img src="icons/rvnp-logo.png" alt="RVNP crest" width="40" height="40"><span><b>The ARK</b><small>Academic Records Keeper</small></span></a>
-    <nav aria-label="Main">
-      <a href="#features">Features</a><a href="#how">How it works</a><a href="#screens">Screens</a><a href="#faq">Questions</a>
-      <a class="btn solid" href="./">Sign in</a>
-    </nav>
+    <nav aria-label="Main"><a href="#features">Features</a><a href="#trust">Safety</a><a href="#faq">Questions</a><a href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Demo</a></nav>
+    <div class="acts"><a class="btn outline" href="student">Student app</a><a class="btn solid" href="./">Sign in</a></div>
   </div>
 </header>
 
 <main id="top">
   <section class="hero">
     <div class="wrap">
-      <span class="eyebrow">RVNP · ICT Department</span>
-      <h1>Every register, mark and CAT. <span>Kept safe.</span></h1>
-      <p class="lead">The ARK is the department's Academic Records Keeper. Trainers mark attendance and enter marks on their phones, students check in and send their POE evidence, and the HOD and MIS Officer see it all, even when there is no network.</p>
-      <div class="cta">
-        <a class="btn light" href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Try the demo<svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
-        <a class="btn ghost" href="#how">See how it works</a>
+      <img class="app-icon" src="icons/rvnp-logo.png" alt="" width="76" height="76">
+      <h1 class="two">Every register, mark and CAT <em>kept safe</em></h1>
+      <p>The ARK is the RVNP ICT Department's Academic Records Keeper. Mark attendance, enter marks and send POE evidence from any phone, and stay on top of it all, even with no network.</p>
+      <div class="badges">
+        <a class="badge" href="./"><svg aria-hidden="true"><use href="#i-staff"/></svg><span><small>Open the</small><b>Staff app</b></span></a>
+        <a class="badge" href="student"><svg aria-hidden="true"><use href="#i-qr"/></svg><span><small>Open the</small><b>Student app</b></span></a>
       </div>
-      <ul class="ticks">
-        <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Works offline</li>
-        <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Any phone, nothing to install</li>
-        <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Free to run</li>
-      </ul>
+      <p class="demo">New here? <a href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Try the demo</a> with invented classes and students.</p>
     </div>
   </section>
 
-  <section class="highlights" aria-label="At a glance">
+  <section class="block" id="features">
     <div class="wrap">
-      <div class="hl reveal"><div class="dot"><svg aria-hidden="true"><use href="#i-off"/></svg></div><h3>Works offline</h3><p>Mark registers in the lab or workshop with no network; they are sent when it returns.</p></div>
-      <div class="hl reveal"><div class="dot"><svg aria-hidden="true"><use href="#i-phone"/></svg></div><h3>Any phone</h3><p>Open the link and add it to the home screen. Nothing to buy, no app store.</p></div>
-      <div class="hl reveal"><div class="dot"><svg aria-hidden="true"><use href="#i-file"/></svg></div><h3>Official layouts</h3><p>The general class register and the marksheet, ready in Excel or as a PDF.</p></div>
-      <div class="hl reveal"><div class="dot"><svg aria-hidden="true"><use href="#i-free"/></svg></div><h3>Free to run</h3><p>On the college's own free accounts. No subscriptions, no paid services.</p></div>
+      <div class="lead reveal"><h2 class="two">Everything you need <em>on every phone</em></h2><p>From the first lesson of the term to the HOD's approval, without paper.</p></div>
+
+      <article class="split reveal">
+        <div class="words"><h3>Mark a register in seconds</h3><p>Pick the lesson on the weekly timetable and tap through the class. Doubles, CATs and streams taught together are handled, and it is saved on the phone at once.</p></div>
+        <div class="panel g" aria-hidden="true"><div class="phone"><img src="docs/images/register.png" alt="" loading="lazy"></div></div>
+      </article>
+      <article class="split reveal">
+        <div class="words"><h3>Students check in with a scan</h3><p>Show a lesson QR code that changes every 20 seconds, or scan students' ID cards. Each student phone belongs to one student.</p></div>
+        <div class="panel d" aria-hidden="true"><div class="phone"><img src="docs/images/lesson-qr.png" alt="" loading="lazy"></div></div>
+      </article>
+      <article class="split reveal">
+        <div class="words"><h3>CATs and practicals as clean PDFs</h3><p>Students photograph their marked work like a document scanner. It goes to their own college Google Drive and is shared with their trainer to approve or return.</p></div>
+        <div class="panel a" aria-hidden="true"><div class="phone"><img src="docs/images/student-evidence.png" alt="" loading="lazy"></div></div>
+      </article>
+      <article class="split reveal">
+        <div class="words"><h3>The term register builds itself</h3><p>Twelve weeks, hours and percentages, for one stream or all of them. Export the official Excel layout or a PDF, and submit it to the HOD.</p></div>
+        <div class="panel b" aria-hidden="true"><div class="phone"><img src="docs/images/report-list.png" alt="" loading="lazy"></div></div>
+      </article>
     </div>
   </section>
 
-  <p class="intro wrap reveal">From the first lesson of the term to the HOD's approval, The ARK replaces paper registers, lost CAT scripts and end-of-term spreadsheets.</p>
-
-  <section class="block" aria-label="Who it is for">
+  <section class="block soft">
     <div class="wrap">
-      <div class="show">
-        <div class="show-text reveal">
-          <span class="kicker">For trainers</span>
-          <h3>A register in seconds, a term register for free</h3>
-          <p>Pick the lesson on the weekly timetable and tap through the class. Everything is saved on the phone at once.</p>
-          <ul class="checks">
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Doubles, CATs and combined lessons for several streams</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>A lesson QR code, or scanning students' ID cards</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>CAT and practical marks for the unit's whole life</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>The 12-week register with hours, ready to submit</li>
-          </ul>
-          <a class="btn solid" href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Try it as a trainer</a>
+      <div class="lead reveal"><h2 class="two">Stay in control. <em>Every step of the way.</em></h2><p>Trainers, the HOD and the MIS Officer each see what they need: evidence to check, marks to enter and students missing lessons.</p></div>
+      <div class="tiles">
+        <div class="tile reveal"><div class="phone" aria-hidden="true"><img src="docs/images/poe-preview.png" alt="" loading="lazy"></div>
+          <div class="cap"><h3>Approve or return evidence</h3><p>Preview each document, then approve it or send it back with a note.</p></div></div>
+        <div class="tile reveal"><div class="phone" aria-hidden="true"><img src="docs/images/marks.png" alt="" loading="lazy"></div>
+          <div class="cap"><h3>Marks for the whole unit</h3><p>CATs and practicals across terms; earlier terms lock on their own.</p></div></div>
+        <div class="tile reveal"><div class="phone" aria-hidden="true"><img src="docs/images/absences.png" alt="" loading="lazy"></div>
+          <div class="cap"><h3>Absences at a glance</h3><p>Students missing too many lessons, and units behind on marking.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block dark" id="trust">
+    <div class="wrap">
+      <h2 class="two reveal">Records the college <em>can rely on</em></h2>
+      <div class="outlined">
+        <article class="reveal"><span class="ico"><svg aria-hidden="true"><use href="#i-shield"/></svg></span><div><h3>Nothing is lost</h3><p>Registers wait on the phone until there is network, and two phones of the same trainer never overwrite each other.</p></div></article>
+        <article class="reveal"><span class="ico"><svg aria-hidden="true"><use href="#i-lock"/></svg></span><div><h3>College accounts only</h3><p>Staff sign in with a staff code and PIN; students' evidence lives in their college Google accounts.</p></div></article>
+        <article class="reveal"><span class="ico"><svg aria-hidden="true"><use href="#i-cloud"/></svg></span><div><h3>Backed up and checked</h3><p>Approved evidence is copied to the department's archive on a schedule; a document changed after it was sent is flagged.</p></div></article>
+        <article class="reveal"><span class="ico"><svg aria-hidden="true"><use href="#i-users"/></svg></span><div><h3>Ready for a whole department</h3><p>Tested with over a thousand students checking in at the same lesson start.</p></div></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap pair">
+      <div class="reveal">
+        <h2 class="two">Works wherever <em>you teach</em></h2>
+        <div class="chips" aria-hidden="true"><span><svg><use href="#i-off"/></svg></span><span><svg><use href="#i-phone"/></svg></span><span><svg><use href="#i-free"/></svg></span></div>
+        <p>In the lab, in the workshop or with no network at all. Open the link on any phone, add it to the home screen, and it opens offline from then on. Nothing to buy, and it runs on the college's own free accounts.</p>
+        <div class="badges">
+          <a class="badge" href="./"><svg aria-hidden="true"><use href="#i-staff"/></svg><span><small>Open the</small><b>Staff app</b></span></a>
+          <a class="badge" href="student"><svg aria-hidden="true"><use href="#i-qr"/></svg><span><small>Open the</small><b>Student app</b></span></a>
         </div>
-        <div class="show-art reveal" aria-hidden="true">
-          <div class="phone"><img src="docs/images/register.png" alt="" loading="lazy"></div>
-          <div class="phone"><img src="docs/images/mark-timetable.png" alt="" loading="lazy"></div>
-        </div>
       </div>
-
-      <div class="show flip">
-        <div class="show-text reveal">
-          <span class="kicker">For students</span>
-          <h3>Check in with a scan, send CATs as clean PDFs</h3>
-          <p>The student app lives on their own phone. It records check-ins with no network and sends them later.</p>
-          <ul class="checks">
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Scan the trainer's lesson QR to check in</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Photograph marked CATs and practicals like a document scanner</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Files kept in their own college Google Drive</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Approvals and trainers' comments, and their own attendance</li>
-          </ul>
-          <a class="btn outline" href="https://rvnp-attendance-demo.ictpoe.workers.dev/student">Try it as a student</a>
-        </div>
-        <div class="show-art reveal" aria-hidden="true">
-          <div class="phone"><img src="docs/images/student-checkin.png" alt="" loading="lazy"></div>
-          <div class="phone"><img src="docs/images/student-evidence.png" alt="" loading="lazy"></div>
-        </div>
-      </div>
-
-      <div class="show">
-        <div class="show-text reveal">
-          <span class="kicker">For the HOD and MIS Officer</span>
-          <h3>The whole department at a glance</h3>
-          <p>Lessons marked against lessons due, attendance rates and registers waiting for approval, on a phone or a computer.</p>
-          <ul class="checks">
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Approve or return term registers with a comment</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Absences, and every class by stream</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Term set-up, trainer loading and MIS class lists</li>
-            <li><svg aria-hidden="true"><use href="#i-tick"/></svg>Scheduled backups of approved evidence</li>
-          </ul>
-        </div>
-        <div class="reveal" aria-hidden="true"><div class="laptop"><img src="docs/images/desktop-register.png" alt="" loading="lazy"></div></div>
-      </div>
+      <div class="art reveal" aria-hidden="true"><div class="phone tilt"><img src="docs/images/mark-timetable.png" alt="" loading="lazy"></div></div>
     </div>
   </section>
 
-  <section class="block alt" id="features">
+  <section class="block soft" id="faq">
     <div class="wrap">
-      <div class="head reveal"><h2>Everything a department <span>keeps</span></h2><p>In one place, on every phone.</p></div>
-      <div class="grid">
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-check"/></svg></div><h3>Registers in seconds</h3><p>Pick the lesson on the weekly timetable and tap through the class. Doubles, CATs and lunch-hour sessions are handled.</p></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-qr"/></svg></div><h3>QR check-in and ID cards</h3><p>A lesson QR code that changes every 20 seconds, or scanning ID cards. Each student phone belongs to one student.</p></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-scan"/></svg></div><h3>POE evidence, scanned</h3><p>Marked CATs and practicals become a PDF in the student's college Google Drive, shared with their trainer to approve or return.</p></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-pen"/></svg></div><h3>Marks for the whole unit</h3><p>One marksheet per unit across terms. Earlier terms lock on their own; the HOD can unlock a correction.</p></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-chart"/></svg></div><h3>Term registers and reports</h3><p>The 12-week register builds itself, for one stream or all of them. Export the official Excel layout or a PDF.</p></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-bell"/></svg></div><h3>Absences and oversight</h3><p>Students missing too many lessons, units behind on marking, and registers waiting for the HOD.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <section class="stats" aria-label="In numbers">
-    <div class="wrap">
-      <div class="reveal"><b data-count="12">12</b><span>teaching weeks on every term register</span></div>
-      <div class="reveal"><b data-count="20" data-suffix=" s">20 s</b><span>before the lesson QR code changes</span></div>
-      <div class="reveal"><b data-count="1000" data-suffix="+">1,000+</b><span>students tested checking in at one lesson start</span></div>
-      <div class="reveal"><b data-count="0">0</b><span>paid services or subscriptions</span></div>
-    </div>
-  </section>
-
-  <section class="block" id="how">
-    <div class="wrap">
-      <div class="head reveal"><h2>How it <span>works</span></h2><p>A normal day, from the first lesson to the HOD's desk.</p></div>
-      <div class="steps">
-        <div class="step reveal"><h3>The trainer opens the lesson</h3><p>On the timetable, on their phone. It works in the lab, in the workshop, or with no network at all.</p></div>
-        <div class="step reveal"><h3>Students check in</h3><p>They scan the lesson QR code, or the trainer scans their ID cards. Late and excused are one tap.</p></div>
-        <div class="step reveal"><h3>Evidence comes in</h3><p>Students scan their marked CATs; the trainer previews each one, approves it or sends it back with a note.</p></div>
-        <div class="step reveal"><h3>The HOD and MIS see it all</h3><p>Term registers, marksheets, absences and approvals, with copies of approved evidence kept safe.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="block alt" id="screens">
-    <div class="wrap">
-      <div class="head reveal"><h2>Built for the <span>phone</span> in your pocket</h2><p>Large buttons, clear wording, and nothing to learn twice.</p></div>
-      <div class="shots reveal" tabindex="0" aria-label="Screens of The ARK">
-        <figure><div class="phone"><img src="docs/images/mark-timetable.png" alt="The weekly timetable for choosing a lesson" loading="lazy"></div><figcaption>Choose the lesson</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/register.png" alt="Marking a register for two streams" loading="lazy"></div><figcaption>Mark the register</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/lesson-qr.png" alt="A lesson QR code on the trainer's phone" loading="lazy"></div><figcaption>Show the lesson QR</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/report-list.png" alt="The term register for all streams" loading="lazy"></div><figcaption>The term register</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/marks.png" alt="Entering CAT and practical marks" loading="lazy"></div><figcaption>Enter marks</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/student-evidence.png" alt="A student scanning a CAT as a document" loading="lazy"></div><figcaption>Scan the CAT</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/poe-preview.png" alt="A trainer previewing a student's document" loading="lazy"></div><figcaption>Approve or return</figcaption></figure>
-        <figure><div class="phone"><img src="docs/images/student-submissions.png" alt="A student's submissions and their status" loading="lazy"></div><figcaption>Track submissions</figcaption></figure>
-      </div>
-      <p class="swipe">Swipe to see more</p>
-    </div>
-  </section>
-
-  <section class="block" aria-labelledby="trust">
-    <div class="wrap">
-      <div class="head reveal"><h2 id="trust">Records the college can <span>rely on</span></h2></div>
-      <div class="trust">
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-shield"/></svg></div><div><h3>Nothing is lost</h3><p>Registers wait safely on the phone until there is network, and two phones of the same trainer never overwrite each other.</p></div></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-lock"/></svg></div><div><h3>College accounts only</h3><p>Staff sign in with a staff code and PIN; students' evidence lives in their college Google accounts. Each student phone is tied to one student.</p></div></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-cloud"/></svg></div><div><h3>Backed up and checked</h3><p>Approved evidence is copied into the department's archive on a schedule, and a document changed after it was sent is flagged.</p></div></article>
-        <article class="card reveal"><div class="ic"><svg aria-hidden="true"><use href="#i-users"/></svg></div><div><h3>Ready for a whole department</h3><p>Tested with over a thousand students checking in at the same lesson start, on the college's free accounts.</p></div></article>
-      </div>
-    </div>
-  </section>
-
-  <section class="block alt" id="faq">
-    <div class="wrap">
-      <div class="head reveal"><h2>Common <span>questions</span></h2></div>
+      <div class="lead reveal"><h2 class="two">Questions? <em>We have answers.</em></h2></div>
       <div class="faq reveal">
-        <details open><summary>Does it need internet?</summary><p>No. Trainers mark registers and students check in with no network; everything is kept on the phone and sent automatically when the network returns. Sending evidence and reports from the server need internet.</p></details>
-        <details><summary>Do we have to install anything?</summary><p>No app store. Open the link in Chrome and add it to the home screen: staff use ark26.pages.dev, students ark26.pages.dev/student. After the first visit it opens offline.</p></details>
-        <details><summary>Can a student check in for a friend?</summary><p>Each student phone is registered to one student. The lesson QR code changes every 20 seconds and the server checks every check-in against the codes the trainer showed, so old photos and forged codes are refused.</p></details>
-        <details><summary>What if a student is on the wrong class list or stream?</summary><p>The trainer adds them from the register and marks them straight away. They show as pending until the MIS Officer (or the HOD, for a move between streams) approves the change.</p></details>
+        <details><summary>Does it need internet?</summary><p>No. Trainers mark registers and students check in with no network; everything is kept on the phone and sent automatically when the network returns.</p></details>
+        <details><summary>Do we have to install anything?</summary><p>No app store. Open the link in Chrome and add it to the home screen: staff use ark26.pages.dev, students ark26.pages.dev/student.</p></details>
+        <details><summary>Can a student check in for a friend?</summary><p>Each student phone is registered to one student. The lesson QR code changes every 20 seconds and the server checks every check-in, so old photos and forged codes are refused.</p></details>
+        <details><summary>What if a student is on the wrong list or stream?</summary><p>The trainer adds them from the register and marks them straight away. They show as pending until the MIS Officer (or the HOD, for a move between streams) approves the change.</p></details>
         <details><summary>Who can see the marks and registers?</summary><p>Trainers see the classes and units they teach. The HOD and the MIS Officer see the whole department. Students see only their own attendance and evidence.</p></details>
         <details><summary>What does it cost?</summary><p>Nothing. It runs on the college's own free Cloudflare and Google accounts, with no paid services.</p></details>
       </div>
     </div>
   </section>
 
-  <section class="block">
-    <div class="wrap">
-      <div class="final reveal">
-        <h2>Now on every <span>phone</span></h2>
-        <p>Open the app for your role and add it to your home screen. Or try the demo first: a full copy with invented classes and students.</p>
-        <div class="cta">
-          <a class="btn light" href="./">Staff app</a>
-          <a class="btn ghost" href="student">Student app</a>
-        </div>
-        <p class="small">Want to practise first? <a href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Open the demo (staff)</a> · <a href="https://rvnp-attendance-demo.ictpoe.workers.dev/student">Open the demo (students)</a></p>
-      </div>
+  <section class="close">
+    <div class="art" aria-hidden="true">
+      <div class="phone"><img src="docs/images/student-checkin.png" alt="" loading="lazy"></div>
+      <div class="phone"><img src="docs/images/report-list.png" alt="" loading="lazy"></div>
+    </div>
+    <div class="words reveal">
+      <span class="pill">Free · works offline</span>
+      <h2 class="two">Your records, <em>kept safe</em></h2>
+      <p>Sign in with your staff code and PIN, or set up your phone as a student. Want to practise first? The demo is a full copy with invented classes.</p>
+      <div class="badges"><a class="btn solid" href="./">Sign in</a><a class="btn outline" href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Try the demo</a></div>
+      <span class="note"><svg aria-hidden="true"><use href="#i-clock"/></svg>Opens offline after the first visit</span>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <span>The ARK · Academic Records Keeper · Rift Valley National Polytechnic, ICT Department</span>
-    <span><a href="./">Staff sign-in</a> · <a href="student">Student app</a> · <a href="https://github.com/musumbidenis/tt/blob/main/docs/USER-GUIDE.md">User Guide</a></span>
+    <div class="cols">
+      <div><a class="brand" href="#top"><img src="icons/rvnp-logo.png" alt="" width="40" height="40"><span><b>The ARK</b><small>Academic Records Keeper</small></span></a>
+        <p class="about">Built for the ICT Department of Rift Valley National Polytechnic.</p></div>
+      <div><h4>Apps</h4><a href="./">Staff app</a><a href="student">Student app</a><a href="https://rvnp-attendance-demo.ictpoe.workers.dev/">Demo</a></div>
+      <div><h4>Help</h4><a href="https://github.com/musumbidenis/tt/blob/main/docs/USER-GUIDE.md">User Guide</a><a href="demo/demo-day">Demo day handout</a><a href="#faq">Questions</a></div>
+      <div><h4>Open the app</h4><div class="badges">
+        <a class="badge" href="./"><svg aria-hidden="true"><use href="#i-staff"/></svg><span><small>Open the</small><b>Staff app</b></span></a>
+        <a class="badge" href="student"><svg aria-hidden="true"><use href="#i-qr"/></svg><span><small>Open the</small><b>Student app</b></span></a></div></div>
+    </div>
+    <p class="legal">The ARK · Academic Records Keeper · Rift Valley National Polytechnic, ICT Department</p>
   </div>
 </footer>
 
 <script>
+  // Sections fade in as they come into view (skipped when the device asks for less motion).
   (() => {
-    const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // Counters run up to their number once they come into view.
-    const count = (el) => {
-      const end = Number(el.dataset.count), suffix = el.dataset.suffix || '', t0 = performance.now(), ms = 1200;
-      const step = (t) => { const k = Math.min(1, (t - t0) / ms), n = Math.round(end * (1 - Math.pow(1 - k, 3))); el.textContent = n.toLocaleString('en-US') + suffix; if (k < 1) requestAnimationFrame(step); };
-      requestAnimationFrame(step);
-    };
-    // Sections fade in as they come into view (skipped when the device asks for less motion).
     const els = document.querySelectorAll('.reveal');
-    if (!('IntersectionObserver' in window) || calm) { els.forEach((e) => e.classList.add('in')); return; }
-    const io = new IntersectionObserver((list) => list.forEach((x) => {
-      if (!x.isIntersecting) return;
-      x.target.classList.add('in'); io.unobserve(x.target);
-      x.target.querySelectorAll('[data-count]').forEach(count);
-    }), { rootMargin: '0px 0px -8% 0px' });
+    if (!('IntersectionObserver' in window) || matchMedia('(prefers-reduced-motion: reduce)').matches) { els.forEach((e) => e.classList.add('in')); return; }
+    const io = new IntersectionObserver((list) => list.forEach((x) => { if (x.isIntersecting) { x.target.classList.add('in'); io.unobserve(x.target); } }), { rootMargin: '0px 0px -8% 0px' });
     els.forEach((e) => io.observe(e));
   })();
 </script>

@@ -492,4 +492,4 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 ## Landing page refresh
 
-- **welcome.html** has a plain, static hero (one colour, no pictures), four coloured highlight cards, a row each for trainers, students and the HOD and MIS Officer with their screens, a numbers band, a swipeable row of screens, common questions and a closing band with the staff and student apps.
+- **welcome.html** has a light, static hero (one flat tint, no pictures) with two-tone headlines and black badges to open the staff and student apps; large split cards pairing each feature with its screen on a coloured panel; captioned screen cards; a dark band on safety; a "works wherever you teach" pair; common questions; a split closing call to action; and a column footer.
