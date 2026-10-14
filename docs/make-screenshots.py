@@ -135,6 +135,10 @@ def seed():
             uuid.uuid4(), s['admNo'], s['name'], unit, item, unit, item, at, status,
             "'ICT020'" if decided else 'NULL', "'ICT MUSUMBI .D'" if decided else 'NULL', f"'{at}'" if decided else 'NULL', comment, at))
     sql('INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,decided_by,decided_name,decided_at,comment,received_at,updated_at) VALUES ' + ','.join(ev))
+    # a verification panel, approved, with FOP given to a member who does not teach it
+    panel = post({'action': 'savePanel', 'auth': M, 'name': 'Term 3 panel A', 'chair': 'ICT063', 'members': ['ICT063', 'ICT020']})['panel']
+    post({'action': 'decidePanel', 'auth': T, 'id': panel['id'], 'decision': 'approved'})
+    post({'action': 'assignVerification', 'auth': M, 'panelId': panel['id'], 'classCode': 'ICT L6CS-25SA', 'unitCode': 'FOP', 'verifier': 'ICT063'})
     report = {'matched': 2, 'unmatched': [], 'sheets': {}, 'url': 'https://bridge.demo/exec', 'folders': [], 'bridge': '1.3.0', 'at': now.isoformat() + 'Z'}
     sql("INSERT OR REPLACE INTO meta (key,value) VALUES ('drive_url','https://bridge.demo/exec'),('drive_report','%s')" % json.dumps(report).replace("'", "''"))
     # a backup account that has made one backup and is 82% full (shows the gauge and the warning)
@@ -223,6 +227,8 @@ def staff(pw, browser, pdf64):
     pg.locator('#poe [data-open]').first.click(); pg.wait_for_selector('#poePages canvas', timeout=20000)
     shot(pg, 'poe-preview.png')
     pg.click('#poeDialog [data-act=close]')
+    pg.click('#poe [data-mode=verify]'); pg.wait_for_selector('#poe .panel', timeout=15000)
+    shot(pg, 'poe-verify.png')
     pg.click('#poe [data-mode=student]'); pg.wait_for_selector('#poeStudents table.poe-table', timeout=15000)
     pg.locator('#poeStudents tr.stu-row').first.click()
     shot(pg, 'poe-by-student.png')
