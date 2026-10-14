@@ -1133,3 +1133,5 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .default-pin { padding: .45rem .6rem; gap: .35rem .6rem; font-size: .875rem; }
 .default-pin p { font-size: .78rem; }
 .default-pin input { height: 32px; width: 8rem; }
+
+#bkGo { min-height: 32px; height: 32px; padding: 0 .8rem; font-size: .8125rem; }
