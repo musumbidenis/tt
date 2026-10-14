@@ -509,5 +509,10 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **CAT weeks in the term register.** A CAT week's three cells are one column down the whole register, reading **CAT 1** upwards with the CAT's date at the top: in Report(s) (sheet and list views), the Excel register, the printed copy and the Drive copy.
 - **CATs sheet.** The Excel register gets a second sheet, and the printed copy a second page, with a column for each CAT and extra CAT attendance: P, Ab, L or E per student, totals, and **Ab (Supplementary CAT - Sat 19 Mar)** for a student who missed a CAT and sat its make-up.
-- **Clearer, smaller scans.** Pages of writing are saved as sharp black and white at a higher resolution (usually under 100 KB a page instead of about 300 KB); pages with photos or shading stay JPEG, up to 350 KB.
+- **Clearer scans.** Pages are kept at a higher resolution (see 4.25.1).
 - **Tools tab** for trainers and HODs: learning plans, session plans and assessment tools, marked *coming soon*.
+
+## Changes in 4.25.1
+
+- **High-quality scans.** The black-and-white pages of 4.25.0 were too harsh on real phone photos. Pages are now saved like a scanner's colour document setting: white paper with shadows taken out, ink in its own colour (red marking stays red), faint pencil darkened, strokes lightly sharpened, at up to 2400 px and JPEG quality 0.9 (about 400–600 KB a page). The camera asks for a larger picture (3264×2448) and pages are compressed less while they wait on the device.
+- **CAT column label** in the term register's sheet view: centred down and across the column, with more space between the letters.

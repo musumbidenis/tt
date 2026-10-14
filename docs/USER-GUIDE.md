@@ -663,7 +663,7 @@ On the **Evidence (POE)** tab:
    - Google asks you to sign in again after about an hour. If a document says **Sign in to Google to send it**, tap **Sign in to Google and send**.
    - Do not change or delete your POE files in Drive: your trainer is told if a file changed after it was sent.
 
-**Clear and small.** Pages of writing are saved in sharp black and white at a higher resolution, so every stroke is clear and a page is usually under 100 KB (a 10-page CAT is about 1 MB). A page with a photo or shading on it is kept in grey at up to about 350 KB. Take pages in good light and hold the page flat, so faint pencil comes out too.
+**High quality.** Each page is saved like a scanned document: the paper is made white and shadows are taken out, writing keeps its colour (your trainer's red marking stays red), faint pencil is darkened and strokes are sharpened. A page is usually 400–600 KB, so a 10-page CAT is about 5 MB. Take pages in good light, hold the phone steady and keep the page flat inside the frame.
 
 Files can be up to 20 MB. If the camera inside the app cannot start on a device, the app says so and the next tap on **Take photo of a page** uses the phone's own camera app instead.
 

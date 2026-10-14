@@ -538,8 +538,8 @@ details.advanced[open] summary { margin-bottom: .75rem; }
 .sheet-table .num { text-align: right; min-width: 4rem; }
 .sheet-table tr.below td.pct { color: var(--a); font-weight: 700; }
 /* A CAT week: one merged column down the whole register, reading upwards as on the paper register. */
-.sheet-table td.catcol { text-align: center; vertical-align: top; background: var(--sunk); padding: 1rem 0; min-width: 4.8rem; }
-.sheet-table td.catcol span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font: 700 .8125rem var(--display); letter-spacing: .12em; color: var(--ink-2); }
+.sheet-table td.catcol { text-align: center; vertical-align: middle; background: var(--sunk); padding: .75rem 0; min-width: 4.8rem; }
+.sheet-table td.catcol span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font: 700 .875rem var(--display); letter-spacing: .35em; line-height: 1; color: var(--ink-2); }
 .sheet-table th.sub.cat { font-size: .625rem; white-space: nowrap; }
 @media (max-width: 560px) { .sheet-table .adm { display: none; } .sheet-table .nm { left: 2.25rem; min-width: 9rem; } }
 .signoff .so-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }

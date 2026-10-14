@@ -3,7 +3,7 @@
  *   Scanner.findCorners(canvas)   where the sheet of paper is: 4 points (top-left, top-right, bottom-right, bottom-left)
  *   Scanner.flatten(canvas, quad) straightens the sheet (perspective correction) → new canvas
  *   Scanner.filter(canvas, mode)  'document' (clean white page, crisp ink), 'grey' or 'colour'
- *   Scanner.page(canvas)          a filtered page ready for the PDF: sharp black and white for writing, else a JPEG kept small
+ *   Scanner.page(canvas)          a filtered page ready for the PDF: high-quality JPEG
  *   Scanner.pdf(pages)            pages → one PDF (Blob), one page per photo
  */
 'use strict';
@@ -11,8 +11,8 @@
 const Scanner = (() => {
   // Phones run out of memory with camera-sized images (a 12 MP photo is about 48 MB once decoded) and then the
   // browser closes the page. So photos are decoded already shrunk, and pages are kept at about A4 at 200 dpi.
-  // The page is kept at up to 2200 px (A4 at about 190 dpi): sharp enough for small handwriting.
-  const MAX_SRC = 2600, MAX_OUT = 2200;
+  // The page is kept at up to 2400 px (A4 at about 205 dpi): sharp enough for small handwriting and pencil.
+  const MAX_SRC = 3000, MAX_OUT = 2400;
 
   /** A JPEG's width and height from its header (and whether its EXIF turns it on its side), without decoding it. */
   async function jpegSize(file) {
@@ -193,70 +193,44 @@ const Scanner = (() => {
       for (let i = 0; i < p.length; i += 4) { const v = (p[i] * 299 + p[i + 1] * 587 + p[i + 2] * 114) / 1000; p[i] = p[i + 1] = p[i + 2] = v; }
       g.putImageData(im, 0, 0); return out;
     }
-    // 'document': divide by the page's own lighting (a heavily blurred copy), so shadows go and the paper turns white
+    // 'document': each colour divided by the page's own lighting (a heavily blurred copy), so shadows and the paper's tint
+    // go and the paper turns white while ink keeps its colour (the trainer's red marking stays red); faint strokes are
+    // darkened, then lightly sharpened (unsharp mask) so writing from a phone camera comes out crisp
     const s = document.createElement('canvas'); s.width = Math.max(4, W >> 4); s.height = Math.max(4, H >> 4);
     const sg = s.getContext('2d'); sg.filter = 'blur(3px)'; sg.drawImage(canvas, 0, 0, s.width, s.height);
     const bgC = document.createElement('canvas'); bgC.width = W; bgC.height = H;
     const bg = bgC.getContext('2d', { willReadFrequently: true }); bg.imageSmoothingQuality = 'high'; bg.drawImage(s, 0, 0, W, H);
     const bp = bg.getImageData(0, 0, W, H).data;
+    const curve = (x) => 255 * Math.pow(Math.min(1, x / 255), 1.6);
     for (let i = 0; i < p.length; i += 4) {
-      const v = (p[i] * 299 + p[i + 1] * 587 + p[i + 2] * 114) / 1000;
-      const b = Math.max(40, (bp[i] * 299 + bp[i + 1] * 587 + bp[i + 2] * 114) / 1000);
-      let r = (v / b) * 255;
-      r = r > 235 ? 255 : r < 40 ? 0 : Math.pow(r / 255, 1.6) * 255; // white paper, dark ink
-      p[i] = p[i + 1] = p[i + 2] = r;
+      const r = (p[i] / Math.max(40, bp[i])) * 255, gr = (p[i + 1] / Math.max(40, bp[i + 1])) * 255, bl = (p[i + 2] / Math.max(40, bp[i + 2])) * 255;
+      if ((r * 299 + gr * 587 + bl * 114) / 1000 > 236) { p[i] = p[i + 1] = p[i + 2] = 255; continue; }   // paper
+      p[i] = curve(r); p[i + 1] = curve(gr); p[i + 2] = curve(bl);
     }
     g.putImageData(im, 0, 0);
     bgC.width = 0; bgC.height = 0; s.width = 0; s.height = 0;   // give the working copies back at once
+    const blC = document.createElement('canvas'); blC.width = W; blC.height = H;
+    const bl = blC.getContext('2d', { willReadFrequently: true }); bl.filter = 'blur(1.2px)'; bl.drawImage(out, 0, 0);
+    const bd = bl.getImageData(0, 0, W, H).data;
+    blC.width = 0; blC.height = 0;
+    for (let i = 0; i < p.length; i += 4) {
+      if (p[i] === 255 && p[i + 1] === 255 && p[i + 2] === 255 && bd[i] > 250) continue;
+      for (let k = 0; k < 3; k++) { const v = p[i + k] + 0.8 * (p[i + k] - bd[i + k]); p[i + k] = v > 255 ? 255 : v < 0 ? 0 : v; }
+      if (p[i] > 246 && p[i + 1] > 246 && p[i + 2] > 246) p[i] = p[i + 1] = p[i + 2] = 255;
+    }
+    g.putImageData(im, 0, 0);
     return out;
   }
   const toJpeg = (canvas, q = 0.72) => new Promise((res) => canvas.toBlob(res, 'image/jpeg', q));
 
-  /* ---------- a page for the PDF: clear and small ---------- */
-  const PAGE_BUDGET = 350 * 1024;   // a photo-like page as JPEG: the most it may take
-  const canDeflate = typeof CompressionStream === 'function';
-  const deflate = async (bytes) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
-  /** Otsu's threshold: the grey level that best splits the page into ink and paper. */
-  function otsu(hist, total) {
-    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
-    let sumB = 0, wB = 0, best = 0, at = 160;
-    for (let t = 0; t < 256; t++) {
-      wB += hist[t]; if (!wB) continue;
-      const wF = total - wB; if (!wF) break;
-      sumB += t * hist[t];
-      const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) * (mB - mF);
-      if (between > best) { best = between; at = t; }
-    }
-    return at;
-  }
-  /**
-   * canvas: a page after filter(…, 'document') (grey, white paper). Writing on paper becomes 1-bit black and white, deflated:
-   * every stroke stays sharp and a page is typically 40–90 KB. A page with shading or a photo on it (many mid greys) is
-   * kept as JPEG instead, at the best quality that fits PAGE_BUDGET. Returns { width, height, bits } or { width, height, jpeg }.
-   */
+  /* ---------- a page for the PDF: high quality ---------- */
+  // A page is kept like a scanner's colour document setting: white paper, ink in its own colour, smooth strokes, pencil
+  // and shading kept. JPEG quality 0.9, lowered only for a very busy page, never below 0.8.
+  const PAGE_BUDGET = 900 * 1024;
   async function page(canvas) {
-    const W = canvas.width, H = canvas.height;
-    const p = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
-    const hist = new Uint32Array(256);
-    for (let i = 0; i < p.length; i += 4) hist[p[i]]++;
-    // Writing leaves most of the page white with strokes of every grey; a photo or shaded drawing covers much of the page,
-    // mostly in light greys.
-    let marked = 0, light = 0;
-    for (let v = 0; v < 230; v++) { marked += hist[v]; if (v >= 150) light += hist[v]; }
-    const picture = marked > W * H * 0.3 || light > W * H * 0.08;
-    if (canDeflate && !picture) {
-      // Between ink and paper, never so low that faint pencil is lost nor so high that the paper's grain shows.
-      const t = Math.max(150, Math.min(215, otsu(hist, W * H)));
-      const stride = (W + 7) >> 3, bits = new Uint8Array(stride * H).fill(0xff);   // 1 = white
-      for (let y = 0; y < H; y++) {
-        const row = y * stride;
-        for (let x = 0; x < W; x++) if (p[(y * W + x) * 4] < t) bits[row + (x >> 3)] &= ~(0x80 >> (x & 7));
-      }
-      return { width: W, height: H, bits: await deflate(bits) };
-    }
-    let q = 0.8, jpeg = await toJpeg(canvas, q);
-    while (jpeg.size > PAGE_BUDGET && q > 0.5) { q = Math.round((q - 0.1) * 10) / 10; jpeg = await toJpeg(canvas, q); }
-    return { width: W, height: H, jpeg };
+    let q = 0.9, jpeg = await toJpeg(canvas, q);
+    while (jpeg.size > PAGE_BUDGET && q > 0.8) { q = Math.round((q - 0.05) * 100) / 100; jpeg = await toJpeg(canvas, q); }
+    return { width: canvas.width, height: canvas.height, jpeg };
   }
 
   /* ---------- a small PDF writer: one image per page (JPEG, or 1-bit deflated), A4 width ---------- */

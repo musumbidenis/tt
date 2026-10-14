@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.25.0**, server (Worker) **6.9.0**, database schema **11**, Drive bridge **1.4.4**.
+Describes app **4.25.1**, server (Worker) **6.9.0**, database schema **11**, Drive bridge **1.4.4**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -539,10 +539,10 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 
 **Scanning on the device** (`scanner.js`, `poe-student.js`) is built to fit in a phone's memory, because a phone that runs out closes the browser and the app reloads:
 - the JPEG header is read first (size and EXIF orientation) and the photo is decoded already shrunk to at most 2400 px on its long side (`createImageBitmap` with `resizeWidth`); the decoded bitmap is closed at once;
-- straightening reads only the part of the photo the page is in, and the page is kept at most 2200 px (about A4 at 190 dpi; decoded at up to 2600 px), saved as JPEG with a 320 px thumbnail beside it (`t-<page>` attachment), which is what the list of pages shows;
-- **the PDF** (from 4.25): each page goes through the Document filter, then `Scanner.page()` looks at its grey levels. Writing (under 30% of the page marked and under 8% light grey) becomes a **1-bit image** at the threshold Otsu's method finds between ink and paper (kept between 150 and 215, so faint pencil stays and paper grain does not), deflated with `CompressionStream('deflate')` and embedded as `/DeviceGray /BitsPerComponent 1 /FlateDecode`: typically 30–90 KB a page and sharper than JPEG. A page with photos or shading stays **JPEG**, from quality 0.8 down to 0.5 until it fits 350 KB. Browsers without `CompressionStream` get JPEG for every page;
+- straightening reads only the part of the photo the page is in, and the page is kept at most 2400 px (about A4 at 205 dpi; decoded at up to 3000 px), saved as JPEG at quality 0.94 (it is compressed again for the PDF, so little is lost twice) with a 320 px thumbnail beside it (`t-<page>` attachment), which is what the list of pages shows;
+- **the PDF** (from 4.25.1): each page goes through the Document filter, which divides each colour by the page's own lighting (a heavily blurred copy) so shadows and the paper's tint go and the paper turns white, keeps the ink's colour (a trainer's red marking stays red), darkens faint strokes (a 1.6 curve) and sharpens lightly (unsharp mask, 1.2 px, 0.8). `Scanner.page()` saves it as JPEG at quality 0.9, lowered in steps to no less than 0.8 only if a page is over 900 KB: typically 400–600 KB a page. (4.25.0 made pages of writing 1-bit black and white; it was too harsh on real phone photos.) The PDF writer still accepts 1-bit pages;
 - every canvas is emptied (`Scanner.release`) as soon as it is used, and the PDF is built one page at a time;
-- pages are taken with a **camera inside the page** (`getUserMedia`, the rear camera at up to 2560×1920; `ImageCapture.takePhoto()` where the browser has it, else the video frame). Opening the phone's camera app through `<input capture>` sends the browser to the background, where Android often closes it ("unable to complete previous operation due to low memory") and the photo is lost. The camera is stopped while a page is adjusted and reopened for the next page. If it cannot start, the device falls back to the camera app on the next tap;
+- pages are taken with a **camera inside the page** (`getUserMedia`, the rear camera at up to 3264×2448; `ImageCapture.takePhoto()` where the browser has it, else the video frame). Opening the phone's camera app through `<input capture>` sends the browser to the background, where Android often closes it ("unable to complete previous operation due to low memory") and the photo is lost. The camera is stopped while a page is adjusted and reopened for the next page. If it cannot start, the device falls back to the camera app on the next tap;
 - the student app does not reload for a new version while the crop screen is open, a page is being saved, or the camera may be up (`POE.busy()`); it waits until the student is idle.
 
 1. The student device asks `poeTicket` for a signed upload ticket (6 hours), then posts the PDF to the bridge with it.

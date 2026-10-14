@@ -242,7 +242,8 @@ const POE = (() => {
     try {
       flat = Scanner.flatten(canvas, quad);
       small = Scanner.thumb(flat);
-      const [page, preview] = await Promise.all([Scanner.toJpeg(flat, 0.82), Scanner.toJpeg(small, 0.7)]);
+      // Kept at high quality: the page is compressed again when the PDF is made, so little is lost twice.
+      const [page, preview] = await Promise.all([Scanner.toJpeg(flat, 0.94), Scanner.toJpeg(small, 0.7)]);
       Scanner.release(flat); Scanner.release(small); flat = small = null;
       closeCrop();
       await addPage(item, page, preview);
@@ -275,7 +276,7 @@ const POE = (() => {
     $('#docCamTitle').textContent = `${item} · page ${n}`;
     try {
       camStream = await navigator.mediaDevices.getUserMedia({ audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } } });
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 3264 }, height: { ideal: 2448 } } });
     } catch (e) {
       if (e && e.name === 'NotAllowedError') { toast('Allow the camera for this app (browser settings), or use "From gallery or PDF".', 'err'); return; }
       ps.useCameraApp = true;     // from now on this device uses the phone's camera app
@@ -333,7 +334,7 @@ const POE = (() => {
           for (const name of d.pages) {
             const c = await Scanner.load(await attachment(d, name));
             const f = Scanner.filter(c, 'document');
-            const page = await Scanner.page(f);   // sharp black and white for writing; a photo-like page stays JPEG
+            const page = await Scanner.page(f);   // high quality, ink in its own colour
             Scanner.release(c); if (f !== c) Scanner.release(f);   // one page in memory at a time
             pages.push(page);
           }
