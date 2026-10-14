@@ -1147,3 +1147,5 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .vt-tools .vt-q { flex: 1 1 14rem; max-width: 26rem; margin: 0; }
 .panel-form .members { display: block; }
 .panel-who { display: flex; flex-wrap: wrap; gap: .4rem .75rem; align-items: center; justify-content: space-between; }
+.ver-table .sn { width: 3rem; color: var(--muted); }
+.su-go input { width: 5rem; margin-left: .4rem; }

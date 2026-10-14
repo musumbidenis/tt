@@ -41,10 +41,11 @@ const Verify = (() => {
     const page = Tables.slice(key, shown);
     vtDraw.set(key, () => vt(key, rows, cols, opts));
     Tables.on(key, () => redrawTable(key));
-    const head = cols.map((c) => (c.sort ? Tables.th(key, c.k, c.label, c.cls || '') : `<th class="${c.cls || ''}">${c.label}</th>`)).join('');
+    const head = '<th class="num sn">S/N</th>' + cols.map((c) => (c.sort ? Tables.th(key, c.k, c.label, c.cls || '') : `<th class="${c.cls || ''}">${c.label}</th>`)).join('');
+    const sn = new Map(shown.map((r, i) => [r, i + 1]));
     return `<div class="vt" data-vt="${esc(key)}"><div class="vt-tools">${rows.length || q ? `<input type="search" class="vt-q" data-vtq="${esc(key)}" placeholder="${esc(opts.filter || 'Filter')}" value="${esc(vtQ.get(key) || '')}" aria-label="Filter">` : ''}${opts.tools ? opts.tools(shown) : ''}</div>
       ${shown.length ? `<div class="table-wrap"><table class="report-table ver-table${opts.cls ? ' ' + opts.cls : ''}"><thead><tr>${head}</tr></thead>
-        <tbody>${page.map((r) => `<tr${opts.rowCls ? ` class="${opts.rowCls(r)}"` : ''}>${cols.map((c) => `<td${c.cls ? ` class="${c.cls}"` : ''}>${c.cell(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${Tables.bar(key, shown)}`
+        <tbody>${page.map((r) => `<tr${opts.rowCls ? ` class="${opts.rowCls(r)}"` : ''}><td class="num sn">${sn.get(r)}</td>${cols.map((c) => `<td${c.cls ? ` class="${c.cls}"` : ''}>${c.cell(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${Tables.bar(key, shown)}`
         : `<p class="muted small">${q ? 'Nothing matches that filter.' : esc(opts.empty || 'None yet.')}</p>`}</div>`;
   }
   /** The rows a table shows after its filter (for "select all"). */
@@ -81,12 +82,11 @@ const Verify = (() => {
     const units = d.verifications.filter((x) => isMe(x.trainerCode) && x.status !== 'open');
     const parts = [];
     if (mine.length) parts.push(card('Class-units given to you', 'You and one other member each check every student in the sample, then each give a result.', table(mine, { key: 'vMine' })));
-    if (external()) parts.push(card('What each panel was given', 'Every class-unit given out this term. Open one to see the panel\'s checks, pick your own sample of students and give your result.',
-      d.panels.map((p) => `<h3 class="ver-ph">${esc(p.name)} <span class="muted small">chair ${esc(staffName(p.chair))}</span></h3>${table(d.verifications.filter((v) => v.panelId === p.id), { key: 'vExt:' + p.id })}`).join('') || '<p class="muted small">Nothing given out yet.</p>'));
+    if (external()) parts.push(extCard());
     if (units.length) parts.push(card('Verification of your units', 'What the panel found in your units, and your response.', table(units, { key: 'vUnits' })));
     // Panels first, then the classes to verify (they are given out to the panels).
-    if (office() || (d.panels.length && !external())) parts.push(panelsCard());
     if (drafts()) parts.push(listCard());
+    if (office() || (d.panels.length && !external())) parts.push(panelsCard());
     if (!parts.length) parts.push('<div class="card notice"><h2>Nothing to verify</h2><p class="muted">When a panel gives you a class and unit to verify, or verifies one of your units, it shows here.</p></div>');
     box.innerHTML = head + parts.join('');
   }
@@ -152,8 +152,8 @@ const Verify = (() => {
         ${p.status === 'approved' ? table(vers, { key: 'vPanel:' + p.id, hod: hasRole('HOD') }) + (drafts() ? assignForm(p, vers) : '') : ''}
         ${drafts() ? `<details class="mdone"><summary>Change this panel</summary>${form(p)}</details>` : ''}</details>`;
     }).join('');
-    return card('Verification panels', drafts() ? 'Pick the panel number, the chair and the members: the panel is named after the term and its number and approved straight away (the HOD can return it). Then tick the classes to verify above and allocate.' : 'Panels drafted by the MIS Officer or the Internal Assessment Officer.',
-      (rows || '<p class="muted small">No panels yet.</p>') + (drafts() ? `<details class="mdone"><summary>Draft a new panel</summary>${form(null)}</details>` : ''));
+    return card('Verification panels', drafts() ? 'Made by the system from the trainers you ticked. You can still change a panel or delete it; the HOD can return one.' : 'Panels made for this term\'s verification.',
+      rows || '<p class="muted small">No panels yet. Set up verification above.</p>');
   }
   function assignForm(p, vers) {
     const taken = new Set(vers.map((v) => v.classCode + '|' + v.unitCode));
@@ -179,31 +179,58 @@ const Verify = (() => {
     return [...m.values()].sort((a, b) => a.code.localeCompare(b.code));
   }
   const classSearch = (c) => c.code;
+  const su = { trainers: new Set(), size: 3 };
+  const trainerRows = () => vs.data.staff.filter((s) => !s.roles.includes('EAO'));
+  const trSearch = (s) => `${s.name} ${s.code} ${teaches(s.code).join(' ')}`;
   function listCard() {
-    const d = vs.data, rows = classRows(), free = rows.filter((c) => !c.listed), listed = rows.filter((c) => c.listed);
-    const given = d.list.filter((r) => r.verificationId).length, left = d.list.length - given;
+    const d = vs.data, rows = classRows(), listed = rows.filter((c) => c.listed);
+    const started = d.verifications.some((v) => d.checks.some((c) => c.verificationId === v.id));
     const vOf = (r) => d.verifications.find((v) => v.id === r.verificationId);
     const panelsOf = (cls) => [...new Set(d.list.filter((r) => r.classCode === cls && r.verificationId).map((r) => d.panels.find((p) => p.id === vOf(r)?.panelId)?.name).filter(Boolean))].join(', ');
-    const pick = vt('vPick', free, [
+    const trainers = vt('vTr', trainerRows(), [
+      { k: 'pick', label: '<span class="sr">Choose</span>', cell: (s) => `<input type="checkbox" data-trpick="${esc(s.code)}"${su.trainers.has(lower(s.code)) ? ' checked' : ''} aria-label="${esc(s.name)}">` },
+      { k: 'name', label: 'Trainer', sort: (s) => s.name, cell: (s) => esc(s.name) },
+      { k: 'code', label: 'Code', sort: (s) => s.code, cell: (s) => esc(s.code) },
+      { k: 'units', label: 'Units they teach', sort: (s) => teaches(s.code).length, cell: (s) => `<small>${esc(teaches(s.code).join(', ')) || '–'}</small>` },
+    ], { first: 'name', filter: 'Filter trainers', empty: 'No staff.', search: trSearch,
+      tools: (shown) => `<label class="kchip"><input type="checkbox" data-trall${shown.length && shown.every((s) => su.trainers.has(lower(s.code))) ? ' checked' : ''}><span>Select all (${shown.length})</span></label><span class="muted small">${su.trainers.size} ticked</span>` });
+    const pick = vt('vPick', rows, [
       { k: 'pick', label: '<span class="sr">Choose</span>', cell: (c) => `<input type="checkbox" data-lspick="${esc(c.code)}"${ls.picked.has(c.code) ? ' checked' : ''} aria-label="${esc(c.code)}">` },
       { k: 'cls', label: 'Class', sort: (c) => c.code, cell: (c) => esc(c.code) },
       { k: 'students', label: 'Students', cls: 'num', sort: (c) => c.students, cell: (c) => String(c.students) },
       { k: 'units', label: 'Units', cls: 'num', sort: (c) => c.units, cell: (c) => String(c.units) },
-    ], { first: 'cls', filter: 'Filter classes', empty: 'Every class is on the list.', search: classSearch,
-      tools: (shown) => `<label class="kchip"><input type="checkbox" data-lsall${shown.length && shown.every((c) => ls.picked.has(c.code)) ? ' checked' : ''}><span>Select all (${shown.length})</span></label>
-        <button type="button" class="btn small primary" data-vact="list-add"${ls.picked.size ? '' : ' disabled'}>Add ${ls.picked.size || ''} class${ls.picked.size === 1 ? '' : 'es'}</button>` });
+    ], { first: 'cls', filter: 'Filter classes', empty: 'No classes in this term\'s loading.', search: classSearch,
+      tools: (shown) => `<label class="kchip"><input type="checkbox" data-lsall${shown.length && shown.every((c) => ls.picked.has(c.code)) ? ' checked' : ''}><span>Select all (${shown.length})</span></label><span class="muted small">${ls.picked.size} ticked</span>` });
     const on = vt('vOn', listed, [
       { k: 'cls', label: 'Class', sort: (c) => c.code, cell: (c) => esc(c.code) },
       { k: 'students', label: 'Students', cls: 'num', sort: (c) => c.students, cell: (c) => String(c.students) },
-      { k: 'units', label: 'Units', cls: 'num', sort: (c) => c.listed, cell: (c) => (c.given ? `${c.given} of ${c.listed} given out` : String(c.listed)) },
-      { k: 'panel', label: 'Panel', sort: (c) => panelsOf(c.code), cell: (c) => esc(panelsOf(c.code)) || '<span class="muted small">not yet</span>' },
-      { k: 'x', label: '<span class="sr">Remove</span>', cell: (c) => (c.given ? '' : `<button type="button" class="btn small ghost" data-vact="list-remove" data-cls="${esc(c.code)}">Remove</button>`) },
-    ], { first: 'cls', filter: 'Filter classes', empty: 'No classes on the list yet.', search: (c) => `${c.code} ${panelsOf(c.code)}` });
-    return card('Classes to verify', `Tick the classes to verify this term; all their units come with them. Allocate gives each class to a panel by its number of students, then each unit to two of that panel's members (never anyone who teaches it) and draws its sample at once.`,
-      `<h3 class="ver-ph">Choose classes</h3>${pick}<h3 class="ver-ph">On the list (${listed.length})</h3>${on}
-      <div class="row-actions"><button type="button" class="btn small danger" data-vact="clear-all">Delete this term's verification</button><button type="button" class="btn primary" data-vact="allocate"${left ? '' : ' disabled'}>${left ? `Allocate ${left} unit${left === 1 ? '' : 's'} to the panels` : 'Everything is given out'}</button></div>`);
+      { k: 'units', label: 'Units given out', cls: 'num', sort: (c) => c.given, cell: (c) => `${c.given} of ${c.listed}` },
+      { k: 'panel', label: 'Panel', sort: (c) => panelsOf(c.code), cell: (c) => esc(panelsOf(c.code)) || '<span class="muted small">none could take it</span>' },
+    ], { first: 'cls', filter: 'Filter classes', empty: 'Nothing set up yet.', search: (c) => `${c.code} ${panelsOf(c.code)}` });
+    return card('Set up verification', 'Tick the trainers who verify and the classes to verify. The system makes the panels (about the size you choose, each named after the term and its number), gives each class to a panel by its number of students, gives each unit to two members who do not teach it, and draws the samples.',
+      `<h3 class="ver-ph">1. Trainers who verify</h3>${trainers}
+      <h3 class="ver-ph">2. Classes to verify</h3>${pick}
+      <div class="row-actions su-go"><label class="small">Members per panel <input type="number" id="suSize" min="2" max="8" value="${su.size}"></label>
+        <button type="button" class="btn primary" data-vact="setup"${su.trainers.size >= 2 && ls.picked.size ? '' : ' disabled'}>${d.panels.length ? 'Start again: make the panels and allocate' : 'Make the panels and allocate'}</button></div>
+      ${started ? '<p class="warn-text small">Checking has started, so starting again is not allowed. Delete this term\'s verification first if you really need to.</p>' : ''}
+      ${listed.length ? `<h3 class="ver-ph">What was given out</h3>${on}` : ''}
+      <div class="row-actions"><button type="button" class="btn small danger" data-vact="clear-all">Delete this term's verification</button></div>`);
   }
-  const listFree = () => vtShown('vPick', classRows().filter((c) => !c.listed), classSearch);
+  const listFree = () => vtShown('vPick', classRows(), classSearch);
+
+  /* ---------- the external officer: choose a class or a unit ---------- */
+  const ef = { cls: '', unit: '' };
+  function extCard() {
+    const all = vs.data.verifications;
+    const classes = [...new Set(all.map((v) => v.classCode))].sort();
+    const units = [...new Map(all.filter((v) => !ef.cls || v.classCode === ef.cls).map((v) => [v.unitCode, v.unitName])).entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    if (ef.unit && !units.some(([c]) => c === ef.unit)) ef.unit = '';
+    const list = all.filter((v) => (!ef.cls || v.classCode === ef.cls) && (!ef.unit || v.unitCode === ef.unit));
+    return card('Verification', 'Choose a class or a unit to verify. Open one to see the panel\'s checks, pick your own students, leave your comments and export the report.',
+      `<div class="poe-filters"><select id="efClass" aria-label="Class"><option value="">All classes</option>${classes.map((c) => `<option${c === ef.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select id="efUnit" aria-label="Unit"><option value="">All units</option>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ef.unit ? ' selected' : ''}>${esc(c)} - ${esc(n)}</option>`).join('')}</select></div>
+      ${ef.cls || ef.unit ? table(list, { key: 'vExt', empty: 'Nothing given out for that choice yet.' }) : '<p class="muted small">Choose a class or a unit above.</p>'}`);
+  }
 
   /* ---------- the external officer's own sample ---------- */
   const ext = { pool: null, for: '', picked: new Set() };
@@ -349,6 +376,14 @@ const Verify = (() => {
         await call('clearVerification', {}, "This term's verification is deleted"); vs.open = ''; vs.data = null; redraw();
       }
       if (act === 'draw') { const r = await call('redrawSample', { id: a.dataset.id }, 'Sample drawn'); upsertVer(r.verification); redraw(); }
+      if (act === 'setup') {
+        if (vs.data.panels.length && !confirm("This replaces this term's panels and everything given out with new ones. Go ahead?")) return true;
+        su.size = Number($('#suSize')?.value) || 3;
+        const codes = trainerRows().filter((s) => su.trainers.has(lower(s.code))).map((s) => s.code);
+        const r = await call('setupVerification', { trainers: codes, classes: [...ls.picked], size: su.size });
+        toast(`${r.panels} panel${r.panels === 1 ? '' : 's'} made from ${r.trainers} trainers; ${r.classes.length} class${r.classes.length === 1 ? '' : 'es'} and ${r.allocated} unit${r.allocated === 1 ? '' : 's'} given out${r.skipped.length ? ` - ${r.skipped.length} unit${r.skipped.length === 1 ? '' : 's'} could not be: ${r.skipped[0].why}` : ''}`, r.skipped.length ? 'err' : 'ok');
+        vs.data = null; redraw();
+      }
       if (act === 'allocate') {
         const r = await call('allocateVerification', {});
         toast(`${r.classes.length} class${r.classes.length === 1 ? '' : 'es'} to the panels, ${r.allocated} unit${r.allocated === 1 ? '' : 's'} to two members each${r.skipped.length ? ` - ${r.skipped.length} unit${r.skipped.length === 1 ? '' : 's'} could not be: ${r.skipped[0].why}` : ''}`, r.skipped.length ? 'err' : 'ok');
@@ -424,13 +459,18 @@ const Verify = (() => {
       for (const n of ['verifier', 'verifier2']) for (const o of t.form.querySelector(`[name=${n}]`).options) o.hidden = !!o.value && own.has(lower(o.value));
       return true;
     }
-    if (t.matches('[data-lspick]')) { if (t.checked) ls.picked.add(t.dataset.lspick); else ls.picked.delete(t.dataset.lspick); redrawTable('vPick'); return true; }
-    if (t.matches('[data-lsall]')) { for (const c of listFree()) { if (t.checked) ls.picked.add(c.code); else ls.picked.delete(c.code); } redrawTable('vPick'); return true; }
+    if (t.id === 'efClass') { ef.cls = t.value; ef.unit = ''; Tables.reset('vExt'); redraw(); return true; }
+    if (t.id === 'efUnit') { ef.unit = t.value; Tables.reset('vExt'); redraw(); return true; }
+    if (t.matches('[data-trpick]')) { if (t.checked) su.trainers.add(lower(t.dataset.trpick)); else su.trainers.delete(lower(t.dataset.trpick)); redrawTable('vTr'); goState(); return true; }
+    if (t.matches('[data-trall]')) { for (const s of vtShown('vTr', trainerRows(), trSearch)) { if (t.checked) su.trainers.add(lower(s.code)); else su.trainers.delete(lower(s.code)); } redrawTable('vTr'); goState(); return true; }
+    if (t.matches('[data-lspick]')) { if (t.checked) ls.picked.add(t.dataset.lspick); else ls.picked.delete(t.dataset.lspick); redrawTable('vPick'); goState(); return true; }
+    if (t.matches('[data-lsall]')) { for (const c of listFree()) { if (t.checked) ls.picked.add(c.code); else ls.picked.delete(c.code); } redrawTable('vPick'); goState(); return true; }
     if (t.matches('[data-mem]')) { const s = memberSets.get(t.dataset.mem) || new Set(); memberSets.set(t.dataset.mem, s); if (t.checked) s.add(lower(t.value)); else s.delete(lower(t.value));
       const lg = t.closest('fieldset')?.querySelector('legend .muted'); if (lg) lg.textContent = `(${s.size} chosen; staff already on another panel are not listed)`; return true; }
     if (t.matches('[data-extpick]')) { if (t.checked) ext.picked.add(lower(t.dataset.extpick)); else ext.picked.delete(lower(t.dataset.extpick)); return true; }
     return false;
   }
+  const goState = () => { const b = $('[data-vact=setup]'); if (b) b.disabled = !(su.trainers.size >= 2 && ls.picked.size); };
   const reset = () => { vs.data = null; vs.open = ''; };
   return { render, onClick, onSubmit, onChange, reset, state: vs };
 })();

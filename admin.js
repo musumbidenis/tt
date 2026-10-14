@@ -915,7 +915,12 @@ const Admin = (() => {
     if (t.matches('[data-drivelink]') && t.value.trim()) setDriveFolder(t);
     if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
     if (t.matches('.students [data-rep]')) api('setRep', { admNo: t.dataset.rep, rep: t.checked }).then((r) => toast(r.ok ? (t.checked ? 'Class rep: added to the class reps\' group' : 'No longer a class rep') : r.error, r.ok ? 'ok' : 'err'));
-    if (t.matches('.staff .rolechip input')) { const li = t.closest('li'); staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved'); }
+    if (t.matches('.staff .rolechip input')) {
+      const li = t.closest('li');
+      // Internal or external, never both: External (a visitor) clears the other roles, any other role clears External.
+      if (t.checked) for (const c of li.querySelectorAll('.rolechip input')) if (c !== t && (t.value === 'EAO' || c.value === 'EAO')) c.checked = false;
+      staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved');
+    }
     if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
     if (t.id === 'nsRole') { $('#nsEndsBox').hidden = t.value !== 'EAO'; $('#nsEnds').required = t.value === 'EAO'; }
   });

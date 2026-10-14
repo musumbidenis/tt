@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.11.0';
+export const VERSION = '7.12.0';
 const SCHEMA_VERSION = '19';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -358,6 +358,7 @@ const ACTIONS = {
   deleteStaff: { role: ['MIS'], fn: (env, b, me) => deleteStaff(env, b, me) },
   deleteStudent: { role: ['MIS'], fn: (env, b, me) => deleteStudent(env, b, me) },
   allocateVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => allocateVerification(env, b, me) },
+  setupVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => setupVerification(env, b, me) },
   verifyPool: { role: ['EAO', 'IAO', 'HOD', 'MIS'], fn: (env, b, me) => verifyPool(env, b, me) },
   externalSample: { role: ['EAO'], fn: (env, b, me) => externalSample(env, b, me) },
   setExternal: { role: ['MIS', 'IAO'], fn: (env, b, me) => setExternal(env, b, me) },
@@ -942,6 +943,8 @@ async function updateStaff(env, b, me) {
   if (b.roles) {
     const roles = rolesList(Array.isArray(b.roles) ? b.roles.join(',') : b.roles);
     if (lower(code) === lower(me.code) && !roles.includes('MIS')) fail('You cannot remove your own MIS role');
+    // Internal or external, never both: the External Assessment Officer is a visitor with no other role.
+    if (roles.includes('EAO') && roles.length > 1) fail('An External Assessment Officer is a visitor and has no other role. Choose either External, or the internal roles.');
     row.roles = roles.join(', ');
   }
   if (b.driveFolder !== undefined) {
@@ -2536,6 +2539,41 @@ async function createVerification(env, me, p, load, verifier, verifier2, term) {
  * The MIS Officer (or the Internal Assessment Officer) lists the class-units to verify this term. Allocating gives each
  * one to a panel - the biggest classes first, each to the panel with the fewest students so far - and, within it, to two
  * members picked at random among those with the fewest students so far. Nobody verifies a unit they teach. */
+/** The MIS Officer ticks the trainers and the classes; the system makes the panels (about `size` members each, no more
+ *  panels than classes), names and numbers them, then allocates: classes to panels by students, units to two members. */
+async function setupVerification(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('Set up the term first');
+  const want = [...new Set((b.trainers || []).map((c) => String(c).trim()).filter(Boolean))];
+  const classes = [...new Set((b.classes || []).map(String).filter(Boolean))];
+  if (want.length < 2) fail('Tick at least two trainers');
+  if (!classes.length) fail('Tick the classes to verify');
+  const staff = await all(env, `SELECT code, name, roles FROM staff WHERE active=1 AND code IN ${IN}`, JSON.stringify(want));
+  const people = staff.filter((s) => !hasRole(s.roles, 'EAO')).map((s) => s.code);
+  if (people.length < 2) fail('Tick at least two active trainers');
+  // Starting again is fine until any checking has begun.
+  const old = (await all(env, 'SELECT v.id FROM verifications v JOIN panels p ON p.id=v.panel_id WHERE p.term_id=?', term.id)).map((r) => r.id);
+  if (old.length && (await one(env, `SELECT 1 AS x FROM verify_checks WHERE verification_id IN ${IN} LIMIT 1`, JSON.stringify(old)))) fail("Checking has already started this term. Delete this term's verification first if you really want to start again.");
+  await many(env, [`DELETE FROM verifications WHERE id IN ${IN}`, JSON.stringify(old)], ['DELETE FROM panels WHERE term_id=?', term.id], ['DELETE FROM verify_list WHERE term_id=?', term.id]);
+  const size = Math.max(2, Math.min(8, Math.round(Number(b.size) || 3)));
+  const count = Math.max(1, Math.min(Math.floor(people.length / size), classes.length));
+  // Trainers are shuffled (with a seed, so it can be repeated), then dealt round the panels.
+  const rnd = seeded(String(b.seed || crypto.randomUUID()));
+  const deck = people.map((c) => ({ c, k: rnd() })).sort((a, d) => a.k - d.k).map((x) => x.c);
+  const groups = Array.from({ length: count }, () => []);
+  deck.forEach((c, i) => groups[i % count].push(c));
+  const now = nowIso(), made = [];
+  for (let i = 0; i < count; i++) {
+    const id = crypto.randomUUID(), name = `${term.name} - Panel ${i + 1}`;
+    made.push(['INSERT INTO panels (id,term_id,name,number,chair,members,status,created_by,created_at,decided_by,decided_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      id, term.id, name, i + 1, groups[i][0], JSON.stringify(groups[i]), 'approved', me.name, now, 'Approved automatically', now, now]);
+  }
+  await many(env, ...made);
+  await audit(env, me, 'verification set up', `${people.length} trainers in ${count} panel(s), ${classes.length} class(es)`);
+  await verifyListSave(env, { classes }, me);
+  const r = await allocateVerification(env, { seed: b.seed }, me);
+  return { ...r, panels: count, trainers: people.length };
+}
 async function verifyListSave(env, b, me) {
   const term = await activeTerm(env);
   if (!term) fail('Set up the term first');
