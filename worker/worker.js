@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.7.0';
-const SCHEMA_VERSION = '17';
+export const VERSION = '7.8.0';
+const SCHEMA_VERSION = '18';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS approvals (ref TEXT PRIMARY KEY, kind TEXT, subject T
 CREATE INDEX IF NOT EXISTS approvals_subject ON approvals (kind, subject);
 CREATE TABLE IF NOT EXISTS marksheets (id TEXT PRIMARY KEY, class_code TEXT, unit_code TEXT, unit_name TEXT, status TEXT, prepared_code TEXT, prepared_name TEXT, prepared_at TEXT, received_code TEXT, received_name TEXT, received_at TEXT, approved_code TEXT, approved_name TEXT, approved_at TEXT, comment TEXT, approval_ref TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS enrolments (term_id TEXT, adm_no TEXT COLLATE NOCASE, class_code TEXT, status TEXT, at TEXT, PRIMARY KEY (term_id, adm_no));
+CREATE TABLE IF NOT EXISTS verify_list (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, students INTEGER, added_by TEXT, added_at TEXT, PRIMARY KEY (term_id, class_code, unit_code));
 CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT);
 CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
 CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
@@ -95,7 +96,11 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // A class representative (in the class reps' email group).
   'ALTER TABLE trainees ADD COLUMN rep INTEGER',
   // The approval (stamp, name and QR on the outputs) of an approved register or piece of evidence.
-  'ALTER TABLE signoffs ADD COLUMN approval_ref TEXT', 'ALTER TABLE evidence ADD COLUMN approval_ref TEXT'];
+  'ALTER TABLE signoffs ADD COLUMN approval_ref TEXT', 'ALTER TABLE evidence ADD COLUMN approval_ref TEXT',
+  // Two verifiers for each class-unit, each with their own result; the external officer's own sample.
+  'ALTER TABLE verifications ADD COLUMN verifier2 TEXT', 'ALTER TABLE verifications ADD COLUMN v1_result TEXT', 'ALTER TABLE verifications ADD COLUMN v1_actions TEXT',
+  'ALTER TABLE verifications ADD COLUMN v1_at TEXT', 'ALTER TABLE verifications ADD COLUMN v2_result TEXT', 'ALTER TABLE verifications ADD COLUMN v2_actions TEXT',
+  'ALTER TABLE verifications ADD COLUMN v2_at TEXT', 'ALTER TABLE verifications ADD COLUMN ext_sample TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -344,8 +349,12 @@ const ACTIONS = {
   savePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => savePanel(env, b, me) },
   decidePanel: { role: ['HOD'], fn: (env, b, me) => decidePanel(env, b, me) },
   assignVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => assignVerification(env, b, me) },
+  verifyListSave: { role: ['MIS', 'IAO'], fn: (env, b, me) => verifyListSave(env, b, me) },
+  allocateVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => allocateVerification(env, b, me) },
+  verifyPool: { role: ['EAO', 'IAO', 'HOD', 'MIS'], fn: (env, b, me) => verifyPool(env, b, me) },
+  externalSample: { role: ['EAO'], fn: (env, b, me) => externalSample(env, b, me) },
   setExternal: { role: ['MIS', 'IAO'], fn: (env, b, me) => setExternal(env, b, me) },
-  redrawSample: { role: ['HOD'], fn: (env, b, me) => redrawSample(env, b, me) },
+  redrawSample: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => redrawSample(env, b, me) },
   moreSample: { role: ['EAO', 'IAO'], fn: (env, b, me) => moreSample(env, b, me) },
   saveCheck: { fn: (env, b, me) => saveCheck(env, b, me) },
   submitVerification: { fn: (env, b, me) => submitVerification(env, b, me) },
@@ -2392,38 +2401,46 @@ function drawSample(f, size, seed, keep = []) {
 const panelOut = (r) => ({ id: r.id, termId: r.term_id, name: r.name, chair: r.chair, members: JSON.parse(r.members || '[]'), status: r.status, note: r.note || '',
   createdBy: r.created_by, createdAt: r.created_at, decidedBy: r.decided_by || '', decidedAt: r.decided_at || '' });
 const verOut = (r) => ({ id: r.id, panelId: r.panel_id, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, trainerCode: r.trainer_code, trainerName: r.trainer_name,
-  verifier: r.verifier, external: r.external || '', population: r.population, risk: r.risk, size: r.size, seed: r.seed, sample: JSON.parse(r.sample || '[]'),
+  verifier: r.verifier, verifier2: r.verifier2 || '', external: r.external || '', population: r.population, risk: r.risk, size: r.size, seed: r.seed, sample: JSON.parse(r.sample || '[]'),
   reasons: JSON.parse(r.reasons || '{}'), round: r.round || 1, status: r.status, result: r.result || '', actions: r.actions || '', response: r.response || '',
   respondedAt: r.responded_at || '', submittedAt: r.submitted_at || '', signedBy: r.signed_by || '', signedAt: r.signed_at || '',
-  extResult: r.ext_result || '', extNote: r.ext_note || '', extAt: r.ext_at || '', log: JSON.parse(r.log || '[]') });
+  extResult: r.ext_result || '', extNote: r.ext_note || '', extAt: r.ext_at || '', log: JSON.parse(r.log || '[]'),
+  v1: { result: r.v1_result || '', actions: r.v1_actions || '', at: r.v1_at || '' }, v2: { result: r.v2_result || '', actions: r.v2_actions || '', at: r.v2_at || '' },
+  extSample: JSON.parse(r.ext_sample || '[]') });
 const checkOut = (r) => ({ verificationId: r.verification_id, admNo: r.adm_no, who: r.who, valid: !!r.valid, authentic: !!r.authentic, current: !!r.current,
   sufficient: !!r.sufficient, agree: r.agree === null ? null : !!r.agree, comment: r.comment || '', by: r.by_code, at: r.at });
+/** Which of the two verifiers someone is on a class-unit ('internal' = the first, 'second'), or ''. */
+const verifierSlot = (v, code) => (lower(v.verifier) === lower(code) ? 'internal' : v.verifier2 && lower(v.verifier2) === lower(code) ? 'second' : '');
 const inPanel = (p, code) => p && (lower(p.chair) === lower(code) || JSON.parse(p.members || '[]').some((m) => lower(m) === lower(code)));
 async function verifiesEvidence(env, me, r) {
-  const rows = await all(env, 'SELECT verifier, external, sample, status FROM verifications WHERE class_code=? AND unit_code=?', r.class_code, r.unit_code);
-  return rows.some((v) => lower(v.verifier) === lower(me.code)
-    || (lower(v.external) === lower(me.code) && ['submitted', 'signed'].includes(v.status) && JSON.parse(v.sample || '[]').some((a) => lower(a) === lower(r.adm_no))));
+  const rows = await all(env, 'SELECT verifier, verifier2, external, sample, ext_sample, status FROM verifications WHERE class_code=? AND unit_code=?', r.class_code, r.unit_code);
+  const inList = (s) => JSON.parse(s || '[]').some((a) => lower(a) === lower(r.adm_no));
+  // The two verifiers see the class-unit's evidence; an External Assessment Officer sees any student in a sample (theirs or the panel's).
+  return rows.some((v) => verifierSlot(v, me.code) || (me.roles.includes('EAO') && (inList(v.sample) || inList(v.ext_sample))));
 }
 /** Panels, the class-units given out, and the checks this person may see; with the staff and loading to choose from. */
 async function verifyData(env, b, me) {
   const term = await activeTerm(env);
   const [panels, vers, staff, loading] = await many(env, ['SELECT * FROM panels ORDER BY created_at DESC'], ['SELECT * FROM verifications ORDER BY updated_at DESC'],
     ['SELECT code, name, roles, active, ends_on FROM staff WHERE active=1 ORDER BY name'], [`SELECT class_code, unit_code, unit_name, trainer_code, trainer_name FROM loading WHERE term_id=${ACTIVE_TERM}`]);
-  const office = seesAll(me);
-  const myPanels = panels.filter((p) => office || (p.status === 'approved' && inPanel(p, me.code)));
+  const office = seesAll(me), ext = me.roles.includes('EAO');
+  // The External Assessment Officer sees every panel and what each was given (this term).
+  const myPanels = panels.filter((p) => office || (p.status === 'approved' && (inPanel(p, me.code) || (ext && p.term_id === term?.id))));
   const panelIds = new Set(myPanels.map((p) => p.id));
-  const seeV = vers.filter((v) => office || panelIds.has(v.panel_id) || lower(v.verifier) === lower(me.code)
-    || (lower(v.external) === lower(me.code) && ['submitted', 'signed'].includes(v.status))
+  const seeV = vers.filter((v) => office || panelIds.has(v.panel_id) || verifierSlot(v, me.code) || lower(v.external) === lower(me.code)
     || (lower(v.trainer_code) === lower(me.code) && ['submitted', 'signed'].includes(v.status)));
   const ids = seeV.map((v) => v.id);
   const checks = ids.length ? await all(env, `SELECT * FROM verify_checks WHERE verification_id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)) : [];
   // A trainer sees the verifier's findings on their units, not the external officer's working; the external officer sees both.
-  const seeCheck = (c) => { const v = seeV.find((x) => x.id === c.verification_id); return office || lower(v.verifier) === lower(me.code) || lower(v.external) === lower(me.code) || panelIds.has(v.panel_id) || c.who === 'internal'; };
-  const names = Object.fromEntries((await all(env, `SELECT adm_no, name FROM trainees WHERE adm_no IN (SELECT value FROM json_each(?))`, JSON.stringify([...new Set(seeV.flatMap((v) => JSON.parse(v.sample || '[]')))]))).map((t) => [lower(t.adm_no), t.name]));
+  const seeCheck = (c) => { const v = seeV.find((x) => x.id === c.verification_id); return office || ext || verifierSlot(v, me.code) || panelIds.has(v.panel_id) || c.who !== 'external'; };
+  const names = Object.fromEntries((await all(env, `SELECT adm_no, name FROM trainees WHERE adm_no IN (SELECT value FROM json_each(?))`, JSON.stringify([...new Set(seeV.flatMap((v) => [...JSON.parse(v.sample || '[]'), ...JSON.parse(v.ext_sample || '[]')]))]))).map((t) => [lower(t.adm_no), t.name]));
+  const list = office || ext ? (await all(env, 'SELECT * FROM verify_list WHERE term_id=? ORDER BY class_code, unit_code', term?.id || '')).map((r) => ({ classCode: r.class_code, unitCode: r.unit_code,
+    unitName: r.unit_name || r.unit_code, trainerCode: r.trainer_code || '', trainerName: r.trainer_name || '', students: r.students || 0,
+    verificationId: seeV.find((v) => v.class_code === r.class_code && v.unit_code === r.unit_code && myPanels.some((p) => p.id === v.panel_id && p.term_id === term?.id))?.id || '' })) : [];
   return { ok: true, termId: term?.id || '', panels: myPanels.map(panelOut), verifications: seeV.map(verOut), checks: checks.filter(seeCheck).map(checkOut), names,
     staff: office ? staff.map((s) => ({ code: s.code, name: s.name, roles: rolesList(s.roles), endsOn: s.ends_on || '' })) : staff.filter((s) => myPanels.some((p) => inPanel(p, s.code)) || hasRole(s.roles, 'EAO')).map((s) => ({ code: s.code, name: s.name, roles: rolesList(s.roles) })),
     loading: office ? loading.map((u) => ({ classCode: u.class_code, unitCode: u.unit_code, unitName: u.unit_name || u.unit_code, trainerCode: u.trainer_code, trainerName: u.trainer_name })) : [],
-    sampleMin: SAMPLE_MIN };
+    list, sampleMin: SAMPLE_MIN };
 }
 async function savePanel(env, b, me) {
   const term = await activeTerm(env);
@@ -2439,14 +2456,15 @@ async function savePanel(env, b, me) {
   if (b.id) {
     const p = await one(env, 'SELECT * FROM panels WHERE id=?', String(b.id));
     if (!p) fail('That panel no longer exists');
-    // Changing an approved panel sends it back to the HOD.
-    await run(env, "UPDATE panels SET name=?, chair=?, members=?, status='draft', note='', updated_at=? WHERE id=?", name, chair, JSON.stringify(members), now, p.id);
-    await audit(env, me, 'panel', `${name}: changed, waiting for the HOD`);
+    // Panels are approved for the HOD as they are saved; the HOD can still return one.
+    await run(env, "UPDATE panels SET name=?, chair=?, members=?, status='approved', note='', decided_by=?, decided_at=?, updated_at=? WHERE id=?", name, chair, JSON.stringify(members), 'Approved automatically', now, now, p.id);
+    await audit(env, me, 'panel', `${name}: changed (approved automatically)`);
     return { ok: true, panel: panelOut(await one(env, 'SELECT * FROM panels WHERE id=?', p.id)) };
   }
   const id = crypto.randomUUID();
-  await run(env, "INSERT INTO panels (id,term_id,name,chair,members,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'draft',?,?,?)", id, term.id, name, chair, JSON.stringify(members), me.name, now, now);
-  await audit(env, me, 'panel', `${name}: drafted`);
+  await run(env, "INSERT INTO panels (id,term_id,name,chair,members,status,created_by,created_at,decided_by,decided_at,updated_at) VALUES (?,?,?,?,?,'approved',?,?,?,?,?)",
+    id, term.id, name, chair, JSON.stringify(members), me.name, now, 'Approved automatically', now, now);
+  await audit(env, me, 'panel', `${name}: drafted (approved automatically)`);
   return { ok: true, panel: panelOut(await one(env, 'SELECT * FROM panels WHERE id=?', id)) };
 }
 async function decidePanel(env, b, me) {
@@ -2462,24 +2480,100 @@ const logLine = (me, what) => ({ at: nowIso(), by: me.name, what });
 async function assignVerification(env, b, me) {
   const p = await one(env, 'SELECT * FROM panels WHERE id=?', String(b.panelId || ''));
   if (!p || p.status !== 'approved') fail('The HOD has to approve the panel first');
-  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), verifier = String(b.verifier || '');
-  if (!inPanel(p, verifier)) fail('Choose a member of this panel');
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), verifier = String(b.verifier || ''), verifier2 = String(b.verifier2 || '');
+  if (!inPanel(p, verifier) || !inPanel(p, verifier2)) fail('Choose two members of this panel');
+  if (lower(verifier) === lower(verifier2)) fail('Choose two different members: each class and unit is verified by two');
   const term = await activeTerm(env);
   const load = unitsForClass(await all(env, `SELECT * FROM loading WHERE term_id=${ACTIVE_TERM} AND unit_code=?`, unit), cls)[0];
   if (!load) fail('That class and unit are not in this term\'s loading');
-  if (lower(load.trainer_code) === lower(verifier)) fail('A trainer cannot verify their own unit. Choose another member.');
-  if (await one(env, 'SELECT 1 AS x FROM verifications WHERE panel_id=? AND class_code=? AND unit_code=?', p.id, cls, unit)) fail('That class and unit already has a verifier on this panel');
+  const own = await teachersOf(env, unit);
+  if (own.has(lower(verifier)) || own.has(lower(verifier2))) fail('A member cannot verify a unit they teach. Choose other members.');
+  if (await one(env, 'SELECT 1 AS x FROM verifications v JOIN panels p ON p.id=v.panel_id WHERE p.term_id=? AND v.class_code=? AND v.unit_code=?', p.term_id, cls, unit)) fail('That class and unit has already been given out this term');
+  const v = await createVerification(env, me, p, load, verifier, verifier2, term);
+  return { ok: true, verification: verOut(v) };
+}
+/** Everyone who teaches a unit this term (any class): none of them verifies it. */
+async function teachersOf(env, unit) {
+  return new Set((await all(env, `SELECT trainer_code FROM loading WHERE term_id=${ACTIVE_TERM} AND unit_code=?`, unit)).map((r) => lower(r.trainer_code)).filter(Boolean));
+}
+/** A class-unit given to two members: the sample is drawn now, or later once some evidence is approved. */
+async function createVerification(env, me, p, load, verifier, verifier2, term) {
+  const cls = load.class_code, unit = load.unit_code;
   const f = await samplingFacts(env, cls, unit, load.trainer_code, term?.id);
-  if (!f.pop.length) fail('No evidence in this class and unit has been approved yet, so there is nothing to sample');
   const size = sampleSize(f.pop.length, f.risk), seed = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
   const { sample, reasons } = drawSample(f, size, seed);
   const id = crypto.randomUUID(), now = nowIso();
-  await run(env, `INSERT INTO verifications (id,panel_id,class_code,unit_code,unit_name,trainer_code,trainer_name,verifier,population,risk,size,seed,sample,reasons,round,status,log,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'open',?,?)`, id, p.id, cls, unit, load.unit_name || unit, load.trainer_code, load.trainer_name || '', verifier,
-  f.pop.length, f.risk, size, seed, JSON.stringify(sample), JSON.stringify(reasons),
-  JSON.stringify([logLine(me, `sample of ${size} from ${f.pop.length} drawn${f.why.length ? ` (higher risk: ${f.why.join(', ')})` : ''}`)]), now);
-  await audit(env, me, 'verification', `${cls} ${unit} to ${verifier}: ${size} of ${f.pop.length}`);
-  return { ok: true, verification: verOut(await one(env, 'SELECT * FROM verifications WHERE id=?', id)) };
+  const line = f.pop.length ? `sample of ${size} from ${f.pop.length} drawn${f.why.length ? ` (higher risk: ${f.why.join(', ')})` : ''}` : 'no evidence approved yet: draw the sample once there is';
+  await run(env, `INSERT INTO verifications (id,panel_id,class_code,unit_code,unit_name,trainer_code,trainer_name,verifier,verifier2,population,risk,size,seed,sample,reasons,round,status,log,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'open',?,?)`, id, p.id, cls, unit, load.unit_name || unit, load.trainer_code, load.trainer_name || '', verifier, verifier2,
+  f.pop.length, f.risk, size, seed, JSON.stringify(sample), JSON.stringify(reasons), JSON.stringify([logLine(me, `given to ${verifier} and ${verifier2}; ${line}`)]), now);
+  await audit(env, me, 'verification', `${cls} ${unit} to ${verifier} and ${verifier2}: ${size} of ${f.pop.length}`);
+  return one(env, 'SELECT * FROM verifications WHERE id=?', id);
+}
+
+/* ---------- the master list and giving it out automatically ----------
+ * The MIS Officer (or the Internal Assessment Officer) lists the class-units to verify this term. Allocating gives each
+ * one to a panel - the biggest classes first, each to the panel with the fewest students so far - and, within it, to two
+ * members picked at random among those with the fewest students so far. Nobody verifies a unit they teach. */
+async function verifyListSave(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('Set up the term first');
+  const want = (b.items || []).map((i) => ({ classCode: String(i.classCode || ''), unitCode: String(i.unitCode || '') })).filter((i) => i.classCode && i.unitCode).slice(0, 500);
+  const drop = (b.remove || []).map((i) => [String(i.classCode || ''), String(i.unitCode || '')]).slice(0, 500);
+  const loading = await all(env, `SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`);
+  const counts = new Map((await all(env, `SELECT class_code, COUNT(*) AS n FROM trainees WHERE COALESCE(status,'') NOT IN ${GONE} GROUP BY class_code`)).map((r) => [r.class_code, r.n]));
+  const now = nowIso(), rows = [];
+  for (const i of want) {
+    const u = loading.find((l) => l.class_code === i.classCode && l.unit_code === i.unitCode);
+    if (!u) continue;
+    const students = (classParts(u.class_code).length ? classParts(u.class_code) : [u.class_code]).reduce((n, c) => n + (counts.get(c) || 0), 0);
+    rows.push({ term_id: term.id, class_code: u.class_code, unit_code: u.unit_code, unit_name: u.unit_name || u.unit_code, trainer_code: u.trainer_code || '', trainer_name: u.trainer_name || '', students, added_by: me.name, added_at: now });
+  }
+  await many(env, ...upsertStmts('verify_list', ['term_id', 'class_code', 'unit_code', 'unit_name', 'trainer_code', 'trainer_name', 'students', 'added_by', 'added_at'], rows, ['term_id', 'class_code', 'unit_code']),
+    ...drop.map(([c, u]) => ['DELETE FROM verify_list WHERE term_id=? AND class_code=? AND unit_code=?', term.id, c, u]));
+  await audit(env, me, 'verification list', `${rows.length} added, ${drop.length} removed`);
+  return { ok: true, added: rows.length, removed: drop.length };
+}
+async function allocateVerification(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('Set up the term first');
+  const [listRows, panelRows, given, loading] = await many(env, ['SELECT * FROM verify_list WHERE term_id=?', term.id],
+    ["SELECT * FROM panels WHERE term_id=? AND status='approved' ORDER BY created_at", term.id],
+    ['SELECT v.* FROM verifications v JOIN panels p ON p.id=v.panel_id WHERE p.term_id=?', term.id], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`]);
+  const only = new Set((b.panelIds || []).map(String));
+  const panels = panelRows.filter((p) => !only.size || only.has(p.id)).map((p) => ({ ...p, people: JSON.parse(p.members || '[]') }));
+  if (!panels.length) fail('Draft at least one panel first');
+  const done = new Set(given.map((v) => v.class_code + '|' + v.unit_code));
+  const todo = listRows.filter((r) => !done.has(r.class_code + '|' + r.unit_code)).slice(0, 120);
+  if (!todo.length) fail(listRows.length ? 'Everything on the list has already been given out' : 'Add class-units to the list first');
+  const teach = new Map();
+  for (const l of loading) { if (!teach.has(l.unit_code)) teach.set(l.unit_code, new Set()); if (l.trainer_code) teach.get(l.unit_code).add(lower(l.trainer_code)); }
+  const rnd = seeded(String(b.seed || crypto.randomUUID()));
+  const weight = (r) => Math.max(1, Number(r.students) || 0);
+  const panelLoad = new Map(panels.map((p) => [p.id, 0])), memberLoad = new Map();
+  for (const v of given) {
+    if (panelLoad.has(v.panel_id)) panelLoad.set(v.panel_id, panelLoad.get(v.panel_id) + Math.max(1, v.population || 0));
+    for (const m of [v.verifier, v.verifier2].filter(Boolean)) memberLoad.set(lower(m), (memberLoad.get(lower(m)) || 0) + Math.max(1, v.population || 0));
+  }
+  // Biggest first (ties at random), so the large classes are spread before the small ones fill the gaps.
+  const order = todo.map((r) => ({ r, k: rnd() })).sort((a, c) => weight(c.r) - weight(a.r) || a.k - c.k).map((x) => x.r);
+  const made = [], skipped = [];
+  for (const r of order) {
+    const own = teach.get(r.unit_code) || new Set();
+    const fit = panels.map((p) => ({ p, ok: p.people.filter((m) => !own.has(lower(m))), k: rnd() })).filter((x) => x.ok.length >= 2)
+      .sort((a, c) => panelLoad.get(a.p.id) - panelLoad.get(c.p.id) || a.k - c.k);
+    if (!fit.length) { skipped.push({ classCode: r.class_code, unitCode: r.unit_code, why: 'no panel has two members who do not teach this unit' }); continue; }
+    const { p, ok } = fit[0];
+    const two = ok.map((m) => ({ m, k: rnd() })).sort((a, c) => (memberLoad.get(lower(a.m)) || 0) - (memberLoad.get(lower(c.m)) || 0) || a.k - c.k).slice(0, 2).map((x) => x.m);
+    const load = loading.find((l) => l.class_code === r.class_code && l.unit_code === r.unit_code)
+      || { class_code: r.class_code, unit_code: r.unit_code, unit_name: r.unit_name, trainer_code: r.trainer_code, trainer_name: r.trainer_name };
+    const v = await createVerification(env, me, p, load, two[0], two[1], term);
+    panelLoad.set(p.id, panelLoad.get(p.id) + weight(r));
+    for (const m of two) memberLoad.set(lower(m), (memberLoad.get(lower(m)) || 0) + weight(r));
+    made.push(verOut(v));
+  }
+  await audit(env, me, 'verification allocated', `${made.length} given out to ${panels.length} panel(s), ${skipped.length} not`);
+  return { ok: true, allocated: made.length, skipped, verifications: made };
 }
 async function getVer(env, id) { const v = await one(env, 'SELECT * FROM verifications WHERE id=?', String(id || '')); if (!v) fail('That verification no longer exists'); return v; }
 async function saveVer(env, v, fields, line) {
@@ -2496,15 +2590,18 @@ async function setExternal(env, b, me) {
 async function redrawSample(env, b, me) {
   const v = await getVer(env, b.id);
   if (v.status !== 'open') fail('Only a verification still in progress can be drawn again');
+  if (!me.roles.includes('HOD') && JSON.parse(v.sample || '[]').length) fail('Only the HOD can draw a sample again');
   const term = await activeTerm(env), f = await samplingFacts(env, v.class_code, v.unit_code, v.trainer_code, term?.id);
   const size = sampleSize(f.pop.length, f.risk), seed = crypto.randomUUID().replace(/-/g, '').slice(0, 16), { sample, reasons } = drawSample(f, size, seed);
-  await run(env, "DELETE FROM verify_checks WHERE verification_id=? AND who='internal'", v.id);
-  return { ok: true, verification: await saveVer(env, v, { seed, sample: JSON.stringify(sample), reasons: JSON.stringify(reasons), size, population: f.pop.length, risk: f.risk, round: 1 },
+  if (!f.pop.length) fail('No evidence in this class and unit has been approved yet, so there is nothing to sample');
+  await run(env, "DELETE FROM verify_checks WHERE verification_id=? AND who IN ('internal','second')", v.id);
+  return { ok: true, verification: await saveVer(env, v, { seed, sample: JSON.stringify(sample), reasons: JSON.stringify(reasons), size, population: f.pop.length, risk: f.risk, round: 1,
+    v1_result: null, v1_actions: null, v1_at: null, v2_result: null, v2_actions: null, v2_at: null },
     logLine(me, `drawn again by the HOD: ${size} of ${f.pop.length}${b.reason ? ` (${String(b.reason).slice(0, 200)})` : ''}`)) };
 }
 async function moreSample(env, b, me) {
   const v = await getVer(env, b.id);
-  if (me.roles.includes('EAO') && !me.roles.includes('IAO') && lower(v.external) !== lower(me.code)) fail('This verification is not given to you');
+  if (me.roles.includes('EAO') && !me.roles.includes('IAO')) fail('Pick the students you want under Your own sample');
   const term = await activeTerm(env), f = await samplingFacts(env, v.class_code, v.unit_code, v.trainer_code, term?.id);
   const had = JSON.parse(v.sample || '[]').map(lower), add = Math.max(1, Math.min(10, Number(b.count) || 5));
   const { sample, reasons } = drawSample(f, Math.min(f.pop.length, had.length + add), v.seed + ':more' + had.length, had);
@@ -2515,11 +2612,12 @@ async function moreSample(env, b, me) {
 }
 async function saveCheck(env, b, me) {
   const v = await getVer(env, b.id), adm = String(b.admNo || '');
-  const who = lower(v.verifier) === lower(me.code) ? 'internal' : lower(v.external) === lower(me.code) ? 'external' : '';
+  const slot = verifierSlot(v, me.code), who = slot || (me.roles.includes('EAO') ? 'external' : '');
   if (!who) fail('This verification is not given to you');
-  if (who === 'internal' && v.status !== 'open') fail('This verification has been submitted');
-  if (who === 'external' && !['submitted', 'signed'].includes(v.status)) fail('The panel has not finished this one yet');
-  if (!JSON.parse(v.sample || '[]').some((a) => lower(a) === lower(adm))) fail('That student is not in the sample');
+  if (slot && v.status !== 'open') fail('This verification has been submitted');
+  if (slot && (slot === 'internal' ? v.v1_at : v.v2_at)) fail('You have submitted your result for this one');
+  const inS = (s) => JSON.parse(s || '[]').some((a) => lower(a) === lower(adm));
+  if (who === 'external' ? !(inS(v.ext_sample) || (inS(v.sample) && ['submitted', 'signed'].includes(v.status))) : !inS(v.sample)) fail('That student is not in the sample');
   const t = (k) => (b[k] ? 1 : 0), agree = b.agree === true ? 1 : b.agree === false ? 0 : null;
   if (agree === 0 && !String(b.comment || '').trim()) fail('Say why you do not agree with the trainer');
   await run(env, `INSERT INTO verify_checks (verification_id,adm_no,who,valid,authentic,current,sufficient,agree,comment,by_code,at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
@@ -2530,15 +2628,19 @@ async function saveCheck(env, b, me) {
 /** The verifier's result. Too many disagreements (2 or more, or over 20% of the sample) first doubles the sample, then takes in
  * every student, before a result can be given. */
 async function submitVerification(env, b, me) {
-  const v = await getVer(env, b.id);
-  if (lower(v.verifier) !== lower(me.code)) fail('Only the panel member given this class and unit can submit it');
+  const v = await getVer(env, b.id), slot = verifierSlot(v, me.code);
+  if (!slot) fail('Only the two members given this class and unit can submit it');
   if (v.status !== 'open') fail('This verification has already been submitted');
+  if (slot === 'internal' ? v.v1_at : v.v2_at) fail('You have already submitted your result');
   const sample = JSON.parse(v.sample || '[]');
-  const checks = await all(env, "SELECT * FROM verify_checks WHERE verification_id=? AND who='internal'", v.id);
+  if (!sample.length) fail('The sample has not been drawn yet');
+  const all_ = await all(env, "SELECT * FROM verify_checks WHERE verification_id=? AND who IN ('internal','second')", v.id);
+  const checks = all_.filter((c) => c.who === slot);
   const done = new Set(checks.filter((c) => c.agree !== null).map((c) => lower(c.adm_no)));
   const left = sample.filter((a) => !done.has(lower(a)));
   if (left.length) fail(`Check every student in the sample first (${left.length} left)`);
-  const against = checks.filter((c) => c.agree === 0).length;
+  // Disagreements count once a student, whichever of the two verifiers found it.
+  const against = new Set(all_.filter((c) => c.agree === 0).map((c) => lower(c.adm_no))).size;
   const round = Number(v.round) || 1;
   if ((against >= 2 || against > sample.length * 0.2) && round < 3) {
     const term = await activeTerm(env), f = await samplingFacts(env, v.class_code, v.unit_code, v.trainer_code, term?.id);
@@ -2546,7 +2648,8 @@ async function submitVerification(env, b, me) {
     if (size > sample.length) {
       const { sample: next, reasons } = drawSample(f, size, v.seed + ':r' + (round + 1), sample.map(lower));
       const why = Object.fromEntries(Object.keys(reasons).map((a) => [a, round === 1 ? 'sample doubled' : 'every student']));
-      const ver = await saveVer(env, v, { sample: JSON.stringify(next), reasons: JSON.stringify({ ...JSON.parse(v.reasons || '{}'), ...why }), size: next.length, round: round + 1 },
+      const ver = await saveVer(env, v, { sample: JSON.stringify(next), reasons: JSON.stringify({ ...JSON.parse(v.reasons || '{}'), ...why }), size: next.length, round: round + 1,
+        v1_result: null, v1_actions: null, v1_at: null, v2_result: null, v2_actions: null, v2_at: null },
         logLine(me, `${against} disagreement(s): ${round === 1 ? 'sample doubled' : 'every student taken in'} (${next.length})`));
       return { ok: true, extended: round === 1 ? 'doubled' : 'everyone', verification: ver };
     }
@@ -2555,7 +2658,15 @@ async function submitVerification(env, b, me) {
   if (!VERDICTS.includes(result)) fail('Choose the result');
   const actions = String(b.actions || '').trim().slice(0, 2000);
   if (result !== 'verified' && !actions) fail('Write the actions the trainer should take');
-  return { ok: true, verification: await saveVer(env, v, { status: 'submitted', result, actions, submitted_at: nowIso() }, logLine(me, `submitted: ${result.replace('_', ' ')}`)) };
+  const now = nowIso(), mine = slot === 'internal' ? { v1_result: result, v1_actions: actions, v1_at: now } : { v2_result: result, v2_actions: actions, v2_at: now };
+  const other = slot === 'internal' ? { result: v.v2_result, actions: v.v2_actions, at: v.v2_at, who: v.verifier2 } : { result: v.v1_result, actions: v.v1_actions, at: v.v1_at, who: v.verifier };
+  if (!v.verifier2 || other.at) {
+    // Both results are in: the report takes the stricter of the two, with both members' actions.
+    const worst = [result, other.result].filter(Boolean).sort((a, c) => VERDICTS.indexOf(c) - VERDICTS.indexOf(a))[0];
+    const both = [actions && `${me.name}: ${actions}`, other.actions && `${other.who}: ${other.actions}`].filter(Boolean).join(' - ');
+    return { ok: true, verification: await saveVer(env, v, { ...mine, status: 'submitted', result: worst, actions: both, submitted_at: now }, logLine(me, `submitted: ${result.replace('_', ' ')}; report: ${worst.replace('_', ' ')}`)) };
+  }
+  return { ok: true, waiting: true, verification: await saveVer(env, v, mine, logLine(me, `submitted: ${result.replace('_', ' ')} (waiting for the second verifier)`)) };
 }
 async function respondVerification(env, b, me) {
   const v = await getVer(env, b.id);
@@ -2573,11 +2684,25 @@ async function signVerification(env, b, me) {
 }
 async function externalVerdict(env, b, me) {
   const v = await getVer(env, b.id);
-  if (lower(v.external) !== lower(me.code)) fail('This verification is not given to you');
-  if (!['submitted', 'signed'].includes(v.status)) fail('The panel has not finished this one yet');
+  if (v.external && lower(v.external) !== lower(me.code)) fail('Another External Assessment Officer has this one');
   const result = String(b.result || '');
   if (!VERDICTS.includes(result)) fail('Choose the result');
-  return { ok: true, verification: await saveVer(env, v, { ext_result: result, ext_note: String(b.note || '').trim().slice(0, 2000), ext_at: nowIso() }, logLine(me, `external result: ${result.replace('_', ' ')}`)) };
+  return { ok: true, verification: await saveVer(env, v, { external: me.code, ext_result: result, ext_note: String(b.note || '').trim().slice(0, 2000), ext_at: nowIso() }, logLine(me, `external result: ${result.replace('_', ' ')}`)) };
+}
+/** The students of a class-unit with approved evidence (the external officer picks their own sample from them). */
+async function verifyPool(env, b, me) {
+  const v = await getVer(env, b.id);
+  const rows = await all(env, "SELECT DISTINCT e.adm_no, t.name FROM evidence e LEFT JOIN trainees t ON t.adm_no=e.adm_no WHERE e.class_code=? AND e.unit_code=? AND e.status='approved' ORDER BY e.adm_no", v.class_code, v.unit_code);
+  const s = new Set(JSON.parse(v.sample || '[]').map(lower)), mine = new Set(JSON.parse(v.ext_sample || '[]').map(lower));
+  return { ok: true, students: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, inSample: s.has(lower(r.adm_no)), mine: mine.has(lower(r.adm_no)) })) };
+}
+async function externalSample(env, b, me) {
+  const v = await getVer(env, b.id);
+  if (v.external && lower(v.external) !== lower(me.code)) fail('Another External Assessment Officer has this one');
+  const pool = new Set((await all(env, "SELECT DISTINCT adm_no FROM evidence WHERE class_code=? AND unit_code=? AND status='approved'", v.class_code, v.unit_code)).map((r) => lower(r.adm_no)));
+  const pick = [...new Set((b.admNos || []).map((a) => String(a).trim()).filter((a) => pool.has(lower(a))))].slice(0, 200);
+  if (!pick.length && (b.admNos || []).length) fail('Choose students whose evidence has been approved');
+  return { ok: true, verification: await saveVer(env, v, { external: me.code, ext_sample: JSON.stringify(pick) }, logLine(me, `external sample: ${pick.length} student(s)`)) };
 }
 /* ---------- messages: in the app, on the phone, and by email to Google Groups ----------
  * Anyone with a staff role but the External Assessment Officer can send a message. Who it can reach follows their access:

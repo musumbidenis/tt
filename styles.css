@@ -1115,3 +1115,10 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .bk-opts { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin: .4rem 0 .6rem; }
 .bk-prog { display: flex; align-items: center; gap: .6rem; margin-top: .6rem; }
 .bk-prog progress { flex: 1; max-width: 22rem; }
+
+/* Verification: the master list and the external officer's own sample */
+.ls-pick { display: flex; flex-wrap: wrap; gap: .35rem; max-height: 16rem; overflow: auto; margin: .4rem 0; }
+.ls-pick small { color: var(--muted); }
+.ls-search { margin: .4rem 0; width: 100%; max-width: 26rem; }
+.ver-ph { font-size: .95rem; margin: .8rem 0 .3rem; }
+.ext-own { margin: .6rem 0; }
