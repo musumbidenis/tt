@@ -1149,3 +1149,33 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .panel-who { display: flex; flex-wrap: wrap; gap: .4rem .75rem; align-items: center; justify-content: space-between; }
 .ver-table .sn { width: 3rem; color: var(--muted); }
 .su-go input { width: 5rem; margin-left: .4rem; }
+
+/* ---- Compact tick boxes, batch bars and S/N column ---- */
+.report-table input[type=checkbox], .mlist input[type=checkbox], .batch-bar input[type=checkbox] { width: 1rem; height: 1rem; }
+.mlist .bpick { flex: none; margin: 0; }
+.report-table td.sn, .report-table th.sn { width: 2.5rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.batch-bar { gap: .4rem .6rem; padding: .35rem .25rem .5rem; }
+.batch-bar .btn, .batch-bar button { min-height: 30px; padding: .2rem .7rem; font-size: .8125rem; }
+.batch-bar .kchip span { padding: .15rem .55rem; font-size: .8125rem; }
+.batch-bar .kchip input { width: 1px; height: 1px; }
+
+/* Verification: collapsible sections, compact tables and controls */
+details.vcard { padding: 0; }
+details.vcard > summary { list-style: none; display: flex; align-items: center; gap: .6rem; padding: .9rem 1.1rem; cursor: pointer; }
+details.vcard > summary::-webkit-details-marker { display: none; }
+details.vcard > summary::after { content: ''; margin-left: auto; width: .55rem; height: .55rem; border-right: 2px solid var(--ink-2); border-bottom: 2px solid var(--ink-2); transform: rotate(45deg); transition: transform .15s; }
+details.vcard[open] > summary::after { transform: rotate(-135deg); }
+details.vcard > summary h2 { margin: 0; font-size: 1.05rem; }
+details.vcard > :not(summary) { margin-left: 1.1rem; margin-right: 1.1rem; }
+details.vcard > :last-child { margin-bottom: 1rem; }
+.vcount { display: inline-block; min-width: 1.5em; padding: 0 .45em; border-radius: 99px; background: var(--sunk); color: var(--ink); font-size: .75rem; font-weight: 700; text-align: center; }
+#poe .ver-table { font-size: .875rem; }
+#poe .ver-table td, #poe .ver-table th { padding: .4rem .55rem; }
+#poe .ver-table .btn.small { min-height: 28px; padding: .1rem .55rem; font-size: .78rem; }
+#poe .vt-tools .kchip span, #poe .vcheck .kchip span { padding: .12rem .5rem; font-size: .78rem; }
+#poe .vt-tools .btn.small { min-height: 30px; padding: .15rem .65rem; font-size: .8125rem; }
+#poe .vt-q, #poe .vcheck select, #poe .vcheck input[name=comment] { height: 32px; font-size: .8125rem; }
+#poe .ver-table input[type=checkbox] { width: 1rem; height: 1rem; }
+#poe .vcheck { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+#poe .ver-ph { font-size: .9rem; color: var(--ink-2); margin: .9rem 0 .25rem; }
+#poe .su-go { align-items: center; }

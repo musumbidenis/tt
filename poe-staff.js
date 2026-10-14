@@ -92,12 +92,13 @@ const PoeStaff = (() => {
   function unitTable(rows) {
     const page = Tables.slice('poeUnit', rows);
     const th = (col, label, cls = '') => Tables.th('poeUnit', col, label, cls);
-    const pick = batchable(page);
+    const pick = batchable(page), off = Tables.offset('poeUnit');
     return `<div class="card table-card">${pick.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-pickall${pick.every((e) => ps.picked.has(e.id)) ? ' checked' : ''}><span>Select all ${pick.length} shown</span></label>
       <button type="button" class="btn primary small" data-act="batch-approve"${ps.picked.size ? '' : ' disabled'}>Approve selected${ps.picked.size ? ` (${ps.picked.size})` : ''}</button>
+      <button type="button" class="btn small" data-act="batch-return"${ps.picked.size ? '' : ' disabled'}>Return selected${ps.picked.size ? ` (${ps.picked.size})` : ''}</button>
       <span class="muted small">Approving without a note says: ${esc(OK_SAID.poe)}</span></div>` : ''}<div class="table-wrap"><table class="report-table poe-table poe-unit-table">
-      <thead><tr>${pick.length ? '<th class="pick"><span class="sr">Select</span></th>' : ''}${th('name', 'Student')}${th('adm', 'Admission no.')}${th('unit', 'Unit')}${th('item', 'Item')}${th('mark', 'Mark', 'num')}${th('sent', 'Sent')}${th('status', 'Status')}<th><span class="sr">Preview</span></th></tr></thead>
-      <tbody>${page.map((e) => unitRow(e, pick.length > 0)).join('')}</tbody></table></div>
+      <thead><tr>${pick.length ? '<th class="pick"><span class="sr">Select</span></th>' : ''}<th class="sn">S/N</th>${th('name', 'Student')}${th('adm', 'Admission no.')}${th('unit', 'Unit')}${th('item', 'Item')}${th('mark', 'Mark', 'num')}${th('sent', 'Sent')}${th('status', 'Status')}<th><span class="sr">Preview</span></th></tr></thead>
+      <tbody>${page.map((e, i) => unitRow(e, pick.length > 0, off + i + 1)).join('')}</tbody></table></div>
       ${Tables.bar('poeUnit', rows)}
       <div class="row-actions table-actions">
         <button type="button" class="btn" data-act="unit-xlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel</button>
@@ -106,10 +107,10 @@ const PoeStaff = (() => {
   }
   /** Rows this person may approve in one go: waiting ones (the server checks each is theirs to decide). */
   const batchable = (rows) => (canDecide() ? rows.filter((e) => e.status === 'submitted') : []);
-  function unitRow(e, picking) {
+  function unitRow(e, picking, sn) {
     const [cls, label] = statusOf(e);
     const verb = canDecide() && e.status === 'submitted' ? 'Review' : 'Preview';
-    return `<tr data-id="${esc(e.id)}">${picking ? `<td class="pick">${e.status === 'submitted' ? `<input type="checkbox" data-pick="${esc(e.id)}"${ps.picked.has(e.id) ? ' checked' : ''} aria-label="Select ${esc(e.name)} ${esc(e.item)}">` : ''}</td>` : ''}
+    return `<tr data-id="${esc(e.id)}">${picking ? `<td class="pick">${e.status === 'submitted' ? `<input type="checkbox" data-pick="${esc(e.id)}"${ps.picked.has(e.id) ? ' checked' : ''} aria-label="Select ${esc(e.name)} ${esc(e.item)}">` : ''}</td>` : ''}<td class="sn">${sn}</td>
       <td><b>${esc(e.name)}</b></td><td class="tadm">${esc(e.admNo)}</td>
       <td class="unit-cell" title="${esc(e.classCode)}">${esc(e.unitName)}</td>
       <td><span class="item-tag">${esc(e.item)}</span>${e.version > 1 ? ` <small class="muted">v${e.version}</small>` : ''}</td>
@@ -120,8 +121,8 @@ const PoeStaff = (() => {
   }
   /** The by-unit table as plain text, for Excel and the printed copy. */
   function unitSheet(rows) {
-    return { head: ['Student', 'Admission no.', 'Class', 'Unit', 'Item', 'Version', 'Mark', 'Sent', 'Status', 'Approval ref'],
-      rows: rows.map((e) => [e.name, e.admNo, e.classCode, e.unitName, e.item, e.version, markOf(e.classCode, e.unitCode, e.admNo, e.item), fmtTime(e.submittedAt), statusOf(e)[1], e.approvalRef || '']) };
+    return { head: ['S/N', 'Student', 'Admission no.', 'Class', 'Unit', 'Item', 'Version', 'Mark', 'Sent', 'Status', 'Approval ref'],
+      rows: rows.map((e, i) => [i + 1, e.name, e.admNo, e.classCode, e.unitName, e.item, e.version, markOf(e.classCode, e.unitCode, e.admNo, e.item), fmtTime(e.submittedAt), statusOf(e)[1], e.approvalRef || '']) };
   }
   /** One page for an approved submission: what it is, and the stamp, name and QR code. The student's file is never changed. */
   function printSlip(e) {
@@ -202,8 +203,8 @@ const PoeStaff = (() => {
   const SYM = { approved: '✓', returned: '↺', submitted: '•' };
   /** The table's rows as plain text, for Excel and the printed copy. */
   function studentSheet(show) {
-    const head = ['Admission no.', 'Name', 'Items sent', 'Approved', 'With trainer', 'Returned', 'Details'];
-    const rows = show.map(({ st, got, units, c, sent }) => [st.admNo, st.name, sent, c.approved, c.submitted, c.returned,
+    const head = ['S/N', 'Admission no.', 'Name', 'Items sent', 'Approved', 'With trainer', 'Returned', 'Details'];
+    const rows = show.map(({ st, got, units, c, sent }, i) => [i + 1, st.admNo, st.name, sent, c.approved, c.submitted, c.returned,
       units.map((u) => {
         const mine = [...got.values()].filter((e) => e.unitCode === u.code).sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
         return mine.length ? `${u.code}: ${mine.map((e) => { const m = markOf(ps.sCls, u.code, st.admNo, e.item); return `${e.item} ${STATUS[e.status]?.[1] || e.status}${m === '' ? '' : ` (${fmtMark(m)})`}`; }).join(', ')}` : '';
@@ -211,17 +212,17 @@ const PoeStaff = (() => {
     return { head, rows };
   }
   function studentTable(show) {
-    const rows = Tables.slice('poeStu', show);
+    const rows = Tables.slice('poeStu', show), off = Tables.offset('poeStu');
     return `<div class="card table-card"><div class="table-wrap"><table class="report-table poe-table">
-      <thead><tr>${Tables.th('poeStu', 'name', 'Student')}${Tables.th('poeStu', 'adm', 'Admission no.')}${Tables.th('poeStu', 'sent', 'Sent', 'num')}${Tables.th('poeStu', 'approved', 'Approved', 'num')}${Tables.th('poeStu', 'submitted', 'With trainer', 'num')}${Tables.th('poeStu', 'returned', 'Returned', 'num')}<th><span class="sr">Preview</span></th></tr></thead>
-      <tbody>${rows.map(studentHtml).join('')}</tbody></table></div>
+      <thead><tr><th class="sn">S/N</th>${Tables.th('poeStu', 'name', 'Student')}${Tables.th('poeStu', 'adm', 'Admission no.')}${Tables.th('poeStu', 'sent', 'Sent', 'num')}${Tables.th('poeStu', 'approved', 'Approved', 'num')}${Tables.th('poeStu', 'submitted', 'With trainer', 'num')}${Tables.th('poeStu', 'returned', 'Returned', 'num')}<th><span class="sr">Preview</span></th></tr></thead>
+      <tbody>${rows.map((x, i) => studentHtml(x, off + i + 1)).join('')}</tbody></table></div>
       ${Tables.bar('poeStu', show)}
       <div class="row-actions table-actions">
         <button type="button" class="btn" data-act="stu-xlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel</button>
         <button type="button" class="btn" data-act="stu-pdf"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg>Save as PDF</button>
       </div></div>`;
   }
-  function studentHtml({ st, got, units, c, sent }) {
+  function studentHtml({ st, got, units, c, sent }, sn) {
     const used = ITEMS.filter((it) => [...got.values()].some((e) => e.item === it));
     const cols = used.length ? ITEMS.filter((it) => ITEMS.indexOf(it) <= Math.max(...used.map((u) => ITEMS.indexOf(u))) || it === 'CAT1' || it === 'PRAC1') : ['CAT1', 'CAT2', 'PRAC1'];
     // Each cell: what was sent (tap to preview, approve or return) and, under it, the mark for that item.
@@ -237,10 +238,10 @@ const PoeStaff = (() => {
     const open = ps.openStu === st.admNo;
     const n = (v, cls) => `<td class="num">${v ? `<span class="pill ${cls}">${v}</span>` : '–'}</td>`;
     return `<tr class="stu-row${open ? ' open' : ''}" data-adm="${esc(st.admNo)}" tabindex="0" role="button" aria-expanded="${open}">
-        <td><b>${esc(st.name)}</b></td><td class="tadm">${esc(st.admNo)}</td>
+        <td class="sn">${sn}</td><td><b>${esc(st.name)}</b></td><td class="tadm">${esc(st.admNo)}</td>
         <td class="num">${sent || '–'}</td>${n(c.approved, 'synced')}${n(c.submitted, 'pending')}${n(c.returned, 'rejected')}
         <td>${first ? `<button type="button" class="btn small${canDecide() && first.status === 'submitted' ? ' primary' : ''}" data-preview="${esc(first.id)}" data-adm="${esc(st.admNo)}">${canDecide() && first.status === 'submitted' ? 'Review' : 'Preview'}</button>` : ''}</td></tr>
-      ${open ? `<tr class="stu-detail"><td colspan="7"><div class="table-wrap"><table class="poe-matrix"><thead><tr><th>Unit</th>${cols.map((it) => `<th>${it}</th>`).join('')}</tr></thead>
+      ${open ? `<tr class="stu-detail"><td colspan="8"><div class="table-wrap"><table class="poe-matrix"><thead><tr><th>Unit</th>${cols.map((it) => `<th>${it}</th>`).join('')}</tr></thead>
         <tbody>${units.map((u) => `<tr><th scope="row">${esc(u.name)}</th>${cols.map((it) => mark(got.get(u.code + '|' + it), u, it)).join('')}</tr>`).join('')}</tbody></table></div>
         <p class="muted tiny pm-key">✓ approved - • with the trainer - ↺ returned - – not sent. The number under each is the mark in the unit's marksheet.</p></td></tr>` : ''}`;
   }
@@ -403,6 +404,25 @@ const PoeStaff = (() => {
     } catch (e) { toast(e.message, 'err'); }
     badge(); draw();
   }
+  /** Returns the ticked rows with one note (no PIN needed), one after another. */
+  async function batchReturn(btn) {
+    const ids = [...ps.picked].filter((id) => ps.list.find((x) => x.id === id)?.status === 'submitted');
+    if (!ids.length) return;
+    const comment = (prompt(`Write what needs fixing (sent to ${ids.length} student${ids.length === 1 ? '' : 's'}):`) || '').trim();
+    if (!comment) { toast('Write a note to return them', 'err'); return; }
+    btn.disabled = true;
+    let done = 0, failed = 0, firstErr = '';
+    for (const id of ids) {
+      try {
+        const r = await api('poeDecide', { id, decision: 'returned', comment });
+        if (!r.ok) throw new Error(r.error || 'Could not return it');
+        const k = ps.list.findIndex((x) => x.id === r.evidence.id); if (k >= 0) ps.list[k] = r.evidence;
+        ps.picked.delete(id); done++;
+      } catch (e) { failed++; if (!firstErr) firstErr = e.message; }
+    }
+    toast(`Returned ${done}${failed ? ` - ${failed} failed: ${firstErr}` : ''}`, failed ? 'err' : 'ok');
+    badge(); draw();
+  }
   async function decide(decision, btn) {
     const comment = $('#poeComment')?.value.trim() || '';
     if (decision === 'returned' && !comment) { toast('Write what needs fixing, then return it', 'err'); $('#poeComment').focus(); return; }
@@ -458,6 +478,7 @@ const PoeStaff = (() => {
       const a = t.closest('[data-act]');
       if (a?.dataset.act === 'close') $('#poeDialog').close();
       if (a?.dataset.act === 'batch-approve') { batchApprove(a); return; }
+      if (a?.dataset.act === 'batch-return') { batchReturn(a); return; }
       if (a?.dataset.act === 'slip') printSlip(ps.list.find((x) => x.id === ps.open));
       if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (ok && id) { ps.files.delete(id); openViewer(id); } }); }
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; Verify.reset(); render(); }

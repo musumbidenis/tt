@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.12.0';
+export const VERSION = '7.13.0';
 const SCHEMA_VERSION = '19';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -365,6 +365,7 @@ const ACTIONS = {
   redrawSample: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => redrawSample(env, b, me) },
   moreSample: { role: ['EAO', 'IAO'], fn: (env, b, me) => moreSample(env, b, me) },
   saveCheck: { fn: (env, b, me) => saveCheck(env, b, me) },
+  saveChecks: { fn: (env, b, me) => saveChecks(env, b, me) },
   submitVerification: { fn: (env, b, me) => submitVerification(env, b, me) },
   respondVerification: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => respondVerification(env, b, me) },
   signVerification: { fn: (env, b, me) => signVerification(env, b, me) },
@@ -2356,7 +2357,7 @@ async function poeClass(env, b) {
 /* ---------- internal verification of POE: panels, sampling, checks, results ---------- */
 // A panel is drafted by the MIS Officer or the Internal Assessment Officer and approved by the HOD. Each class-unit is given to
 // one member (never its own trainer), who checks a sample of the students whose evidence the trainer approved.
-const SAMPLE_MIN = 10;
+const SAMPLE_MIN = 5, SAMPLE_MAX = 10;
 const VERDICTS = ['verified', 'actions', 'not_verified'];
 /** A small seeded random generator (mulberry32), so a sample can be drawn again exactly from its saved seed. */
 function seeded(seed) {
@@ -2366,7 +2367,7 @@ function seeded(seed) {
   return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 /** How many to check: everyone up to 10; otherwise the larger of 10 and the square root of the population times the risk. */
-export const sampleSize = (n, risk) => (n <= SAMPLE_MIN ? n : Math.min(n, Math.max(SAMPLE_MIN, Math.ceil(Math.sqrt(n) * risk))));
+export const sampleSize = (n, risk) => (n <= SAMPLE_MIN ? n : Math.min(n, SAMPLE_MAX, Math.max(SAMPLE_MIN, Math.ceil(Math.sqrt(n) * risk))));
 /** Everything the draw needs about one class-unit: the population, why each might be included, and the trainer's risk. */
 async function samplingFacts(env, cls, unit, trainerCode, termId) {
   const parts = classParts(cls).length ? classParts(cls) : [cls];
@@ -2505,15 +2506,15 @@ async function assignVerification(env, b, me) {
   const p = await one(env, 'SELECT * FROM panels WHERE id=?', String(b.panelId || ''));
   if (!p || p.status !== 'approved') fail('The HOD has to approve the panel first');
   const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), verifier = String(b.verifier || ''), verifier2 = String(b.verifier2 || '');
-  if (!inPanel(p, verifier) || !inPanel(p, verifier2)) fail('Choose two members of this panel');
-  if (lower(verifier) === lower(verifier2)) fail('Choose two different members: each class and unit is verified by two');
+  if (!inPanel(p, verifier) || (verifier2 && !inPanel(p, verifier2))) fail('Choose a member of this panel');
+  if (verifier2 && lower(verifier) === lower(verifier2)) fail('Choose two different members');
   const term = await activeTerm(env);
   const load = unitsForClass(await all(env, `SELECT * FROM loading WHERE term_id=${ACTIVE_TERM} AND unit_code=?`, unit), cls)[0];
   if (!load) fail('That class and unit are not in this term\'s loading');
   const own = await teachersOf(env, unit);
-  if (own.has(lower(verifier)) || own.has(lower(verifier2))) fail('A member cannot verify a unit they teach. Choose other members.');
+  if (own.has(lower(verifier)) || (verifier2 && own.has(lower(verifier2)))) fail('A member cannot verify a unit they teach. Choose another member.');
   if (await one(env, 'SELECT 1 AS x FROM verifications v JOIN panels p ON p.id=v.panel_id WHERE p.term_id=? AND v.class_code=? AND v.unit_code=?', p.term_id, cls, unit)) fail('That class and unit has already been given out this term');
-  const v = await createVerification(env, me, p, load, verifier, verifier2, term);
+  const v = await createVerification(env, me, p, load, verifier, verifier2 || null, term);
   return { ok: true, verification: verOut(v) };
 }
 /** Everyone who teaches a unit this term (any class): none of them verifies it. */
@@ -2521,7 +2522,7 @@ async function teachersOf(env, unit) {
   return new Set((await all(env, `SELECT trainer_code FROM loading WHERE term_id=${ACTIVE_TERM} AND unit_code=?`, unit)).map((r) => lower(r.trainer_code)).filter(Boolean));
 }
 /** A class-unit given to two members: the sample is drawn now, or later once some evidence is approved. */
-async function createVerification(env, me, p, load, verifier, verifier2, term) {
+async function createVerification(env, me, p, load, verifier, verifier2, term, note = '') {
   const cls = load.class_code, unit = load.unit_code;
   const f = await samplingFacts(env, cls, unit, load.trainer_code, term?.id);
   const size = sampleSize(f.pop.length, f.risk), seed = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
@@ -2530,8 +2531,8 @@ async function createVerification(env, me, p, load, verifier, verifier2, term) {
   const line = f.pop.length ? `sample of ${size} from the class of ${f.pop.length} drawn${f.why.length ? ` (higher risk: ${f.why.join(', ')})` : ''}` : 'the class list is empty: no sample';
   await run(env, `INSERT INTO verifications (id,panel_id,class_code,unit_code,unit_name,trainer_code,trainer_name,verifier,verifier2,population,risk,size,seed,sample,reasons,round,status,log,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'open',?,?)`, id, p.id, cls, unit, load.unit_name || unit, load.trainer_code, load.trainer_name || '', verifier, verifier2,
-  f.pop.length, f.risk, size, seed, JSON.stringify(sample), JSON.stringify(reasons), JSON.stringify([logLine(me, `given to ${verifier} and ${verifier2}; ${line}`)]), now);
-  await audit(env, me, 'verification', `${cls} ${unit} to ${verifier} and ${verifier2}: ${size} of ${f.pop.length}`);
+  f.pop.length, f.risk, size, seed, JSON.stringify(sample), JSON.stringify(reasons), JSON.stringify([logLine(me, `given to ${[verifier, verifier2].filter(Boolean).join(' and ')}; ${line}${note ? ` (${note})` : ''}`)]), now);
+  await audit(env, me, 'verification', `${cls} ${unit} to ${[verifier, verifier2].filter(Boolean).join(' and ')}: ${size} of ${f.pop.length}${note ? ` (${note})` : ''}`);
   return one(env, 'SELECT * FROM verifications WHERE id=?', id);
 }
 
@@ -2546,16 +2547,16 @@ async function setupVerification(env, b, me) {
   if (!term) fail('Set up the term first');
   const want = [...new Set((b.trainers || []).map((c) => String(c).trim()).filter(Boolean))];
   const classes = [...new Set((b.classes || []).map(String).filter(Boolean))];
-  if (want.length < 2) fail('Tick at least two trainers');
+  if (!want.length) fail('Tick the trainers who verify');
   if (!classes.length) fail('Tick the classes to verify');
   const staff = await all(env, `SELECT code, name, roles FROM staff WHERE active=1 AND code IN ${IN}`, JSON.stringify(want));
   const people = staff.filter((s) => !hasRole(s.roles, 'EAO')).map((s) => s.code);
-  if (people.length < 2) fail('Tick at least two active trainers');
+  if (!people.length) fail('Tick at least one active trainer');
   // Starting again is fine until any checking has begun.
   const old = (await all(env, 'SELECT v.id FROM verifications v JOIN panels p ON p.id=v.panel_id WHERE p.term_id=?', term.id)).map((r) => r.id);
   if (old.length && (await one(env, `SELECT 1 AS x FROM verify_checks WHERE verification_id IN ${IN} LIMIT 1`, JSON.stringify(old)))) fail("Checking has already started this term. Delete this term's verification first if you really want to start again.");
   await many(env, [`DELETE FROM verifications WHERE id IN ${IN}`, JSON.stringify(old)], ['DELETE FROM panels WHERE term_id=?', term.id], ['DELETE FROM verify_list WHERE term_id=?', term.id]);
-  const size = Math.max(2, Math.min(8, Math.round(Number(b.size) || 3)));
+  const size = Math.max(1, Math.min(8, Math.round(Number(b.size) || 3)));
   const count = Math.max(1, Math.min(Math.floor(people.length / size), classes.length));
   // Trainers are shuffled (with a seed, so it can be repeated), then dealt round the panels.
   const rnd = seeded(String(b.seed || crypto.randomUUID()));
@@ -2627,28 +2628,37 @@ async function allocateVerification(env, b, me) {
   const classes = new Map();
   for (const r of todo) { if (!classes.has(r.class_code)) classes.set(r.class_code, { code: r.class_code, students: weight(r), units: [], k: rnd() }); classes.get(r.class_code).units.push(r); }
   const can = (p, r) => p.people.filter((m) => !(teach.get(r.unit_code) || new Set()).has(lower(m)));
-  const pickTwo = (people) => people.map((m) => ({ m, k: rnd() })).sort((a, c) => (memberLoad.get(lower(a.m)) || 0) - (memberLoad.get(lower(c.m)) || 0) || a.k - c.k).slice(0, 2).map((x) => x.m);
-  const made = [], skipped = [], placed = [];
+  const least = (people) => people.map((m) => ({ m, k: rnd() })).sort((a, c) => (memberLoad.get(lower(a.m)) || 0) - (memberLoad.get(lower(c.m)) || 0) || a.k - c.k)[0]?.m;
+  const made = [], placed = [], relaxed = [];
   for (const c of [...classes.values()].sort((a, d) => d.students - a.students || a.k - d.k)) {
-    const ranked = panels.map((p) => ({ p, staffs: c.units.filter((r) => can(p, r).length >= 2).length, k: rnd() }))
-      .sort((a, d) => d.staffs - a.staffs || panelLoad.get(a.p.id) - panelLoad.get(d.p.id) || a.k - d.k);
-    const home = ranked[0];
-    if (!home || !home.staffs) { for (const r of c.units) skipped.push({ classCode: r.class_code, unitCode: r.unit_code, why: 'no panel has two members who do not teach this unit' }); continue; }
+    // Every class gets a panel: the one that can cover most of its units, then the one with the fewest students so far.
+    const home = panels.map((p) => ({ p, staffs: c.units.filter((r) => can(p, r).length).length, k: rnd() }))
+      .sort((a, d) => d.staffs - a.staffs || panelLoad.get(a.p.id) - panelLoad.get(d.p.id) || a.k - d.k)[0];
     panelLoad.set(home.p.id, panelLoad.get(home.p.id) + c.students);
     placed.push({ classCode: c.code, panel: home.p.name, students: c.students });
     for (const r of c.units) {
-      const p = can(home.p, r).length >= 2 ? home.p : panels.map((q) => ({ q, k: rnd() })).filter((x) => can(x.q, r).length >= 2).sort((a, d) => panelLoad.get(a.q.id) - panelLoad.get(d.q.id) || a.k - d.k)[0]?.q;
-      if (!p) { skipped.push({ classCode: r.class_code, unitCode: r.unit_code, why: 'no panel has two members who do not teach this unit' }); continue; }
-      const two = pickTwo(can(p, r));
+      // One member per unit: someone on the class's panel who does not teach it; else someone on another panel who does
+      // not; only then (the rules bent, and said so) a member who teaches the unit in another class, and last of all anyone.
+      let p = home.p, who = least(can(home.p, r)), note = '';
+      if (!who) {
+        const other = panels.filter((q) => q.id !== home.p.id && can(q, r).length).sort((a, d) => panelLoad.get(a.id) - panelLoad.get(d.id))[0];
+        if (other) { p = other; who = least(can(other, r)); note = `given to ${other.name}: nobody on ${home.p.name} is free of this unit`; }
+      }
+      if (!who) {
+        who = least(home.p.people.filter((m) => lower(m) !== lower(r.trainer_code))) || least(home.p.people);
+        note = lower(who) === lower(r.trainer_code) ? 'rule bent: the only member left is the unit\'s own trainer' : 'rule bent: every member teaches this unit in some class';
+      }
       const load = loading.find((l) => l.class_code === r.class_code && l.unit_code === r.unit_code)
         || { class_code: r.class_code, unit_code: r.unit_code, unit_name: r.unit_name, trainer_code: r.trainer_code, trainer_name: r.trainer_name };
-      const v = await createVerification(env, me, p, load, two[0], two[1], term);
-      for (const m of two) memberLoad.set(lower(m), (memberLoad.get(lower(m)) || 0) + weight(r));
+      const v = await createVerification(env, me, p, load, who, null, term, note);
+      memberLoad.set(lower(who), (memberLoad.get(lower(who)) || 0) + weight(r));
+      if (note.startsWith('rule bent')) relaxed.push({ classCode: r.class_code, unitCode: r.unit_code, why: note });
       made.push(verOut(v));
     }
   }
-  await audit(env, me, 'verification allocated', `${made.length} given out to ${panels.length} panel(s), ${skipped.length} not`);
-  return { ok: true, allocated: made.length, classes: placed, skipped, verifications: made };
+  const skipped = [];
+  await audit(env, me, 'verification allocated', `${made.length} given out to ${panels.length} panel(s)${relaxed.length ? `, ${relaxed.length} with the rules bent` : ''}`);
+  return { ok: true, allocated: made.length, classes: placed, skipped, relaxed, verifications: made };
 }
 async function getVer(env, id) { const v = await one(env, 'SELECT * FROM verifications WHERE id=?', String(id || '')); if (!v) fail('That verification no longer exists'); return v; }
 async function saveVer(env, v, fields, line) {
@@ -2699,6 +2709,14 @@ async function saveCheck(env, b, me) {
     ON CONFLICT(verification_id,adm_no,who) DO UPDATE SET valid=excluded.valid, authentic=excluded.authentic, current=excluded.current, sufficient=excluded.sufficient, agree=excluded.agree, comment=excluded.comment, by_code=excluded.by_code, at=excluded.at`,
   v.id, adm, who, t('valid'), t('authentic'), t('current'), t('sufficient'), agree, String(b.comment || '').trim().slice(0, 1000), me.code, nowIso());
   return { ok: true, check: checkOut(await one(env, 'SELECT * FROM verify_checks WHERE verification_id=? AND adm_no=? AND who=?', v.id, adm, who)) };
+}
+/** The verifier marks several students at once: the same ticks and decision (and comment) for each. */
+async function saveChecks(env, b, me) {
+  const adms = [...new Set((b.admNos || []).map(String))].slice(0, 200);
+  if (!adms.length) fail('Tick the students first');
+  const out = [];
+  for (const admNo of adms) out.push((await saveCheck(env, { ...b, admNo }, me)).check);
+  return { ok: true, checks: out };
 }
 /** The verifier's result. Too many disagreements (2 or more, or over 20% of the sample) first doubles the sample, then takes in
  * every student, before a result can be given. */

@@ -35,6 +35,8 @@ const Tables = (() => {
     </nav>`;
   }
   const reset = (key) => { get(key).page = 1; };
+  /** How many rows come before the page being shown (call after slice). */
+  const offset = (key) => { const s = get(key); return (s.page - 1) * s.size; };
 
   /* ---------- sorting: tap a heading, tap it again to reverse; remembered on this device ---------- */
   const sorts = new Map();
@@ -106,5 +108,5 @@ const Tables = (() => {
     try { localStorage.setItem('tsort:' + key, JSON.stringify({ col, dir })); } catch { /* private mode */ }
     get(key).page = 1;
   }
-  return { slice, bar, reset, on, defaults, th, sort, sortState, setSort, exportXlsx, print };
+  return { slice, offset, bar, reset, on, defaults, th, sort, sortState, setSort, exportXlsx, print };
 })();

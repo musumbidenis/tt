@@ -81,6 +81,55 @@ const Admin = (() => {
     el.insertAdjacentHTML('beforeend', html);
   }
 
+  /* ---------- tick boxes and "act on the ticked ones" bars (requests, class list, staff, phones) ---------- */
+  const picks = { req: new Set(), stu: new Set(), staff: new Set(), phone: new Set() };
+  const pickBox = (kind, id, label) => `<input type="checkbox" class="bpick" data-bpick="${kind}" value="${esc(id)}"${picks[kind].has(id) ? ' checked' : ''} aria-label="Select ${esc(label)}">`;
+  /** The bar: "Select all N shown" and one button per action, each showing how many are ticked. */
+  const pickBar = (kind, n, actions) => `<div class="batch-bar" data-bar="${kind}"><label class="kchip"><input type="checkbox" data-bpickall="${kind}"><span>Select all ${n} shown</span></label>
+      ${actions.map(([act, label, cls]) => `<button type="button" class="btn small ${cls || ''}" data-bact="${act}" data-label="${esc(label)}" disabled>${esc(label)}</button>`).join('')}</div>`;
+  const shownPicks = (kind) => $$(`input[data-bpick="${kind}"]`).filter((i) => !i.closest('li')?.hidden);
+  /** Keeps the bar's counts, disabled state and "select all" box in step with the ticks (no redraw, so searches stay). */
+  function syncBar(kind) {
+    const bar = document.querySelector(`[data-bar="${kind}"]`); if (!bar) return;
+    const n = picks[kind].size, boxes = shownPicks(kind);
+    bar.querySelectorAll('[data-bact]').forEach((b) => { b.disabled = !n; b.textContent = n ? `${b.dataset.label} (${n})` : b.dataset.label; });
+    const all = bar.querySelector('[data-bpickall]'); if (all) all.checked = boxes.length > 0 && boxes.every((i) => i.checked);
+  }
+  /** Runs fn on each id one after another; returns how many worked, how many failed and the first error. */
+  async function runEach(ids, fn) {
+    let done = 0, failed = 0, firstErr = '';
+    for (const id of ids) { try { await fn(id); done++; } catch (e) { failed++; if (!firstErr) firstErr = e.message; } }
+    return { done, failed, firstErr };
+  }
+  const doneToast = ({ done, failed, firstErr }) => toast(`Done: ${done}${failed ? ` - ${failed} failed: ${firstErr}` : ''}`, failed ? 'err' : 'ok');
+  let grpName = '';
+  async function batchAct(btn) {
+    const act = btn.dataset.bact, kind = act.split('-')[0], ids = [...picks[kind]];
+    if (!ids.length) return;
+    const n = ids.length, plural = n === 1 ? '' : 's';
+    if (act === 'req-reject' && !confirm(`Reject ${n} student${plural}? They will be left out of the registers and reports.`)) return;
+    if (act === 'stu-delete' && !confirm(`Delete ${n} student${plural} from the class lists? Use this for people added by mistake; Withdraw keeps their record.`)) return;
+    if (act === 'staff-delete' && !confirm(`Delete ${n} staff member${plural}? They can no longer sign in. Their registers and marks stay under their name.`)) return;
+    if (act === 'staff-off' && !confirm(`Switch off ${n} staff member${plural}? They are signed out everywhere.`)) return;
+    if (act === 'phone-reset' && !confirm(`Reset the phone for ${n} student${plural}?\n\nTheir current phones stop checking in. The next phone or browser they set up becomes theirs. Their check-ins and evidence stay.`)) return;
+    const call = { 'req-approve': (id) => api('decideRequest', { id, decision: 'approve' }), 'req-reject': (id) => api('decideRequest', { id, decision: 'reject' }),
+      'stu-withdraw': (id) => api('updateStudent', { admNo: id, status: 'withdrawn' }), 'stu-restore': (id) => api('updateStudent', { admNo: id, status: 'active' }),
+      'stu-delete': (id) => api('deleteStudent', { admNo: id }),
+      'staff-off': (id) => api('updateStaff', { code: id, active: false }), 'staff-delete': (id) => api('deleteStaff', { code: id }),
+      'phone-reset': (id) => api('resetPhone', { admNo: id }) }[act];
+    if (!call) return;
+    const mine = lower(me()?.code || '');
+    const todo = kind === 'staff' ? ids.filter((c) => lower(c) !== mine) : ids;
+    $$(`[data-bar="${kind}"] button`).forEach((b) => { b.disabled = true; });
+    const res = await runEach(todo, async (id) => { need(await call(id)); picks[kind].delete(id); });
+    doneToast(res);
+    if (kind === 'req') { await loadRequests(); pullRoster({ silent: true }); refreshBadge(); }
+    else if (kind === 'stu') { pullRoster({ silent: true }); await showGroup(grpName); }
+    else if (kind === 'staff') await loadStaff();
+    else await loadPhones();
+    syncBar(kind);
+  }
+
   /* ---------- HOD: registers to approve ---------- */
   let soQuery = '', soSort = 'new', staffSort = 'name';
   const soPicked = new Set();
@@ -220,15 +269,18 @@ const Admin = (() => {
       const decided = cache.requests.filter((r) => r.status !== 'pending').slice(0, 30);
       // The MIS Officer decides every request; the HOD decides moves between streams of one class.
       const can = hasRole('MIS'), canMove = (r) => can || (hasRole('HOD') && isStreamMove(r.admNo, r.classCode, r.existing?.classCode));
+      for (const id of [...picks.req]) if (!pending.some((x) => x.id === id && canMove(x))) picks.req.delete(id);
       const item = (r) => `<li class="req" data-id="${esc(r.id)}">
-        <div><b>${esc(r.name)}</b> <span class="tadm">${esc(r.admNo)}</span>
+        ${r.status === 'pending' && canMove(r) ? pickBox('req', r.id, r.name) : ''}<div><b>${esc(r.name)}</b> <span class="tadm">${esc(r.admNo)}</span>
           <small>${esc(r.classCode)} - added by ${esc(r.requestedBy)} ${r.requestedAt ? fmtShort(r.requestedAt) : ''}${r.reason ? ' - ' + esc(r.reason) : ''}</small>
           ${r.existing ? `<small class="warn-text">Already on the list of ${esc(r.existing.classCode)} as ${esc(r.existing.name)}${r.existing.active ? '' : ' (withdrawn)'}</small>` : ''}
           ${r.status !== 'pending' ? `<small>${esc(r.status)}${r.mergedInto ? ' into ' + esc(r.mergedInto) : ''}${r.note ? ' - ' + esc(r.note) : ''}</small>` : ''}</div>
         ${canMove(r) && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small primary" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
           ${can ? '<button type="button" class="btn small" data-decide="merge">Same as…</button>' : ''}<button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
-      fill('m-requests', (pending.length ? `<ul class="mlist reqs">${pending.map(item).join('')}</ul>` : '<p class="muted">No students are waiting. When a trainer adds a student while marking, they appear here.</p>')
+      const reqCan = pending.filter(canMove).length;
+      fill('m-requests', (reqCan > 1 ? pickBar('req', reqCan, [['req-approve', 'Approve selected', 'primary'], ['req-reject', 'Reject selected', 'danger']]) : '') + (pending.length ? `<ul class="mlist reqs">${pending.map(item).join('')}</ul>` : '<p class="muted">No students are waiting. When a trainer adds a student while marking, they appear here.</p>')
         + (decided.length ? `<details class="mdone"><summary>Decided recently (${decided.length})</summary><ul class="mlist reqs">${decided.map(item).join('')}</ul></details>` : ''));
+      syncBar('req');
     } catch (e) { fill('m-requests', `<p class="err-text">${esc(e.message)}</p>`); }
   }
 
@@ -514,10 +566,14 @@ const Admin = (() => {
       const res = need(await api('students', { misClass: group }));
       const streams = classGroups().get(group) || [];
       const list = res.students.sort((a, b) => a.name.localeCompare(b.name));
+      if (grpName !== group) picks.stu.clear();
+      grpName = group;
+      for (const id of [...picks.stu]) if (!list.some((s) => s.admNo === id)) picks.stu.delete(id);
       $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} - ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
         <input type="search" id="grpSearch" placeholder="Search name or admission no." aria-label="Search students">
+        ${list.length ? pickBar('stu', list.length, [['stu-withdraw', 'Withdraw selected', 'danger'], ['stu-restore', 'Restore selected'], ...(hasRole('MIS') ? [['stu-delete', 'Delete selected', 'danger-text']] : [])]) : ''}
         <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" class="${s.status !== 'active' ? 'gone' : ''}">
-          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}${s.email ? '' : ' - no college email yet'}</small>
+          ${pickBox('stu', s.admNo, s.name)}<span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}${s.email ? '' : ' - no college email yet'}</small>
           ${s.terms?.length ? `<small class="muted">Terms: ${s.terms.map((t) => esc(`${t.term}${t.classCode !== s.classCode ? ' (' + t.classCode + ')' : ''}`)).join(' - ')}</small>` : ''}</span>
           <span class="st-actions"><label class="check small"><input type="checkbox" data-rep="${esc(s.admNo)}"${s.rep ? ' checked' : ''}> Class rep</label><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button>
@@ -526,6 +582,7 @@ const Admin = (() => {
         $('#adminDialogBody').insertAdjacentHTML('beforeend', `<div class="archive-row"><p class="muted small">Finished with this class? Archiving hides it, its students and its loading from day-to-day screens. Nothing is deleted, and it can be brought back.</p>
           <button type="button" class="btn" data-archive="${esc(group)}">Archive ${esc(group)}</button></div>`);
       }
+      syncBar('stu');
     } catch (e) { $('#adminDialogBody').insertAdjacentHTML('beforeend', `<p class="err-text">${esc(e.message)}</p>`); }
   }
   /** Archived classes, by MIS class name (all of its streams together). */
@@ -600,10 +657,12 @@ const Admin = (() => {
       { name: (p) => p.name, cls: (p) => p.classCode, seen: (p) => p.lastSeen }, 'name');
     if (!list.length) { box.innerHTML = `<p class="muted">${q ? 'Nothing matches that search.' : 'No student phones are registered yet.'}</p>`; return; }
     const page = Tables.slice('phones', list), first = list.indexOf(page[0]);
-    box.innerHTML = `<div class="table-wrap"><table class="report-table phone-table"><thead><tr><th class="num">S/N</th>${Tables.th('phones', 'name', 'Student')}<th></th>${Tables.th('phones', 'cls', 'Class')}${Tables.th('phones', 'seen', 'Last used')}</tr></thead>
-      <tbody>${page.map((p, i) => `<tr data-adm="${esc(p.admNo)}"><td class="num">${first + i + 1}</td><td><b>${esc(p.name)}</b><br><small class="muted">${esc(p.admNo)}</small></td>
+    for (const id of [...picks.phone]) if (!(cache.phones || []).some((p) => p.admNo === id)) picks.phone.delete(id);
+    box.innerHTML = `${pickBar('phone', page.length, [['phone-reset', 'Reset selected', 'danger']])}<div class="table-wrap"><table class="report-table phone-table"><thead><tr><th class="pick"><span class="sr">Select</span></th><th class="num">S/N</th>${Tables.th('phones', 'name', 'Student')}<th></th>${Tables.th('phones', 'cls', 'Class')}${Tables.th('phones', 'seen', 'Last used')}</tr></thead>
+      <tbody>${page.map((p, i) => `<tr data-adm="${esc(p.admNo)}"><td class="pick">${pickBox('phone', p.admNo, p.name)}</td><td class="num">${first + i + 1}</td><td><b>${esc(p.name)}</b><br><small class="muted">${esc(p.admNo)}</small></td>
         <td><button type="button" class="btn small danger" data-resetphone>Reset phone</button></td><td>${esc(p.classCode)}</td>
         <td class="small" title="Set up ${esc(fmtShort(p.registeredAt))}">${esc(fmtShort(p.lastSeen))}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('phones', list)}`;
+    syncBar('phone');
   }
   async function resetPhone(btn) {
     const tr = btn.closest('tr'), adm = tr.dataset.adm, p = (cache.phones || []).find((x) => x.admNo === adm), who = p ? `${p.name} (${p.admNo})` : adm;
@@ -680,6 +739,7 @@ const Admin = (() => {
     try {
       const q = $('#staffSearch')?.value || '';
       cache.staff.sort(STAFF_SORT[staffSort] || STAFF_SORT.name);
+      for (const id of [...picks.staff]) if (!cache.staff.some((x) => x.code === id) || lower(id) === lower(me()?.code || '')) picks.staff.delete(id);
       const noPin = cache.staff.filter((s) => s.active && !s.hasPin).length, def = cache.defaultPin;
       const firstPin = `<form id="defaultPinForm" class="default-pin"><div><b>First-time PIN</b>
           <p class="muted small">${def ? `Set${def.at ? ' ' + esc(fmtShort(def.at)) : ''}${def.by ? ' by ' + esc(def.by) : ''}. Anyone without a PIN of their own signs in with it, then chooses their own.` : 'Not set. Staff without a PIN cannot sign in until you issue them one.'}</p></div>
@@ -688,7 +748,9 @@ const Admin = (() => {
       fill('m-staff', `${firstPin}${noPin && !def ? `<p class="warn-text">${noPin} staff member(s) can't sign in yet. Set a first-time PIN above, or tap Issue PIN and give them a PIN privately.</p>` : ''}
         ${fold('staff', `Show the staff (${cache.staff.length})`, `<div class="list-tools"><input type="search" id="staffSearch" placeholder="Search staff" aria-label="Search staff">
         <select id="staffSort" aria-label="Sort staff"><option value="name">By name</option><option value="code">By staff code</option><option value="role">By role</option><option value="pin">No PIN yet first</option></select></div>
+        ${pickBar('staff', cache.staff.filter((s) => lower(s.code) !== lower(me()?.code || '')).length, [['staff-off', 'Switch off selected'], ['staff-delete', 'Delete selected', 'danger-text']])}
         <ul class="mlist staff">${cache.staff.map((s, i) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
+          ${lower(s.code) === lower(me()?.code || '') ? '' : pickBox('staff', s.code, s.name)}
           <span class="sn st-code">${esc(s.code)}</span>
           <span><b>${esc(s.name)}</b></span>
           <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
@@ -702,6 +764,7 @@ const Admin = (() => {
           <label id="nsEndsBox" hidden>Account ends<input type="date" id="nsEnds"></label>
           <button class="btn primary">Add and issue PIN</button></form></details>`);
       $('#staffSort').value = staffSort;
+      syncBar('staff');
       if (q) { const s = $('#staffSearch'); s.value = q; s.dispatchEvent(new Event('input', { bubbles: true })); }
     } catch (e) { fill('m-staff', `<p class="err-text">${esc(e.message)}</p>`); }
   }
@@ -814,6 +877,7 @@ const Admin = (() => {
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
     if (t.closest('#soBatch')) { batchSignoffs(t.closest('#soBatch')); return; }
+    const ba = t.closest('[data-bact]'); if (ba) { batchAct(ba); return; }
     const ds = t.closest('[data-delstaff]');
     if (ds) {
       if (!confirm(`Delete ${ds.dataset.name} (${ds.dataset.delstaff})? They can no longer sign in. Their registers and marks stay under their name.`)) return;
@@ -894,6 +958,8 @@ const Admin = (() => {
   });
   document.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.matches?.('[data-bpick]')) { const k = t.dataset.bpick; if (t.checked) picks[k].add(t.value); else picks[k].delete(t.value); syncBar(k); return; }
+    if (t.matches?.('[data-bpickall]')) { const k = t.dataset.bpickall; for (const i of shownPicks(k)) { i.checked = t.checked; if (t.checked) picks[k].add(i.value); else picks[k].delete(i.value); } syncBar(k); return; }
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.closest('#loadingDepts')) drawLoadingSummary();
     if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
@@ -936,6 +1002,7 @@ const Admin = (() => {
       const q = t.value.trim().toLowerCase();
       const list = t.id === 'grpSearch' ? $$('#adminDialog .students li') : $$('#m-staff .staff li');
       list.forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
+      syncBar(t.id === 'grpSearch' ? 'stu' : 'staff');
     }
   });
   document.addEventListener('toggle', (e) => {
