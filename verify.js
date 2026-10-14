@@ -71,7 +71,7 @@ const Verify = (() => {
           <td>${esc(staffName(v.verifier))}${v.v1.at ? ' ✓' : ''}${v.verifier2 ? `<br>${esc(staffName(v.verifier2))}${v.v2.at ? ' ✓' : ''}` : ''}</td>
           <td class="num" title="${v.size} of ${v.population} students with approved evidence">${!v.sample.length ? '<span class="muted small">not drawn</span>' : `${v.status === 'open' ? `${done('internal')}+${done('second')} / ` : ''}${v.size} of ${v.population}`}</td>
           <td>${pill(STAT[v.status] || ['pending', v.status])}</td><td>${v.result ? esc(RESULT[v.result]) : '–'}${v.extResult ? `<br><small class="muted">External: ${esc(RESULT[v.extResult])}</small>` : ''}</td>
-          <td><button type="button" class="btn small" data-vopen="${esc(v.id)}">Open</button>${!v.sample.length && office() ? ` <button type="button" class="btn small primary" data-vact="draw" data-id="${esc(v.id)}">Draw the sample</button>`
+          <td><button type="button" class="btn small" data-vopen="${esc(v.id)}">Open</button>${drafts() ? ` <button type="button" class="btn small ghost danger-text" data-vact="del-ver" data-id="${esc(v.id)}" data-what="${esc(v.classCode + ' ' + v.unitCode)}" aria-label="Delete">Delete</button>` : ''}${!v.sample.length && office() ? ` <button type="button" class="btn small primary" data-vact="draw" data-id="${esc(v.id)}">Draw the sample</button>`
             : opts.hod && v.status === 'open' ? ` <button type="button" class="btn small ghost" data-vact="redraw" data-id="${esc(v.id)}">Draw again</button>` : ''}</td></tr>`;
       }).join('')}</tbody></table></div>`;
   }
@@ -102,7 +102,8 @@ const Verify = (() => {
         ${hasRole('HOD') && p.status === 'approved' ? `<div class="row-actions"><input class="hod-note" data-note="${esc(p.id)}" placeholder="Why return it?"><button type="button" class="btn small" data-vact="return-panel" data-id="${esc(p.id)}">Return the panel</button></div>` : ''}
         ${hasRole('HOD') && ['draft', 'returned'].includes(p.status) ? `<div class="row-actions"><input class="hod-note" data-note="${esc(p.id)}" placeholder="Note (needed to return)"><button type="button" class="btn small" data-vact="return-panel" data-id="${esc(p.id)}">Return</button><button type="button" class="btn small primary" data-vact="approve-panel" data-id="${esc(p.id)}">Approve the panel</button></div>` : ''}
         ${p.status === 'approved' ? table(vers, { hod: hasRole('HOD') }) + (drafts() ? assignForm(p, vers) : '') : ''}
-        ${drafts() ? `<details class="mdone"><summary>Change this panel</summary>${form(p)}</details>` : ''}</details>`;
+        ${drafts() ? `<details class="mdone"><summary>Change this panel</summary>${form(p)}
+          <button type="button" class="btn small danger" data-vact="del-panel" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-n="${vers.length}">Delete this panel</button></details>` : ''}</details>`;
     }).join('');
     return card('Verification panels', drafts() ? 'Pick the panel number, the chair and the members: the panel is named after the term and its number and approved straight away (the HOD can return it). Then tick the classes to verify above and allocate.' : 'Panels drafted by the MIS Officer or the Internal Assessment Officer.',
       (rows || '<p class="muted small">No panels yet.</p>') + (drafts() ? `<details class="mdone"><summary>Draft a new panel</summary>${form(null)}</details>` : ''));
@@ -144,7 +145,7 @@ const Verify = (() => {
         ${listed.map((c) => `<tr><td>${esc(c.code)}</td><td class="num">${c.students}</td><td class="num">${c.given ? `${c.given} of ${c.listed} given out` : c.listed}</td>
           <td>${esc(panelsOf(c.code).join(', ')) || '<span class="muted small">not yet</span>'}</td>
           <td>${c.given ? '' : `<button type="button" class="btn small ghost" data-vact="list-remove" data-cls="${esc(c.code)}">Remove</button>`}</td></tr>`).join('')}</tbody></table></div>` : ''}
-      <div class="row-actions"><button type="button" class="btn primary" data-vact="allocate"${left ? '' : ' disabled'}>${left ? `Allocate ${left} unit${left === 1 ? '' : 's'} to the panels` : 'Everything is given out'}</button></div>`);
+      <div class="row-actions"><button type="button" class="btn small danger" data-vact="clear-all">Delete this term's verification</button><button type="button" class="btn primary" data-vact="allocate"${left ? '' : ' disabled'}>${left ? `Allocate ${left} unit${left === 1 ? '' : 's'} to the panels` : 'Everything is given out'}</button></div>`);
   }
   const listFree = () => classRows().filter((c) => !c.listed && (!ls.q.trim() || c.code.toLowerCase().includes(ls.q.trim().toLowerCase())));
 
@@ -271,6 +272,18 @@ const Verify = (() => {
         const note = $(`[data-note="${a.dataset.id}"]`)?.value.trim() || '';
         await call('decidePanel', { id: a.dataset.id, decision: act === 'approve-panel' ? 'approved' : 'returned', note }, act === 'approve-panel' ? 'Panel approved' : 'Panel returned');
         vs.data = null; redraw();
+      }
+      if (act === 'del-panel') {
+        if (!confirm(`Delete ${a.dataset.name}${Number(a.dataset.n) ? ` and the ${a.dataset.n} class-unit(s) given to it, with their checks` : ''}? This cannot be undone.`)) return true;
+        await call('deletePanel', { id: a.dataset.id }, 'Panel deleted'); vs.data = null; redraw();
+      }
+      if (act === 'del-ver') {
+        if (!confirm(`Delete ${a.dataset.what} from verification, with its sample and checks? It goes back to the list to allocate again.`)) return true;
+        await call('deleteVerification', { id: a.dataset.id }, 'Deleted'); vs.open = ''; vs.data = null; redraw();
+      }
+      if (act === 'clear-all') {
+        if (prompt("This deletes this term's panels, everything given out, every check and the classes list. Type DELETE to go ahead.") !== 'DELETE') return true;
+        await call('clearVerification', {}, "This term's verification is deleted"); vs.open = ''; vs.data = null; redraw();
       }
       if (act === 'draw') { const r = await call('redrawSample', { id: a.dataset.id }, 'Sample drawn'); upsertVer(r.verification); redraw(); }
       if (act === 'allocate') {

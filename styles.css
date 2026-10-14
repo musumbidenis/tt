@@ -1141,3 +1141,4 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .manage-mode { grid-auto-columns: minmax(max-content, 1fr); overflow-x: auto; }
 .manage-mode button { white-space: nowrap; padding: .55rem .7rem; font-size: .875rem; }
 .mg-n { display: inline-block; min-width: 1.3em; padding: 0 .35em; margin-left: .25rem; border-radius: 99px; background: var(--a, #c42830); color: #fff; font-size: .72rem; }
+.danger-text { color: var(--a, #c42830) !important; }

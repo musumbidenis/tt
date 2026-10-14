@@ -520,7 +520,8 @@ const Admin = (() => {
           <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}${s.email ? '' : ' - no college email yet'}</small>
           ${s.terms?.length ? `<small class="muted">Terms: ${s.terms.map((t) => esc(`${t.term}${t.classCode !== s.classCode ? ' (' + t.classCode + ')' : ''}`)).join(' - ')}</small>` : ''}</span>
           <span class="st-actions"><label class="check small"><input type="checkbox" data-rep="${esc(s.admNo)}"${s.rep ? ' checked' : ''}> Class rep</label><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-          <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button></span></li>`).join('')}</ul>`;
+          <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button>
+          ${hasRole('MIS') ? `<button type="button" class="btn small ghost danger-text" data-delstudent="${esc(s.admNo)}" data-name="${esc(s.name)}">Delete</button>` : ''}</span></li>`).join('')}</ul>`;
       if (hasRole('MIS')) {
         $('#adminDialogBody').insertAdjacentHTML('beforeend', `<div class="archive-row"><p class="muted small">Finished with this class? Archiving hides it, its students and its loading from day-to-day screens. Nothing is deleted, and it can be brought back.</p>
           <button type="button" class="btn" data-archive="${esc(group)}">Archive ${esc(group)}</button></div>`);
@@ -693,7 +694,8 @@ const Admin = (() => {
           <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
             ${s.roles.includes('EAO') ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
-          <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>`)}
+          <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button>
+          ${lower(s.code) === lower(me()?.code || '') ? '' : `<button type="button" class="btn small ghost danger-text" data-delstaff="${esc(s.code)}" data-name="${esc(s.name)}">Delete</button>`}</span></li>`).join('')}</ul>`)}
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
           <label>Role<select id="nsRole"><option value="TRAINER">Trainer</option><option value="IAO">Internal Assessment Officer</option><option value="EAO">External Assessment Officer (a visitor)</option></select></label>
@@ -812,6 +814,18 @@ const Admin = (() => {
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
     if (t.closest('#soBatch')) { batchSignoffs(t.closest('#soBatch')); return; }
+    const ds = t.closest('[data-delstaff]');
+    if (ds) {
+      if (!confirm(`Delete ${ds.dataset.name} (${ds.dataset.delstaff})? They can no longer sign in. Their registers and marks stay under their name.`)) return;
+      api('deleteStaff', { code: ds.dataset.delstaff }).then((r) => { need(r); toast('Staff member deleted', 'ok'); loadStaff(); }).catch((err) => toast(err.message, 'err'));
+      return;
+    }
+    const dt = t.closest('[data-delstudent]');
+    if (dt) {
+      if (!confirm(`Delete ${dt.dataset.name} (${dt.dataset.delstudent}) from the class lists? Use this for someone added by mistake; Withdraw keeps their record. Their registered phone is freed.`)) return;
+      api('deleteStudent', { admNo: dt.dataset.delstudent }).then((r) => { need(r); toast('Student deleted', 'ok'); dt.closest('li').remove(); pullRoster({ silent: true }); }).catch((err) => toast(err.message, 'err'));
+      return;
+    }
     if (t.closest('#msBatch')) { batchMarksheets(t.closest('#msBatch')); return; }
     const mss = t.closest('[data-msshow]'); if (mss) { msShow = mss.dataset.msshow; drawMarksheets(); return; }
     const mso = t.closest('[data-msopen]');

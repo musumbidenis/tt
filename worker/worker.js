@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.9.0';
+export const VERSION = '7.10.0';
 const SCHEMA_VERSION = '19';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -352,6 +352,11 @@ const ACTIONS = {
   decidePanel: { role: ['HOD'], fn: (env, b, me) => decidePanel(env, b, me) },
   assignVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => assignVerification(env, b, me) },
   verifyListSave: { role: ['MIS', 'IAO'], fn: (env, b, me) => verifyListSave(env, b, me) },
+  deletePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => deletePanel(env, b, me) },
+  deleteVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => deleteVerification(env, b, me) },
+  clearVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => clearVerification(env, b, me) },
+  deleteStaff: { role: ['MIS'], fn: (env, b, me) => deleteStaff(env, b, me) },
+  deleteStudent: { role: ['MIS'], fn: (env, b, me) => deleteStudent(env, b, me) },
   allocateVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => allocateVerification(env, b, me) },
   verifyPool: { role: ['EAO', 'IAO', 'HOD', 'MIS'], fn: (env, b, me) => verifyPool(env, b, me) },
   externalSample: { role: ['EAO'], fn: (env, b, me) => externalSample(env, b, me) },
@@ -385,7 +390,7 @@ const ACTIONS = {
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
-  'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep', 'decidePanel']);
+  'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep', 'decidePanel']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -3077,6 +3082,52 @@ async function candidates(env, b, me) {
   await audit(env, me, 'summative candidates', `${cls} ${unit}: ${students.filter((s) => s.eligible).length} of ${students.length}`);
   return { ok: true, term: { id: term.id, name: term.name, duration: term.duration || '', series: term.series || '' }, classCode: cls, unitCode: unit, unitName: u.unit_name || unit,
     trainer: u.trainer_name || '', lessonsHeld: lessons.length, rules: { minAtt, poe: { items: poeItems, need: poeAll ? 'all' : 'any', approvedOnly }, marks: { items: markItems, need: marksAll ? 'all' : 'any' } }, students };
+}
+
+/* ---------- deleting (MIS Officer; the Internal Assessment Officer for verification) ----------
+ * Verification: a panel (with what it was given), one class-unit given out, or this term's verification altogether.
+ * People: a staff account or a student. Their registers, marks and evidence stay (they carry the name). */
+async function deletePanel(env, b, me) {
+  const p = await one(env, 'SELECT * FROM panels WHERE id=?', String(b.id || ''));
+  if (!p) fail('That panel no longer exists');
+  const ids = (await all(env, 'SELECT id FROM verifications WHERE panel_id=?', p.id)).map((r) => r.id);
+  await many(env, [`DELETE FROM verify_checks WHERE verification_id IN ${IN}`, JSON.stringify(ids)], ['DELETE FROM verifications WHERE panel_id=?', p.id], ['DELETE FROM panels WHERE id=?', p.id]);
+  await audit(env, me, 'panel deleted', `${p.name} with ${ids.length} class-unit(s)`);
+  return { ok: true, deleted: ids.length };
+}
+async function deleteVerification(env, b, me) {
+  const v = await getVer(env, b.id);
+  await many(env, ['DELETE FROM verify_checks WHERE verification_id=?', v.id], ['DELETE FROM verifications WHERE id=?', v.id]);
+  await audit(env, me, 'verification deleted', `${v.class_code} ${v.unit_code}`);
+  return { ok: true };
+}
+async function clearVerification(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('Set up the term first');
+  const ids = (await all(env, 'SELECT v.id FROM verifications v JOIN panels p ON p.id=v.panel_id WHERE p.term_id=?', term.id)).map((r) => r.id);
+  await many(env, [`DELETE FROM verify_checks WHERE verification_id IN ${IN}`, JSON.stringify(ids)], [`DELETE FROM verifications WHERE id IN ${IN}`, JSON.stringify(ids)],
+    ['DELETE FROM panels WHERE term_id=?', term.id], ['DELETE FROM verify_list WHERE term_id=?', term.id]);
+  await audit(env, me, 'verification cleared', `${term.name}: panels, ${ids.length} class-unit(s) and the classes list`);
+  return { ok: true, deleted: ids.length };
+}
+async function deleteStaff(env, b, me) {
+  const s = await getStaff(env, b.code);
+  if (!s) fail('No staff member with that code');
+  if (lower(s.code) === lower(me.code)) fail('You cannot delete your own account');
+  await many(env, ['DELETE FROM staff WHERE code=?', s.code], ['DELETE FROM login_fails WHERE code=?', s.code]);
+  await audit(env, me, 'staff deleted', `${s.code} ${s.name}`);
+  await bumpRoster(env);
+  return { ok: true };
+}
+async function deleteStudent(env, b, me) {
+  const t = await one(env, 'SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim());
+  if (!t) fail('No student with that admission number');
+  const devs = JSON.stringify((await all(env, 'SELECT device_id FROM devices WHERE adm_no=?', t.adm_no)).map((r) => r.device_id));
+  await many(env, ['DELETE FROM trainees WHERE adm_no=?', t.adm_no], ['DELETE FROM enrolments WHERE adm_no=?', t.adm_no],
+    [`DELETE FROM push_subs WHERE device_id IN ${IN}`, devs], ['DELETE FROM devices WHERE adm_no=?', t.adm_no]);
+  await audit(env, me, 'student deleted', `${t.adm_no} ${t.name} (${t.class_code})`);
+  await bumpRoster(env);
+  return { ok: true };
 }
 
 async function driveStatus(env) {
