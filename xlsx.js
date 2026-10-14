@@ -264,8 +264,10 @@ const Xlsx = (() => {
   /**
    * The RVNP continuous assessment marks sheet per unit of competency.
    * d = { courseCode, courseName, unitCode, unitTitle, series, sheetName,
-   *       students: [{ regCode, admNo, name, cat: [3 × number|''], prac: [3 × number|''] }] }
-   * AVG = sum ÷ 3 (a CAT not done counts as 0), as the department works it out.
+   *       students: [{ regCode, admNo, name, cat: [3 × number|''], prac: [3 × number|''] }],
+   *       footer: { prepared, received, approved: { name, initials, date } } }
+   * AVG only when all three marks are in; otherwise C.R.N.M. The heading is cells (the crest is the only picture) and the
+   * Prepared / Received / Approved rows are written under the last student, with initials as the signatures.
    */
   async function marksheetFile(templateData, d) {
     const zip = await JSZip.loadAsync(templateData);
@@ -281,7 +283,7 @@ const Xlsx = (() => {
     setCell(doc, byNum['11'], 'C11', d.unitCode || '');
     setCell(doc, byNum['11'], 'G11', d.unitTitle || '');
     setCell(doc, byNum['12'], 'C12', d.series || '');
-    const avg = (xs) => (xs.some((x) => x !== '' && x != null) ? xs.reduce((n, x) => n + (Number(x) || 0), 0) / 3 : '');
+    const avg = (xs) => (xs.filter((x) => x !== '' && x != null).length === 3 ? xs.reduce((n, x) => n + Number(x), 0) / 3 : 'C.R.N.M');
     const list = d.students.length ? d.students : [{ admNo: '', name: '', cat: [], prac: [] }];
     list.forEach((s, i) => {
       const r = 16 + i, row = renumber(proto.cloneNode(true), r);
@@ -293,20 +295,34 @@ const Xlsx = (() => {
         ['E', 'F', 'G'].forEach((c, k) => setCell(doc, row, c + r, s.cat?.[k] ?? ''));
         ['I', 'J', 'K'].forEach((c, k) => setCell(doc, row, c + r, s.prac?.[k] ?? ''));
       }
-      setCell(doc, row, 'H' + r, { f: `IF(COUNT(E${r}:G${r})=0,"",SUM(E${r}:G${r})/3)`, v: avg(s.cat || []) });
-      setCell(doc, row, 'L' + r, { f: `IF(COUNT(I${r}:K${r})=0,"",SUM(I${r}:K${r})/3)`, v: avg(s.prac || []) });
+      if (s.admNo) {
+        setCell(doc, row, 'H' + r, { f: `IF(COUNT(E${r}:G${r})=3,SUM(E${r}:G${r})/3,"C.R.N.M")`, v: avg(s.cat || []) });
+        setCell(doc, row, 'L' + r, { f: `IF(COUNT(I${r}:K${r})=3,SUM(I${r}:K${r})/3,"C.R.N.M")`, v: avg(s.prac || []) });
+      }
       sheetData.appendChild(row);
     });
-    const last = 15 + list.length, footRow = last + 2, end = footRow + 6;
-    doc.getElementsByTagName('dimension')[0]?.setAttribute('ref', `A1:L${last}`);
+    const last = 15 + list.length, footRow = last + 2, end = footRow + 4;
+    // Prepared by / Received by / Approved by, two rows under the last student and a blank row between each.
+    // Formats (template): 16 bold label, 17 value on a dotted line, 18 initials on a dotted line.
+    const merges = doc.getElementsByTagName('mergeCells')[0];
+    const addMerge = (ref) => { const m = doc.createElementNS(NS, 'mergeCell'); m.setAttribute('ref', ref); merges.appendChild(m); };
+    const foot = d.footer || {};
+    [['Prepared by:', foot.prepared], ['Received by:', foot.received], ['Approved by:', foot.approved]].forEach(([label, who], k) => {
+      const r = footRow + k * 2, row = doc.createElementNS(NS, 'row');
+      row.setAttribute('r', String(r)); row.setAttribute('ht', '21'); row.setAttribute('customHeight', '1');
+      const put = (col, v, s) => setCell(doc, row, col + r, v).setAttribute('s', String(s));
+      put('A', label, 16); put('B', '', 16);
+      put('C', who?.name || '', 17); put('D', '', 17);
+      put('E', 'Signature:', 16); put('F', '', 16);
+      put('G', who?.initials || '', 18); put('H', '', 18);
+      put('I', 'Date:', 16);
+      put('J', who?.date || '', 17); put('K', '', 17); put('L', '', 17);
+      sheetData.appendChild(row);
+      for (const m of [`A${r}:B${r}`, `C${r}:D${r}`, `E${r}:F${r}`, `G${r}:H${r}`, `J${r}:L${r}`]) addMerge(m);
+    });
+    merges.setAttribute('count', String(kids(merges, 'mergeCell').length));
+    doc.getElementsByTagName('dimension')[0]?.setAttribute('ref', `A1:L${end}`);
     zip.file(path, serialize(doc));
-    // The Prepared / Received / Approved block sits two rows under the last student.
-    const dPath = 'xl/drawings/drawing1.xml', drawing = parse(await zip.file(dPath).async('string'));
-    const anchors = [...drawing.documentElement.childNodes].filter((n) => n.nodeType === 1);
-    const from = anchors[1] && [...anchors[1].childNodes].find((n) => n.localName === 'from');
-    const rowEl = from && [...from.childNodes].find((n) => n.localName === 'row');
-    if (rowEl) rowEl.textContent = String(footRow - 1);
-    zip.file(dPath, serialize(drawing));
     const name = safeSheetName(d.sheetName || 'Marksheet');
     let wb = await zip.file('xl/workbook.xml').async('string');
     wb = wb.replace('name="Marksheet"', `name="${xmlEsc(name)}"`).replace(/'Marksheet'/g, xmlEsc(`'${name.replace(/'/g, "''")}'`)).replace('$A$1:$L$24', `$A$1:$L$${end}`);

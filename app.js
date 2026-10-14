@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.30.0';
+const APP_VERSION = '4.31.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1367,6 +1367,20 @@ async function decideSignoff(decision) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
+/** Opens a class and unit's marksheet in Reports (from Manage - Marksheets). */
+window.openMarks = (cls, unit) => {
+  switchTab('reports');
+  const sel = $('#rClass');
+  const opt = [...sel.options].find((o) => o.value === cls) || [...sel.options].find((o) => o.value.startsWith('streams:') && cls.startsWith(o.value.slice(8)));
+  if (!opt) { toast(`${cls} is not in this term's classes`, 'err'); return; }
+  sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true }));
+  setTimeout(() => {
+    if (opt.value.startsWith('streams:') && $('#rStream')) { $('#rStream').value = cls; $('#rStream').dispatchEvent(new Event('change', { bubbles: true })); }
+    $('#rUnit').value = unit; $('#rUnit').dispatchEvent(new Event('change', { bubbles: true }));
+    Marks.setMode('marks');
+  }, 60);
+};
+
 /* ---------- approving: the PIN again, short ready comments, initials for signatures ---------- */
 /** What an approval says when the comment is left empty (the server writes the same). */
 const OK_SAID = { register: 'Checked - complete and in order.', poe: 'Checked - complete and acceptable.', marksheet: 'Checked - marks complete and in order.' };
@@ -2169,7 +2183,7 @@ function applyRoles() {
   const marks = hasRole('TRAINER') || hasRole('HOD');
   $('.tabs button[data-tab="mark"]').hidden = !marks;
   $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
-  $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
+  $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
   $('.tabs button[data-tab="alerts"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
   $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);

@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.5.0';
+var BRIDGE_VERSION = '1.6.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -513,12 +513,16 @@ function writeMarksheet_(ss, u) {
     var row = v[first - 1 + i], rn = first + i;
     row[0] = i + 1; row[1] = s.regCode || ''; row[2] = s.admNo; row[3] = s.name;
     for (var k = 0; k < 3; k++) { row[4 + k] = s.cat[k] === null ? '' : s.cat[k]; row[8 + k] = s.prac[k] === null ? '' : s.prac[k]; }
-    row[7] = '=IF(COUNT(E' + rn + ':G' + rn + ')=0,"",SUM(E' + rn + ':G' + rn + ')/3)';
-    row[11] = '=IF(COUNT(I' + rn + ':K' + rn + ')=0,"",SUM(I' + rn + ':K' + rn + ')/3)';
+    // AVG only with all three marks; otherwise C.R.N.M.
+    row[7] = '=IF(COUNT(E' + rn + ':G' + rn + ')=3,SUM(E' + rn + ':G' + rn + ')/3,"C.R.N.M")';
+    row[11] = '=IF(COUNT(I' + rn + ':K' + rn + ')=3,SUM(I' + rn + ':K' + rn + ')/3,"C.R.N.M")';
   });
-  v[foot - 1][0] = 'Prepared by: ..............................'; v[foot - 1][4] = 'Signature: ..................'; v[foot - 1][9] = 'Date: ............';
-  v[foot][0] = 'Received by: ..............................'; v[foot][4] = 'Signature: ..................'; v[foot][9] = 'Date: ............';
-  v[foot + 1][0] = 'Approved by: ..............................'; v[foot + 1][4] = 'Signature: ..................'; v[foot + 1][9] = 'Date: ............';
+  // Prepared by the unit's trainer, received by the Assessment Officer, approved by the HOD; initials sign (server 7.3.0).
+  var f = m.footer || {};
+  [['Prepared by:', f.prepared], ['Received by:', f.received], ['Approved by:', f.approved]].forEach(function (x, k) {
+    var who = x[1] || {}, row = v[foot - 1 + k];
+    row[0] = x[0]; row[2] = who.name || ''; row[4] = 'Signature:'; row[6] = who.initials || ''; row[8] = 'Date:'; row[9] = who.date || '';
+  });
   sh.clear();
   sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart();
   if (sh.getMaxRows() < end) sh.insertRowsAfter(sh.getMaxRows(), end - sh.getMaxRows());
@@ -534,7 +538,14 @@ function writeMarksheet_(ss, u) {
   sh.getRange(first, 1, n, 1).setHorizontalAlignment('center');
   sh.getRange(first, 5, n, 8).setHorizontalAlignment('center');
   sh.getRange(first, 8, n, 1).setNumberFormat('0'); sh.getRange(first, 12, n, 1).setNumberFormat('0');
-  sh.getRange(foot, 1, 3, W).setFontWeight('bold');
+  for (var k = 0; k < 3; k++) {
+    var fr = foot + k;
+    ['A' + fr + ':B' + fr, 'C' + fr + ':D' + fr, 'E' + fr + ':F' + fr, 'G' + fr + ':H' + fr, 'J' + fr + ':L' + fr].forEach(function (a) { sh.getRange(a).merge(); });
+    sh.getRange('A' + fr).setFontWeight('bold'); sh.getRange('E' + fr).setFontWeight('bold'); sh.getRange('I' + fr).setFontWeight('bold');
+    sh.getRange('C' + fr + ':D' + fr).setBorder(null, null, true, null, null, null, '#000000', SpreadsheetApp.BorderStyle.DOTTED);
+    sh.getRange('G' + fr + ':H' + fr).setBorder(null, null, true, null, null, null, '#000000', SpreadsheetApp.BorderStyle.DOTTED).setFontStyle('italic').setFontWeight('bold').setHorizontalAlignment('center');
+    sh.getRange('J' + fr + ':L' + fr).setBorder(null, null, true, null, null, null, '#000000', SpreadsheetApp.BorderStyle.DOTTED);
+  }
   if (fresh) {
     sh.setColumnWidth(1, 40); sh.setColumnWidths(2, 2, 190); sh.setColumnWidth(4, 210); sh.setColumnWidths(5, 8, 62);
     sh.setFrozenRows(10);

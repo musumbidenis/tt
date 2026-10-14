@@ -132,8 +132,8 @@ const TermReport = (() => {
    * title names ("CAT 1 make-up"), else the latest CAT before it.
    * students: [{ admNo, name }], items: [{ date, period, kind, title, marks }]
    */
-  /** "CAT 1", "CAT 2" … in date order, unless the CAT's own title already says which one. */
-  const catLabel = (a, i) => { const m = /^\s*CAT\s*(\d+)\s*$/i.exec(a.title || ''); return `CAT ${m ? m[1] : i + 1}`; };
+  /** "CAT 1", "CAT 2" … in date order, unless the CAT's own title already says which one ("CAT 1 - A" with streams together). */
+  const catLabel = (a, i) => { const m = /^\s*CAT\s*(\d+)(.*)$/i.exec(a.title || ''); return m ? `CAT ${m[1]}${m[2].trimEnd()}` : `CAT ${i + 1}`; };
   function catTable(students, items) {
     const sorted = [...items].sort((a, b) => (a.date + PERIOD_ORDER(a.period)).localeCompare(b.date + PERIOD_ORDER(b.period)));
     const cats = sorted.filter((a) => a.kind === 'cat');

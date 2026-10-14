@@ -7,7 +7,7 @@
 const Admin = (() => {
   const box = () => $('#manage');
   const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer' };
-  let cache = { signoffs: [], requests: [], overview: null, staff: [], phones: [], backup: null };
+  let cache = { signoffs: [], marksheets: [], requests: [], overview: null, staff: [], phones: [], backup: null };
   let loadingPreview = null;
   let ovSort = { key: 'classCode', dir: 1 };
   const secOpen = new Set();   // which folded-away sections the person has opened, so a refresh keeps them as they were
@@ -22,13 +22,15 @@ const Admin = (() => {
   const closeDialog = () => $('#adminDialog').close();
 
   async function render() {
-    if (!(hasRole('HOD') || hasRole('MIS'))) { box().innerHTML = ''; return; }
+    if (!(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'))) { box().innerHTML = ''; return; }
     if (!navigator.onLine) {
       box().innerHTML = '<div class="card notice"><h2>Manage needs internet</h2><p>Approvals, uploads and staff changes go straight to the server. Marking registers still works offline.</p></div>';
       return;
     }
     const parts = [];
-    if (hasRole('HOD')) parts.push(section('m-signoffs', 'Registers to approve', '<p class="muted">Loading…</p>'), section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
+    if (hasRole('HOD')) parts.push(section('m-signoffs', 'Registers to approve', '<p class="muted">Loading…</p>'));
+    if (hasRole('HOD') || hasRole('IAO')) parts.push(section('m-marksheets', hasRole('HOD') ? 'Marksheets' : 'Marksheets to receive', '<p class="muted">Loading…</p>'));
+    if (hasRole('HOD')) parts.push(section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
     if (hasRole('MIS')) {
       parts.push(section('m-requests', 'Students added by trainers', '<p class="muted">Loading…</p>'));
       parts.push(section('m-term', 'Term', termHtml()));
@@ -42,7 +44,8 @@ const Admin = (() => {
     box().innerHTML = parts.join('');
     const jobs = [];
     if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
-    jobs.push(loadRequests(), loadPhones(), loadBackup());
+    if (hasRole('HOD') || hasRole('IAO')) jobs.push(loadMarksheets());
+    if (hasRole('HOD') || hasRole('MIS')) jobs.push(loadRequests(), loadPhones(), loadBackup());
     if (hasRole('MIS')) jobs.push(loadStaff().then(loadDrive));
     await Promise.allSettled(jobs);
     refreshBadge();
@@ -105,6 +108,49 @@ const Admin = (() => {
       <span class="muted small">Each gets the comment: ${esc(OK_SAID.register)}</span></div>` : '';
     box.innerHTML = (waiting.length ? `${bar}<ul class="mlist">${shown.map(item).join('')}</ul>${Tables.bar('signoffs', waiting)}` : none)
       + (done.length ? fold('signoffsDone', `Approved or returned (${done.length})`, `<ul class="mlist">${Tables.slice('signoffsDone', done).map(item).join('')}</ul>${Tables.bar('signoffsDone', done)}`) : '');
+  }
+
+  /* ---------- marksheets: the Assessment Officer receives them, the HOD approves them (several at once) ---------- */
+  const msPicked = new Set();
+  let msShow = '';
+  const MS_LABEL = { submitted: ['pending', 'To receive'], received: ['pending', 'To approve'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
+  const myStep = () => (hasRole('HOD') ? 'received' : 'submitted');
+  async function loadMarksheets() {
+    try { cache.marksheets = need(await api('msList')).marksheets; drawMarksheets(); } catch (e) { fill('m-marksheets', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  function drawMarksheets() {
+    const all = cache.marksheets || [], step = myStep();
+    if (!msShow) msShow = step;
+    const list = all.filter((m) => !msShow || m.status === msShow).sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
+    for (const id of [...msPicked]) if (!list.some((m) => m.id === id && m.status === step)) msPicked.delete(id);
+    const counts = {}; for (const m of all) counts[m.status] = (counts[m.status] || 0) + 1;
+    const chips = [['submitted', 'With the Assessment Officer'], ['received', 'With the HOD'], ['approved', 'Approved'], ['returned', 'Returned'], ['', 'All']]
+      .map(([k, l]) => `<button type="button" class="chipbtn${msShow === k ? ' on' : ''}" data-msshow="${k}">${l}${k && counts[k] ? ` <span class="n">${counts[k]}</span>` : ''}</button>`).join('');
+    const mine = list.filter((m) => m.status === step);
+    const verb = hasRole('HOD') ? 'Approve' : 'Mark as received';
+    fill('m-marksheets', `<p class="muted small">Trainers send their marksheets from Reports - Marks. The Assessment Officer receives each one, then the HOD approves it.</p>
+      <div class="chips" role="group" aria-label="Show">${chips}</div>
+      ${mine.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-mspickall${mine.every((m) => msPicked.has(m.id)) ? ' checked' : ''}><span>Select all ${mine.length}</span></label>
+        <button type="button" class="btn primary small" id="msBatch"${msPicked.size ? '' : ' disabled'}>${verb} selected${msPicked.size ? ` (${msPicked.size})` : ''}</button>
+        ${hasRole('HOD') ? `<span class="muted small">Each gets the comment: ${esc(OK_SAID.marksheet)}</span>` : ''}</div>` : ''}
+      ${list.length ? `<ul class="mlist">${list.map((m) => { const [c, l] = MS_LABEL[m.status] || ['pending', m.status]; return `<li class="${m.status === step ? 'pickable' : ''}">
+        ${m.status === step ? `<input type="checkbox" class="so-pick" data-mspick="${esc(m.id)}"${msPicked.has(m.id) ? ' checked' : ''} aria-label="Select ${esc(m.classCode)} ${esc(m.unitCode)}">` : ''}
+        <button type="button" class="mrow" data-msopen="${esc(m.classCode)}|${esc(m.unitCode)}"><span><b>${esc(m.classCode)} - ${esc(m.unitCode)}</b>
+        <small>${esc(m.unitName)} - prepared by ${esc(m.preparedName)}${m.receivedName ? ' - received by ' + esc(m.receivedName) : ''}${m.approvedName ? ' - approved by ' + esc(m.approvedName) : ''}</small></span>
+        <span class="pill ${c}">${l}</span></button></li>`; }).join('')}</ul>` : '<p class="muted">Nothing here.</p>'}`);
+  }
+  async function batchMarksheets(btn) {
+    const ids = [...msPicked]; if (!ids.length) return;
+    btn.disabled = true;
+    try {
+      const r = hasRole('HOD') ? await withPin(`Approve ${ids.length} marksheet${ids.length === 1 ? '' : 's'}`, (pin) => api('msDecide', { ids, decision: 'approved', pin }))
+        : await api('msReceive', { ids });
+      if (!r) { btn.disabled = false; return; }
+      need(r);
+      for (const m of r.marksheets) { const k = cache.marksheets.findIndex((x) => x.id === m.id); if (k >= 0) cache.marksheets[k] = m; msPicked.delete(m.id); }
+      toast(`${hasRole('HOD') ? 'Approved' : 'Received'} ${r.marksheets.length}${(r.failed || []).length ? ` - ${r.failed.length} could not be approved` : ''}`, (r.failed || []).length ? 'err' : 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+    drawMarksheets(); refreshBadge();
   }
 
   let ovTerm = '';
@@ -715,6 +761,7 @@ const Admin = (() => {
     if (hasRole('MIS')) n += (state.meta.pending || []).length;
     else if (hasRole('HOD')) n += (state.meta.pending || []).filter((p) => isStreamMove(p.admNo, p.classCode)).length;   // stream moves to decide
     if (hasRole('HOD')) n += cache.signoffs.filter((s) => s.status === 'submitted').length;
+    n += (cache.marksheets || []).filter((m) => (hasRole('HOD') && m.status === 'received') || (hasRole('IAO') && m.status === 'submitted')).length;
     if (cache.backup && cache.backup.level !== 'ok') n += 1;       // the backup account's Drive is filling up
     dot.hidden = !n;
     dot.textContent = n > 9 ? '9+' : String(n);
@@ -726,6 +773,10 @@ const Admin = (() => {
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
     if (t.closest('#soBatch')) { batchSignoffs(t.closest('#soBatch')); return; }
+    if (t.closest('#msBatch')) { batchMarksheets(t.closest('#msBatch')); return; }
+    const mss = t.closest('[data-msshow]'); if (mss) { msShow = mss.dataset.msshow; drawMarksheets(); return; }
+    const mso = t.closest('[data-msopen]');
+    if (mso) { const [c, u] = mso.dataset.msopen.split('|'); window.openMarks?.(c, u); return; }
     const arc = t.closest('[data-archive]');
     if (arc) { const codes = classGroups().get(arc.dataset.archive) || []; if (codes.length && confirm(`Archive ${arc.dataset.archive}? It can be brought back later.`)) archive(codes, true, arc.dataset.archive); return; }
     const res = t.closest('[data-restore]');
@@ -793,6 +844,8 @@ const Admin = (() => {
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.closest('#loadingDepts')) drawLoadingSummary();
     if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
+    if (t.matches?.('[data-mspick]')) { if (t.checked) msPicked.add(t.dataset.mspick); else msPicked.delete(t.dataset.mspick); drawMarksheets(); return; }
+    if (t.matches?.('[data-mspickall]')) { for (const m of (cache.marksheets || []).filter((x) => x.status === myStep() && (!msShow || x.status === msShow))) { if (t.checked) msPicked.add(m.id); else msPicked.delete(m.id); } drawMarksheets(); return; }
     if (t.matches?.('[data-sopick]')) { if (t.checked) soPicked.add(t.dataset.sopick); else soPicked.delete(t.dataset.sopick); drawSignoffs(); return; }
     if (t.matches?.('[data-sopickall]')) {
       const q = soQuery.trim().toLowerCase(), hit = (s) => !q || [s.classCode, s.unitCode, s.unitName, s.trainerName].some((v) => String(v || '').toLowerCase().includes(q));

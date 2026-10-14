@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.3.0';
-const SCHEMA_VERSION = '15';
+export const VERSION = '7.4.0';
+const SCHEMA_VERSION = '16';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS verifications (id TEXT PRIMARY KEY, panel_id TEXT, cl
 CREATE INDEX IF NOT EXISTS verifications_panel ON verifications (panel_id);
 CREATE TABLE IF NOT EXISTS approvals (ref TEXT PRIMARY KEY, kind TEXT, subject TEXT, title TEXT, info TEXT, fingerprint TEXT, by_code TEXT, by_name TEXT, by_role TEXT, at TEXT, sig TEXT, status TEXT, replaced_by TEXT);
 CREATE INDEX IF NOT EXISTS approvals_subject ON approvals (kind, subject);
+CREATE TABLE IF NOT EXISTS marksheets (id TEXT PRIMARY KEY, class_code TEXT, unit_code TEXT, unit_name TEXT, status TEXT, prepared_code TEXT, prepared_name TEXT, prepared_at TEXT, received_code TEXT, received_name TEXT, received_at TEXT, approved_code TEXT, approved_name TEXT, approved_at TEXT, comment TEXT, approval_ref TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT);
 CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
 CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
@@ -355,6 +356,10 @@ const ACTIONS = {
   setRep: { role: ['MIS', 'HOD', 'TRAINER'], fn: (env, b, me) => setRep(env, b, me) },
   marksPull: { fn: (env, b, me) => marksPull(env, b, me) },
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
+  msList: { fn: (env, b, me) => msList(env, b, me) },
+  msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
+  msReceive: { role: ['IAO', 'HOD'], fn: (env, b, me) => msReceive(env, b, me) },
+  msDecide: { role: ['HOD'], fn: (env, b, me) => msDecide(env, b, me) },
   importRegCodes: { role: ['MIS'], fn: (env, b, me) => importRegCodes(env, b, me) },
   setDefaultPin: { role: ['MIS'], fn: (env, b, me) => setDefaultPin(env, b, me) },
   absences: { role: ['HOD', 'MIS'], fn: (env, b, me) => absences(env, b, me) },
@@ -363,7 +368,7 @@ const ACTIONS = {
 
 /* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
-const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
+const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
   'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep', 'decidePanel']);
 
@@ -1621,7 +1626,7 @@ async function bridgeFeed(env, q) {
       ['SELECT DISTINCT class_code FROM requests WHERE requested_at > ? OR decided_at > ?', since, since],
       ['SELECT DISTINCT class_code, unit_code FROM signoffs WHERE submitted_at > ? OR decided_at > ?', since, since],
       ['SELECT code FROM staff WHERE updated_at > ?', since], ['SELECT 1 AS x FROM loading WHERE updated_at > ? LIMIT 1', since], ['SELECT 1 AS x FROM terms WHERE updated_at > ? LIMIT 1', since],
-      ['SELECT DISTINCT class_code, unit_code FROM unit_marks WHERE synced_at > ?', since]);
+      ['SELECT DISTINCT class_code, unit_code FROM unit_marks WHERE synced_at > ? UNION SELECT class_code, unit_code FROM marksheets WHERE updated_at > ?', since, since]);
     const all = ld.length || tm.length;
     const want = new Set([...sess, ...so, ...mk].map(unitKey));
     const classes = new Set([...tr, ...rq].map((r) => r.class_code)), staffSet = new Set(st.map((r) => lower(r.code)));
@@ -1647,8 +1652,9 @@ async function bridgeFeed(env, q) {
   const res = await many(env, ...stmts, [`SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, JSON.stringify(classSet)],
     [`SELECT adm_no, name, class_code, status, merged_into FROM requests WHERE class_code IN ${IN} AND status IN ('pending','rejected','merged')`, JSON.stringify(units.map((u) => u.class_code))],
     [`SELECT * FROM signoffs WHERE term_id=?`, term.id], [`SELECT code, late_pct, excused_pct FROM staff`], [`SELECT code, name, mis_class FROM classes WHERE code IN ${IN}`, JSON.stringify(classSet.concat(units.map((u) => u.class_code)))],
-    [`SELECT * FROM unit_marks WHERE class_code IN ${IN}`, JSON.stringify(units.map((u) => u.class_code))]);
-  const [trainees, reqs, signoffs, staffPct, classes, markRows] = res.slice(units.length * 2);
+    [`SELECT * FROM unit_marks WHERE class_code IN ${IN}`, JSON.stringify(units.map((u) => u.class_code))],
+    [`SELECT * FROM marksheets WHERE class_code IN ${IN}`, JSON.stringify(units.map((u) => u.class_code))]);
+  const [trainees, reqs, signoffs, staffPct, classes, markRows, sheetRows] = res.slice(units.length * 2);
   const weeks = teachingWeeks(term);
   const from = weeks[0], to = (() => { const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); return e.toISOString().slice(0, 10); })();
   units.forEach((u, i) => {
@@ -1677,7 +1683,7 @@ async function bridgeFeed(env, q) {
       rows: regRows, catCols: catColumns(term, weeks, all), catTable: catItems.length ? catTable(regRows, catItems) : null,
       lecturerComment: so?.lecturer_comment || '', hodComment: so?.hod_comment || '', signoff: so?.status || '',
       cats: all.filter((l) => l.kind !== 'lesson').sort((a, c) => a.date.localeCompare(c.date)).map((l) => ({ title: l.title || (l.kind === 'cat' ? 'CAT' : 'Extra'), date: l.date, kind: l.kind, marks: l.marks })),
-      marksheet: marksheetOf(u, roster, trainees, markRows, classes, term),
+      marksheet: { ...marksheetOf(u, roster, trainees, markRows, classes, term), footer: marksheetFooter(u, sheetRows.find((m) => m.class_code === u.class_code && m.unit_code === u.unit_code)) },
     });
   });
   return out;
@@ -1714,12 +1720,20 @@ export function catTable(rows, items) {
   const count = (k, test) => out.filter((v) => test(v[k])).length;
   return {
     // A column per CAT ("CAT 1", "CAT 2" …); a make-up shows inside the CAT it makes up.
-    cols: cats.map((a, i) => { const m = /^\s*CAT\s*(\d+)\s*$/i.exec(a.title || ''); return { label: `CAT ${m ? m[1] : i + 1}`, date: shortDate(a.date), kind: 'cat' }; }), vals: out,
+    cols: cats.map((a, i) => { const m = /^\s*CAT\s*(\d+)(.*)$/i.exec(a.title || ''); return { label: m ? `CAT ${m[1]}${m[2].trimEnd()}` : `CAT ${i + 1}`, date: shortDate(a.date), kind: 'cat' }; }), vals: out,
     totals: [['Sat', cats.map((a, k) => count(k, sat))], ['Absent', cats.map((a, k) => count(k, (v) => v.startsWith('Ab')))],
       ['Sat the supplementary', cats.map((a, k) => count(k, (v) => v.startsWith('Ab (')))]],
   };
 }
 
+/** The marksheet footer: Prepared by (the unit's trainer), Received by (the Assessment Officer), Approved by; initials sign. */
+const initialsOf = (name) => String(name || '').replace(/[^A-Za-z\s'-]/g, ' ').split(/[\s-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + '.').join('');
+const dayOf = (iso) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Africa/Nairobi' }) : '');
+function marksheetFooter(u, m) {
+  const who = (name, at) => ({ name: name || '', initials: at ? initialsOf(name) : '', date: dayOf(at) });
+  return { prepared: who(m?.prepared_name || u.trainer_name, m?.prepared_at), received: who(m?.received_name, m?.received_at),
+    approved: who(m?.status === 'approved' ? m.approved_name : '', m?.status === 'approved' ? m.approved_at : ''), status: m?.status || '' };
+}
 /** The marksheet for one class-unit, students in admission number order (as the register). */
 function marksheetOf(u, roster, trainees, markRows, classes, term) {
   const mine = markRows.filter((m) => m.class_code === u.class_code && m.unit_code === u.unit_code);
@@ -2199,7 +2213,8 @@ async function marksPull(env, b, me) {
   const [rows, termRows] = await many(env, ['SELECT * FROM unit_marks WHERE class_code=? AND unit_code=?', cls, unit], [TERM_SQL]);
   const activeId = termRows[0]?.id || '', open = await unlockedSet(env);
   const terms = Object.fromEntries((await all(env, 'SELECT id, name FROM terms')).map((x) => [x.id, x.name]));
-  return { ok: true, classCode: cls, unitCode: unit, activeTerm: activeId,
+  const sheet = msOut(await one(env, 'SELECT * FROM marksheets WHERE id=?', msId(cls, unit)));
+  return { ok: true, classCode: cls, unitCode: unit, activeTerm: activeId, sheet,
     rows: rows.map((r) => { const meta = metaOf(r); return { ...marksOut(r), locked: lockedCells(r, activeId, open, cls, unit),
       terms: Object.fromEntries(MARK_COLS.filter((c) => meta[c]?.term).map((c) => [c, terms[meta[c].term] || meta[c].term])) }; }),
     lockedTerms: [...new Set(rows.flatMap((r) => lockedCells(r, activeId, open, cls, unit).map((c) => metaOf(r)[c].term)))].map((id) => ({ id, name: terms[id] || id })) };
@@ -2734,12 +2749,80 @@ async function checkApproval(env, ref) {
     let now = r.fingerprint;
     if (r.kind === 'register') { const so = await one(env, 'SELECT * FROM signoffs WHERE id=?', r.subject); now = so ? await registerPrint(env, so) : ''; }
     if (r.kind === 'poe') { const e = await one(env, 'SELECT * FROM evidence WHERE id=?', r.subject); now = e ? evidencePrint(e) : ''; }
+    if (r.kind === 'marksheet') { const m = await one(env, 'SELECT * FROM marksheets WHERE id=?', r.subject); now = m ? await marksheetPrint(env, m.class_code, m.unit_code) : ''; }
     if (now !== r.fingerprint) status = 'changed';
   }
   const term = info.termId ? await one(env, 'SELECT name, duration FROM terms WHERE id=?', info.termId) : null;
   return { ok: true, found: true, ref: r.ref, kind: r.kind, title: r.title, status, by: r.by_name, role: r.by_role, at: r.at, replacedBy: r.replaced_by || '',
     details: { classCode: info.classCode || '', unit: [info.unitCode, info.unitName].filter(Boolean).join(' - '), item: info.item || '', version: info.version || '', term: term ? term.duration || term.name : '' } };
 }
+/* ---------- marksheets: prepared by the trainer, received by the Assessment Officer, approved by the HOD ----------
+ * The Excel marksheet's footer is filled from this: names, initials for the signatures, and dates. Approving makes an
+ * approval (reference and QR check) over the marks as they stood; a change afterwards shows as "changed since approval". */
+const msId = (cls, unit) => `${cls}|${unit}`;
+const msOut = (r) => (r ? { id: r.id, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name || '', status: r.status,
+  preparedName: r.prepared_name || '', preparedAt: r.prepared_at || '', receivedName: r.received_name || '', receivedAt: r.received_at || '',
+  approvedName: r.approved_name || '', approvedAt: r.approved_at || '', comment: r.comment || '', approvalRef: r.status === 'approved' ? r.approval_ref || '' : '' } : null);
+async function marksheetPrint(env, cls, unit) {
+  const rows = await all(env, `SELECT adm_no, ${MARK_COLS.join(', ')} FROM unit_marks WHERE class_code=? AND unit_code=? ORDER BY adm_no`, cls, unit);
+  return sha256Hex(rows.map((r) => [lower(r.adm_no), ...MARK_COLS.map((c) => r[c] ?? '')].join(',')).join('|'));
+}
+async function msList(env, b, me) {
+  const all_ = seesAll(me) ? await all(env, 'SELECT * FROM marksheets ORDER BY updated_at DESC')
+    : await all(env, 'SELECT * FROM marksheets WHERE prepared_code=? ORDER BY updated_at DESC', me.code);
+  return { ok: true, marksheets: all_.map(msOut) };
+}
+async function msSubmit(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  await marksAccess(env, me, cls, unit, true);
+  const id = msId(cls, unit), old = await one(env, 'SELECT * FROM marksheets WHERE id=?', id), now = nowIso();
+  if (old?.status === 'approved' && !b.again) fail('This marksheet is already approved');
+  const u = await one(env, 'SELECT unit_name FROM loading WHERE class_code=? AND unit_code=? ORDER BY updated_at DESC LIMIT 1', cls, unit);
+  await run(env, `INSERT INTO marksheets (id,class_code,unit_code,unit_name,status,prepared_code,prepared_name,prepared_at,received_code,received_name,received_at,approved_code,approved_name,approved_at,comment,approval_ref,updated_at)
+    VALUES (?,?,?,?,'submitted',?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,?,NULL,?) ON CONFLICT(id) DO UPDATE SET status='submitted', prepared_code=excluded.prepared_code, prepared_name=excluded.prepared_name,
+    prepared_at=excluded.prepared_at, received_code=NULL, received_name=NULL, received_at=NULL, approved_code=NULL, approved_name=NULL, approved_at=NULL, comment=excluded.comment, approval_ref=NULL, updated_at=excluded.updated_at`,
+  id, cls, unit, u?.unit_name || b.unitName || unit, me.code, me.name, now, String(b.comment || '').slice(0, 500), now);
+  await withdrawApprovals(env, 'marksheet', id);
+  await audit(env, me, 'marksheet', `${id} submitted`);
+  return { ok: true, marksheet: msOut(await one(env, 'SELECT * FROM marksheets WHERE id=?', id)) };
+}
+async function msReceive(env, b, me) {
+  const ids = [...new Set((b.ids || [b.id]).filter(Boolean).map(String))].slice(0, BATCH_MAX), now = nowIso();
+  if (!ids.length) fail('Choose the marksheets');
+  const rows = await all(env, `SELECT * FROM marksheets WHERE id IN ${IN}`, JSON.stringify(ids));
+  const ok = rows.filter((r) => r.status === 'submitted');
+  if (!ok.length) fail('Only marksheets sent by their trainers can be received');
+  await run(env, `UPDATE marksheets SET status='received', received_code=?, received_name=?, received_at=?, updated_at=? WHERE status='submitted' AND id IN ${IN}`, me.code, me.name, now, now, JSON.stringify(ok.map((r) => r.id)));
+  await audit(env, me, 'marksheet received', ok.map((r) => r.id).join(', '));
+  return { ok: true, marksheets: (await all(env, `SELECT * FROM marksheets WHERE id IN ${IN}`, JSON.stringify(ids))).map(msOut), skipped: ids.length - ok.length };
+}
+async function msDecideOne(env, id, decision, comment, me) {
+  const r = await one(env, 'SELECT * FROM marksheets WHERE id=?', id);
+  if (!r) fail('That marksheet has not been sent');
+  if (decision === 'approved' && r.status !== 'received') fail('The Assessment Officer receives a marksheet before it is approved');
+  if (decision === 'returned' && !comment) fail('Say what needs fixing when returning a marksheet');
+  const now = nowIso(), said = comment || (decision === 'approved' ? OK_SAID.marksheet : '');
+  let ref = null;
+  if (decision === 'approved') {
+    ref = await makeApproval(env, me, 'HOD', 'marksheet', id, `Marksheet - ${r.unit_code} ${r.unit_name || ''}`.trim(),
+      { classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, trainer: r.prepared_name }, await marksheetPrint(env, r.class_code, r.unit_code));
+  } else await withdrawApprovals(env, 'marksheet', id);
+  await run(env, 'UPDATE marksheets SET status=?, approved_code=?, approved_name=?, approved_at=?, comment=?, approval_ref=?, updated_at=? WHERE id=?',
+    decision, decision === 'approved' ? me.code : null, decision === 'approved' ? me.name : null, decision === 'approved' ? now : null, said.slice(0, 500), ref, now, id);
+  await audit(env, me, 'marksheet', `${id} ${decision}`);
+  return msOut(await one(env, 'SELECT * FROM marksheets WHERE id=?', id));
+}
+async function msDecide(env, b, me) {
+  if (!['approved', 'returned'].includes(b.decision)) fail('Choose approve or return');
+  const comment = String(b.comment || '').trim();
+  const ids = [...new Set((b.ids || [b.id]).filter(Boolean).map(String))].slice(0, BATCH_MAX);
+  if (!ids.length) fail('Choose the marksheets');
+  if (b.decision === 'approved') await confirmPin(env, me, b.pin);
+  const out = [], failed = [];
+  for (const id of ids) { try { out.push(await msDecideOne(env, id, b.decision, comment, me)); } catch (e) { if (ids.length === 1) throw e; failed.push({ id, error: e.message }); } }
+  return { ok: true, marksheets: out, marksheet: out[0], failed };
+}
+
 async function driveStatus(env) {
   const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
   return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', quotaGb: Number(quota[0]?.value) || 50, domain: env.GOOGLE_DOMAIN || '' };

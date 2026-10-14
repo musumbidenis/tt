@@ -1071,3 +1071,11 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .pin-dialog form { display: grid; gap: .6rem; min-width: min(20rem, 80vw); }
 .pin-dialog input { font-size: 1.2rem; letter-spacing: .3em; }
 td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriting", cursive; font-style: italic; font-size: 1.05em; }
+
+/* Marksheet approval under the marks table */
+.ms-steps { border-top: 1px solid var(--line); margin-top: .75rem; padding-top: .5rem; }
+.ms-steps h3 { font-size: 1rem; margin: 0 0 .35rem; }
+.ms-step { padding: .35rem 0; }
+.ms-step + .ms-step { border-top: 1px dashed var(--line); }
+.ms-step p { margin: .2rem 0; display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.marks-table td.avg { font-size: .85rem; }

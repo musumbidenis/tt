@@ -1,7 +1,9 @@
 /* Marks: the continuous assessment marksheet per class and unit (CAT 1–3, PRAC 1–3, each 0–100).
  * Entered on the phone, offline too; each student's row is saved on the phone at once and sent to the
  * server when there is internet. The server copy feeds the trainer's "Marksheets" Google Sheet and the
- * Excel export in RVNP's marksheet layout. AVG = sum of the three ÷ 3 (a CAT not done counts as 0).
+ * Excel export in RVNP's marksheet layout. AVG = sum of the three ÷ 3, only when all three are in (else C.R.N.M).
+ * A marksheet is sent by its trainer, received by the Assessment Officer and approved by the HOD; the Excel footer
+ * shows who, with initials for the signatures.
  * Uses app.js (state, api, $, $$, esc, toast, hasRole, me, getLocal, updateLocal, rosterFor, download). */
 'use strict';
 
@@ -13,7 +15,10 @@ const Marks = (() => {
   const LIFE = 'unit';
   const docId = (cls, unit) => `marks:${LIFE}:${cls}|${unit}`;
   const oldDocId = (cls, unit) => `marks:${state.meta.term?.id || 'term'}:${cls}|${unit}`;   // before marks spanned terms
-  const avg = (r, keys) => (keys.some((k) => r?.[k] !== null && r?.[k] !== undefined && r?.[k] !== '') ? keys.reduce((n, k) => n + (Number(r[k]) || 0), 0) / 3 : null);
+  // AVG only when all three marks are in; with some missing the marksheet says C.R.N.M.
+  const has = (r, k) => r?.[k] !== null && r?.[k] !== undefined && r?.[k] !== '';
+  const avg = (r, keys) => (keys.every((k) => has(r, k)) ? keys.reduce((n, k) => n + Number(r[k]), 0) / 3 : null);
+  const avgText = (r, keys) => { const a = avg(r, keys); return a !== null ? String(Math.round(a)) : keys.some((k) => has(r, k)) ? 'C.R.N.M' : ''; };
   const show = (n) => (n === null || n === undefined ? '' : String(Math.round(n)));
   const canEdit = (unit) => (hasRole('HOD') || (hasRole('TRAINER') && isMyUnit(unit)));
   const parse = (v) => {
@@ -49,6 +54,7 @@ const Marks = (() => {
         delete d.dirty[k];
       }
       d.lockedTerms = res.lockedTerms || [];
+      d.sheet = res.sheet || null;
       d.pulledAt = nowISO();
     }, { rows: {}, dirty: {} });
   }
@@ -152,8 +158,9 @@ const Marks = (() => {
       <div class="row-actions marks-actions">
         <button type="button" class="btn primary" id="marksExport"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel marksheet</button>
         ${edits ? '<button type="button" class="btn" id="marksSend">Send now</button>' : ''}
-      </div>`}`;
-    if (roster.length) drawTable();
+      </div>
+      <div id="msSteps" class="ms-steps"></div>`}`;
+    if (roster.length) { drawTable(); drawSteps(); }
     status();
   }
   /** The table alone (a search or a page change must not rebuild the box being typed in). */
@@ -161,7 +168,7 @@ const Marks = (() => {
     const box = $('#marksTable'); if (!box) return;
     const q = (ms.q || '').trim().toLowerCase();
     const all = Tables.sort('marks', ms.roster.map((t, i) => ({ t, n: i + 1 })).filter(({ t }) => !q || t.name.toLowerCase().includes(q) || String(t.admNo).toLowerCase().includes(q)),
-      { sn: (x) => x.n, name: (x) => x.t.name, cat: (x) => avg(rowFor(x.t), ['cat1', 'cat2', 'cat3']), prac: (x) => avg(rowFor(x.t), ['prac1', 'prac2', 'prac3']) }, 'sn');
+      { sn: (x) => x.n, name: (x) => x.t.name, cat: (x) => avg(rowFor(x.t), ['cat1', 'cat2', 'cat3']) ?? -1, prac: (x) => avg(rowFor(x.t), ['prac1', 'prac2', 'prac3']) ?? -1 }, 'sn');
     all.forEach((x, i) => { x.pos = i + 1; });   // S/N follows the order on screen
     const rows = Tables.slice('marks', all);
     box.innerHTML = all.length ? `<div class="marks-wrap"><table class="marks-table">
@@ -179,8 +186,8 @@ const Marks = (() => {
     return `<tr data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">
       <td class="mt-sn">${i + 1}</td>
       <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}${t.stream ? ` <span class="stag" title="Stream">${esc(t.stream)}</span>` : ''}</b><small>${esc(t.admNo)}${t.regCode ? ' - ' + esc(t.regCode) : ''}${t.pending ? ' - pending' : ''}${t.gone ? ' - not on the list' : ''}</small></div></th>
-      ${['cat1', 'cat2', 'cat3'].map(cell).join('')}<td class="avg" data-avg="cat">${show(avg(r, ['cat1', 'cat2', 'cat3']))}</td>
-      ${['prac1', 'prac2', 'prac3'].map(cell).join('')}<td class="avg" data-avg="prac">${show(avg(r, ['prac1', 'prac2', 'prac3']))}</td></tr>`;
+      ${['cat1', 'cat2', 'cat3'].map(cell).join('')}<td class="avg" data-avg="cat">${avgText(r, ['cat1', 'cat2', 'cat3'])}</td>
+      ${['prac1', 'prac2', 'prac3'].map(cell).join('')}<td class="avg" data-avg="prac">${avgText(r, ['prac1', 'prac2', 'prac3'])}</td></tr>`;
   }
   /** Updates the numbers in place (keeps the cell being typed in). */
   function refreshValues() {
@@ -191,8 +198,8 @@ const Marks = (() => {
     }
     for (const tr of $$('#marksCard tbody tr')) {
       const r = sheetOf(tr.dataset.cls).doc.rows[lower(tr.dataset.adm)] || {};
-      tr.querySelector('[data-avg=cat]').textContent = show(avg(r, ['cat1', 'cat2', 'cat3']));
-      tr.querySelector('[data-avg=prac]').textContent = show(avg(r, ['prac1', 'prac2', 'prac3']));
+      tr.querySelector('[data-avg=cat]').textContent = avgText(r, ['cat1', 'cat2', 'cat3']);
+      tr.querySelector('[data-avg=prac]').textContent = avgText(r, ['prac1', 'prac2', 'prac3']);
     }
     status();
   }
@@ -213,8 +220,8 @@ const Marks = (() => {
     const row = sheet.doc.rows[k] = { ...(sheet.doc.rows[k] || { admNo: inp.dataset.adm }), [col]: res.value, updatedAt: nowISO() };
     sheet.doc.dirty[k] = true;
     tr.classList.add('dirty');
-    tr.querySelector('[data-avg=cat]').textContent = show(avg(row, ['cat1', 'cat2', 'cat3']));
-    tr.querySelector('[data-avg=prac]').textContent = show(avg(row, ['prac1', 'prac2', 'prac3']));
+    tr.querySelector('[data-avg=cat]').textContent = avgText(row, ['cat1', 'cat2', 'cat3']);
+    tr.querySelector('[data-avg=prac]').textContent = avgText(row, ['prac1', 'prac2', 'prac3']);
     // Saved straight away (one save after another), so closing the app a moment later loses nothing.
     ms.saving = Promise.resolve(ms.saving).then(() => saveLocal(sheet, unit)).catch((e) => toast('Could not save on this device: ' + e.message, 'err'));
     status();
@@ -243,6 +250,66 @@ const Marks = (() => {
     }, 2500);
   }
 
+  /* ---------- the marksheet's way to approval: trainer → Assessment Officer → HOD ---------- */
+  const MS_STATUS = { submitted: ['pending', 'With the Assessment Officer'], received: ['pending', 'Received - with the HOD'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
+  const day = (iso) => (iso ? fmtShort(iso) : '');
+  function drawSteps() {
+    const box = $('#msSteps'); if (!box) return;
+    box.innerHTML = `<h3>Marksheet approval</h3>${ms.sheets.map((s) => {
+      const m = s.doc.sheet, many = ms.sheets.length > 1, tag = many ? `<b>${esc(streamLetter(s.cls) || s.cls)}:</b> ` : '';
+      const [cls, label] = m ? MS_STATUS[m.status] || ['pending', m.status] : ['', 'Not sent yet'];
+      const who = m ? [m.preparedName && `Prepared by ${esc(m.preparedName)} ${day(m.preparedAt)}`, m.receivedName && `received by ${esc(m.receivedName)} ${day(m.receivedAt)}`,
+        m.approvedName && `approved by ${esc(m.approvedName)} ${day(m.approvedAt)}`].filter(Boolean).join(' - ') : '';
+      const acts = [];
+      if (s.edit && (!m || m.status === 'returned' || m.status === 'approved')) acts.push(`<button type="button" class="btn small primary" data-ms="submit" data-cls="${esc(s.cls)}">${m ? 'Send again' : 'Send to the Assessment Officer'}</button>`);
+      if ((hasRole('IAO') || hasRole('HOD')) && m?.status === 'submitted') acts.push(`<button type="button" class="btn small primary" data-ms="receive" data-cls="${esc(s.cls)}">Mark as received</button>`);
+      const decide = hasRole('HOD') && m?.status === 'received';
+      return `<div class="ms-step" data-cls="${esc(s.cls)}"><p>${tag}${cls ? `<span class="pill ${cls}">${label}</span>` : `<span class="muted">${label}</span>`} <span class="small">${who}</span>
+          ${m?.approvalRef ? `<span class="small"> - Ref ${esc(m.approvalRef)}</span>` : ''}</p>
+        ${m?.comment && m.status === 'returned' ? `<p class="so-quote small"><b>HOD's comment:</b> ${esc(m.comment)}</p>` : ''}
+        ${decide ? `<label>HOD's comment<textarea id="msComment-${esc(s.cls)}" rows="2" placeholder="Left empty: ${esc(OK_SAID.marksheet)}"></textarea></label>${quickSays('marksheet', 'msComment-' + s.cls)}
+          <div class="row-actions"><button type="button" class="btn small primary" data-ms="approved" data-cls="${esc(s.cls)}">Approve marksheet</button><button type="button" class="btn small" data-ms="returned" data-cls="${esc(s.cls)}">Return to trainer</button></div>` : ''}
+        ${acts.length ? `<div class="row-actions">${acts.join('')}</div>` : ''}</div>`;
+    }).join('')}<p class="muted tiny">The Excel marksheet's footer shows who prepared, received and approved it, with their initials as signatures.</p>`;
+  }
+  async function step(act, cls, btn) {
+    const s = ms.sheets.find((x) => x.cls === cls); if (!s) return;
+    if (!navigator.onLine) { toast('This needs internet. The marks are safe on this device.', 'err'); return; }
+    btn.disabled = true;
+    try {
+      let r;
+      if (act === 'submit') { await push(cls, ms.unit); r = await api('msSubmit', { classCode: cls, unitCode: ms.unit, again: true }); }
+      if (act === 'receive') r = await api('msReceive', { id: s.doc.sheet.id });
+      if (act === 'approved' || act === 'returned') {
+        const comment = $(`#msComment-${CSS.escape(cls)}`)?.value.trim() || '';
+        if (act === 'returned' && !comment) { toast('Write what needs fixing, then return it', 'err'); btn.disabled = false; return; }
+        const body = { id: s.doc.sheet.id, decision: act, comment };
+        r = act === 'approved' ? await withPin('Approve this marksheet', (pin) => api('msDecide', { ...body, pin })) : await api('msDecide', body);
+        if (!r) { btn.disabled = false; return; }
+      }
+      if (!r.ok) throw new Error(r.error);
+      const sheet = r.marksheet || r.marksheets?.[0];
+      s.doc = await updateLocal(docId(cls, ms.unit), (d) => { d.sheet = sheet; }, { rows: {}, dirty: {} });
+      toast({ submit: 'Sent to the Assessment Officer', receive: 'Received', approved: 'Marksheet approved', returned: 'Returned to the trainer' }[act], 'ok');
+      drawSteps();
+      window.Admin?.refreshBadge?.();
+    } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
+  }
+  /** The footer of the Excel marksheet: the unit's trainer prepares it; who received and approved it, once they have. */
+  function footerOf(sheets, u) {
+    const pick = (f) => [...new Set(sheets.map((s) => f(s.doc.sheet)).filter(Boolean))].join(', ');
+    const all = (st) => sheets.every((s) => st.includes(s.doc.sheet?.status));
+    const at = (f) => { const v = sheets.map((s) => f(s.doc.sheet)).filter(Boolean).sort().pop(); return v ? fmtShort(v) : ''; };
+    const trainer = pick((m) => m?.preparedName) || [...new Set(sheets.map((s) => state.units.find((x) => x.classCode === s.cls && x.code === u.code)?.trainerName).filter(Boolean))].join(', ');
+    const sent = sheets.some((s) => s.doc.sheet);
+    const prepared = { name: trainer, initials: sent ? trainer.split(', ').map(initials).join(' ') : '', date: at((m) => m?.preparedAt) };
+    const recName = all(['received', 'approved']) ? pick((m) => m?.receivedName) : '';
+    const received = { name: recName, initials: recName.split(', ').filter(Boolean).map(initials).join(' '), date: recName ? at((m) => m?.receivedAt) : '' };
+    const appName = all(['approved']) ? pick((m) => m?.approvedName) : '';
+    const approved = { name: appName, initials: appName.split(', ').filter(Boolean).map(initials).join(' '), date: appName ? at((m) => m?.approvedAt) : '' };
+    return { prepared, received, approved };
+  }
+
   async function exportXlsx() {
     const codes = reportCodes(), unit = $('#rUnit').value;
     if (!codes.length || !unit) return;
@@ -259,7 +326,7 @@ const Marks = (() => {
     try {
       const tpl = await (await fetch('templates/marksheet.xlsx')).arrayBuffer();
       const blob = await Xlsx.marksheetFile(tpl, { courseCode: c.misClass || cls, courseName: c.name && c.name !== c.code ? c.name : (c.misClass || cls), unitCode: u.code, unitTitle: u.name,
-        series: state.meta.term?.series || '', sheetName: `${String(cls).split(' ').pop()} ${u.code}`, students });
+        series: state.meta.term?.series || '', sheetName: `${String(cls).split(' ').pop()} ${u.code}`, students, footer: footerOf(sheets, u) });
       download(`Marksheet_${fileSafe(cls)}_${fileSafe(u.code)}_${todayISO()}.xlsx`, blob);
       toast('Excel marksheet saved', 'ok');
     } catch (e) { toast('Could not make the marksheet: ' + e.message, 'err'); }
@@ -283,6 +350,7 @@ const Marks = (() => {
     document.addEventListener('click', (e) => {
       if (e.target.closest('#marksExport')) exportXlsx();
       if (e.target.closest('#marksSend')) syncAll().then(() => render());
+      const st = e.target.closest('[data-ms]'); if (st) step(st.dataset.ms, st.dataset.cls, st);
       const un = e.target.closest('[data-munlock]');
       if (un) {
         // Every stream on screen whose marks from that term are locked.
@@ -305,5 +373,5 @@ const Marks = (() => {
     $('#tab-reports').classList.toggle('marks-mode', mode === 'marks');
     renderReport();
   }
-  return { render, wire, syncAll, setMode, state: ms };
+  return { render, wire, syncAll, setMode, state: ms, footerOf };
 })();
