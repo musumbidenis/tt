@@ -96,7 +96,7 @@ const PoeStaff = (() => {
     return `<div class="card table-card">${pick.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-pickall${pick.every((e) => ps.picked.has(e.id)) ? ' checked' : ''}><span>Select all ${pick.length} shown</span></label>
       <button type="button" class="btn primary small" data-act="batch-approve"${ps.picked.size ? '' : ' disabled'}>Approve selected${ps.picked.size ? ` (${ps.picked.size})` : ''}</button>
       <span class="muted small">Approving without a note says: ${esc(OK_SAID.poe)}</span></div>` : ''}<div class="table-wrap"><table class="report-table poe-table poe-unit-table">
-      <thead><tr>${pick.length ? '<th><span class="sr">Select</span></th>' : ''}${th('name', 'Student')}${th('adm', 'Admission no.')}${th('unit', 'Unit')}${th('item', 'Item')}${th('mark', 'Mark', 'num')}${th('sent', 'Sent')}${th('status', 'Status')}<th><span class="sr">Preview</span></th></tr></thead>
+      <thead><tr>${pick.length ? '<th class="pick"><span class="sr">Select</span></th>' : ''}${th('name', 'Student')}${th('adm', 'Admission no.')}${th('unit', 'Unit')}${th('item', 'Item')}${th('mark', 'Mark', 'num')}${th('sent', 'Sent')}${th('status', 'Status')}<th><span class="sr">Preview</span></th></tr></thead>
       <tbody>${page.map((e) => unitRow(e, pick.length > 0)).join('')}</tbody></table></div>
       ${Tables.bar('poeUnit', rows)}
       <div class="row-actions table-actions">
@@ -109,7 +109,7 @@ const PoeStaff = (() => {
   function unitRow(e, picking) {
     const [cls, label] = statusOf(e);
     const verb = canDecide() && e.status === 'submitted' ? 'Review' : 'Preview';
-    return `<tr data-id="${esc(e.id)}">${picking ? `<td>${e.status === 'submitted' ? `<input type="checkbox" data-pick="${esc(e.id)}"${ps.picked.has(e.id) ? ' checked' : ''} aria-label="Select ${esc(e.name)} ${esc(e.item)}">` : ''}</td>` : ''}
+    return `<tr data-id="${esc(e.id)}">${picking ? `<td class="pick">${e.status === 'submitted' ? `<input type="checkbox" data-pick="${esc(e.id)}"${ps.picked.has(e.id) ? ' checked' : ''} aria-label="Select ${esc(e.name)} ${esc(e.item)}">` : ''}</td>` : ''}
       <td><b>${esc(e.name)}</b></td><td class="tadm">${esc(e.admNo)}</td>
       <td class="unit-cell" title="${esc(e.classCode)}">${esc(e.unitName)}</td>
       <td><span class="item-tag">${esc(e.item)}</span>${e.version > 1 ? ` <small class="muted">v${e.version}</small>` : ''}</td>
