@@ -50,7 +50,7 @@ const Candidates = (() => {
     try {
       const r = await api('candidates', { classCode: cs.cls, unitCode: cs.unit, rules: readRules() });
       if (!r.ok) throw new Error(r.error);
-      cs.res = r; cs.show = 'yes'; Tables.reset('cand');
+      cs.res = r; cs.show = r.students.some((s) => s.eligible) ? 'yes' : ''; Tables.reset('cand');   // nobody can sit: show everyone, with the reasons
       $('#cdOut').innerHTML = resultHtml();
     } catch (e) { toast(e.message, 'err'); }
     btn.disabled = false;

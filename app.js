@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.33.0';
+const APP_VERSION = '4.33.1';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1802,6 +1802,8 @@ async function pullRoster({ silent = false } = {}) {
     applyRoles();
     if (state.current) renderRegister();
     renderSheetsStatus();
+    // Manage drawn before the lists arrived: its class and unit choices fill in now.
+    if ($('#cdClass') && !$('#cdClass').value) window.Admin?.redrawCandidates?.();
     if (!silent) toast(`Class lists saved: ${markClasses().length} of your classes, ${r.trainees} students — you can now mark offline`, 'ok');
   } catch (e) {
     showSyncStatus('Class list download failed: ' + e.message);
