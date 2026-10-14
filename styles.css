@@ -1142,3 +1142,8 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .manage-mode button { white-space: nowrap; padding: .55rem .7rem; font-size: .875rem; }
 .mg-n { display: inline-block; min-width: 1.3em; padding: 0 .35em; margin-left: .25rem; border-radius: 99px; background: var(--a, #c42830); color: #fff; font-size: .72rem; }
 .danger-text { color: var(--a, #c42830) !important; }
+
+.vt-tools { display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; margin: .3rem 0 .4rem; }
+.vt-tools .vt-q { flex: 1 1 14rem; max-width: 26rem; margin: 0; }
+.panel-form .members { display: block; }
+.panel-who { display: flex; flex-wrap: wrap; gap: .4rem .75rem; align-items: center; justify-content: space-between; }
