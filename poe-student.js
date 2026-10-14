@@ -333,7 +333,7 @@ const POE = (() => {
           for (const name of d.pages) {
             const c = await Scanner.load(await attachment(d, name));
             const f = Scanner.filter(c, 'document');
-            const page = { jpeg: await Scanner.toJpeg(f, 0.68), width: f.width, height: f.height };
+            const page = await Scanner.page(f);   // sharp black and white for writing; a photo-like page stays JPEG
             Scanner.release(c); if (f !== c) Scanner.release(f);   // one page in memory at a time
             pages.push(page);
           }

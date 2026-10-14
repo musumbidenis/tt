@@ -15,7 +15,7 @@
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-mark" viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 3h6v3H9z"/><path d="M9 13.5l2 2 4-4.5"/></symbol>
-  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
+  <symbol id="i-tools" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8.5 10h7M8.5 13.5h7M8.5 17h4"/></symbol><symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M6 20v-6M12 20V5M18 20v-9M3 20h18"/></symbol>
   <symbol id="i-manage" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.5-3.2 8.1-7.5 9.5-4.3-1.4-7.5-5-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></symbol>
   <symbol id="i-poe" viewBox="0 0 24 24"><path d="M3.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M8.5 13l2.5 2.5 4.5-5"/></symbol>
@@ -76,6 +76,7 @@
   <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>Att Register(s)</button>
   <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Report(s)</button>
   <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE<span id="poeCount" class="dot" hidden></span></button>
+  <button data-tab="tools" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-tools"/></svg>Tools</button>
   <button data-tab="alerts" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg>Absences<span id="alertCount" class="dot" hidden></span></button>
   <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
   <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Profile</button>
@@ -181,7 +182,7 @@
       </div>
     </div>
     <div id="reportBody"></div>
-    <p id="reportLegend" class="legend" hidden><span><i class="P"></i>Present</span><span><i class="L"></i>Late</span><span><i class="A"></i>Absent</span><span><i class="E"></i>Excused</span><span><i class="n"></i>Not held yet</span><span id="legendHours"></span></p>
+    <p id="reportLegend" class="legend" hidden><span><i class="P"></i>Present</span><span><i class="L"></i>Late</span><span><i class="A"></i>Absent</span><span><i class="E"></i>Excused</span><span><i class="n"></i>Not held yet</span><span id="legendCat" hidden><i class="cat"></i>CAT week</span><span id="legendHours"></span></p>
 
     <div id="signoffCard" class="card signoff" hidden></div>
 
@@ -198,6 +199,21 @@
   <section id="tab-poe" class="tab"><div id="poe"></div></section>
 
   <!-- ABSENCES (HOD and MIS Officer): students who have missed more lessons than the limit -->
+  <section id="tab-tools" class="tab">
+    <div class="card tools-intro">
+      <h2>Professional tools</h2>
+      <p class="muted">Your learning plans, session plans and assessment tools in one place, made from your loading and timetable and kept in your Drive folder.</p>
+    </div>
+    <ul class="tool-cards">
+      <li class="card tool-card"><span class="soon">Coming soon</span><h3>Learning plans</h3>
+        <p>One for each unit you teach this term, started for you from the loading, the term's weeks and the CAT weeks. Sent to the HOD to approve.</p></li>
+      <li class="card tool-card"><span class="soon">Coming soon</span><h3>Session plans</h3>
+        <p>One for each lesson on your timetable. The register shows when a lesson's plan is ready, and last term's plans can be reused.</p></li>
+      <li class="card tool-card"><span class="soon">Coming soon</span><h3>Assessment tools</h3>
+        <p>The written, practical and oral papers with their marking guides. The Internal Assessment Officer receives each one before the CAT, linked to its CAT register and its column in Marks.</p></li>
+    </ul>
+  </section>
+
   <section id="tab-alerts" class="tab"><div id="alerts"></div></section>
 
   <!-- MANAGE (HOD and MIS Officer) -->

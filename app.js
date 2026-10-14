@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.24.1';
+const APP_VERSION = '4.25.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1204,6 +1204,7 @@ async function renderReport() {
   $('#chipPending').hidden = !pendingN;
   $$('.chipbtn').forEach((b) => b.classList.toggle('on', b.dataset.filter === state.reportFilter));
   $('#legendHours').textContent = `Late counts - ${r.latePct}%, Excused counts - ${r.excusedPct}%`;
+  $('#legendCat').hidden = !TermReport.catMap(r).size;
   $('#reportLegend').hidden = false;
   drawReportBody();
   if (one) renderSignoff();
@@ -1226,6 +1227,9 @@ async function reportPart(classCode, unitCode) {
     roster: rosterFor(classCode), aliases, rejected,
     lessonHours: src.server?.term?.lessonHours || (!state.reportTerm && state.meta.term?.lessonHours) || (unit.hoursPerWeek || 3) / (unit.lessonsPerWeek || 2),
     latePct: trainer.latePct, excusedPct: trainer.excusedPct, threshold,
+    // CAT weeks have no lessons: the register shows each as one "CAT 1" column, dated from the CAT registers.
+    catWeeks: (state.reportTerm ? src.server?.term?.catWeeks : src.server?.term?.catWeeks || state.meta.term?.catWeeks) || [],
+    assessments: src.assessments,
   });
   return { classCode, letter: streamLetter(classCode) || classCode, src, unit, mine, r };
 }
@@ -1233,7 +1237,12 @@ async function reportPart(classCode, unitCode) {
 function mergeReports(parts) {
   const list = parts.flatMap((p) => p.r.list.map((x) => ({ ...x, stream: p.letter })));
   const withPct = list.filter((x) => x.pct !== null);
-  return { ...parts[0].r, list, overflow: parts.flatMap((p) => p.r.overflow), lessonsHeld: Math.max(...parts.map((p) => p.r.lessonsHeld)),
+  // A CAT week is one column only if no stream had lessons in it; its dates are every stream's.
+  const cats = parts[0].r.cats.map((c) => {
+    const all = parts.map((p) => p.r.cats.find((x) => x.w === c.w)).filter(Boolean);
+    return { ...c, merge: all.length === parts.length && all.every((x) => x.merge), dates: [...new Set(all.flatMap((x) => x.dates))].sort() };
+  });
+  return { ...parts[0].r, list, cats, overflow: parts.flatMap((p) => p.r.overflow), lessonsHeld: Math.max(...parts.map((p) => p.r.lessonsHeld)),
     avg: withPct.length ? Math.round(withPct.reduce((a, x) => a + x.pct, 0) / withPct.length) : 0, below: list.filter((x) => x.below).length };
 }
 
@@ -1288,7 +1297,7 @@ function drawReportBody() {
   list.forEach((x, i) => { x.sn = i + 1; });
   const ord = Tables.sortState('report', 'adm');
   $('#rSort').value = ord.dir === 1 && { adm: 'list', name: 'name', pct: 'pct' }[ord.col] || 'custom';
-  const view = reportView();
+  const view = reportView(), cats = TermReport.catMap(r);
   const tgl = $('#viewToggle');
   tgl.querySelector('use').setAttribute('href', view === 'sheet' ? '#i-rows' : '#i-grid');
   tgl.querySelector('span').textContent = view === 'sheet' ? 'List view' : 'Sheet view';
@@ -1302,7 +1311,7 @@ function drawReportBody() {
   $('#reportBody').innerHTML = warn + (list.length ? `<ul class="card rlist">${Tables.slice('report', list).map((x) => `
     <li class="rrow${x.below ? ' below' : ''}">
       <div class="rinfo"><b>${esc(x.name)}${x.stream ? ` <span class="stag" title="Stream">${esc(x.stream)}</span>` : ''}${x.pending ? ' <span class="ptag">Pending</span>' : ''}</b>
-        <span class="tadm">${esc(x.admNo)}</span>${TermReport.strip(x.cells)}</div>
+        <span class="tadm">${esc(x.admNo)}</span>${TermReport.strip(x.cells, cats)}</div>
       <div class="rpct"><b>${x.pct === null ? '–' : x.pct + '%'}</b><span>${x.actual}/${x.possible} h</span></div>
     </li>`).join('')}</ul>${Tables.bar('report', list)}` : '<p class="empty">Nobody matches this filter.</p>');
 }
@@ -1369,6 +1378,7 @@ function registerExportData() {
     classLabel: rep.streams ? `${cls.misClass ? cls.misClass + ' · ' : ''}${cls.code} streams ${rep.parts.map((p) => p.letter).join(', ')}` : cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
     subject: `${unitCode} - ${unit.name || unitCode}`, misClass: cls.misClass, classCode,
     sheetName: `${cls.code.split(' ').pop()} ${unitCode}`, lecturerComment: lect, hodComment: hod,
+    assessments: rep.parts.flatMap((p) => p.src.assessments.map((a) => (rep.streams ? { ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} · ${p.letter}` } : a))),
   });
 }
 async function exportXlsx() {
@@ -2081,6 +2091,7 @@ function switchTab(name) {
 function applyRoles() {
   const marks = hasRole('TRAINER') || hasRole('HOD');
   $('.tabs button[data-tab="mark"]').hidden = !marks;
+  $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs button[data-tab="alerts"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);

@@ -3,14 +3,16 @@
  *   Scanner.findCorners(canvas)   where the sheet of paper is: 4 points (top-left, top-right, bottom-right, bottom-left)
  *   Scanner.flatten(canvas, quad) straightens the sheet (perspective correction) → new canvas
  *   Scanner.filter(canvas, mode)  'document' (clean white page, crisp ink), 'grey' or 'colour'
- *   Scanner.pdf(pages)            JPEG pages → one PDF (Blob), one page per photo
+ *   Scanner.page(canvas)          a filtered page ready for the PDF: sharp black and white for writing, else a JPEG kept small
+ *   Scanner.pdf(pages)            pages → one PDF (Blob), one page per photo
  */
 'use strict';
 
 const Scanner = (() => {
   // Phones run out of memory with camera-sized images (a 12 MP photo is about 48 MB once decoded) and then the
   // browser closes the page. So photos are decoded already shrunk, and pages are kept at about A4 at 200 dpi.
-  const MAX_SRC = 2400, MAX_OUT = 1800;
+  // The page is kept at up to 2200 px (A4 at about 190 dpi): sharp enough for small handwriting.
+  const MAX_SRC = 2600, MAX_OUT = 2200;
 
   /** A JPEG's width and height from its header (and whether its EXIF turns it on its side), without decoding it. */
   async function jpegSize(file) {
@@ -210,7 +212,54 @@ const Scanner = (() => {
   }
   const toJpeg = (canvas, q = 0.72) => new Promise((res) => canvas.toBlob(res, 'image/jpeg', q));
 
-  /* ---------- a small PDF writer: one JPEG per page, A4 width ---------- */
+  /* ---------- a page for the PDF: clear and small ---------- */
+  const PAGE_BUDGET = 350 * 1024;   // a photo-like page as JPEG: the most it may take
+  const canDeflate = typeof CompressionStream === 'function';
+  const deflate = async (bytes) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  /** Otsu's threshold: the grey level that best splits the page into ink and paper. */
+  function otsu(hist, total) {
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, best = 0, at = 160;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t]; if (!wB) continue;
+      const wF = total - wB; if (!wF) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > best) { best = between; at = t; }
+    }
+    return at;
+  }
+  /**
+   * canvas: a page after filter(…, 'document') (grey, white paper). Writing on paper becomes 1-bit black and white, deflated:
+   * every stroke stays sharp and a page is typically 40–90 KB. A page with shading or a photo on it (many mid greys) is
+   * kept as JPEG instead, at the best quality that fits PAGE_BUDGET. Returns { width, height, bits } or { width, height, jpeg }.
+   */
+  async function page(canvas) {
+    const W = canvas.width, H = canvas.height;
+    const p = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < p.length; i += 4) hist[p[i]]++;
+    // Writing leaves most of the page white with strokes of every grey; a photo or shaded drawing covers much of the page,
+    // mostly in light greys.
+    let marked = 0, light = 0;
+    for (let v = 0; v < 230; v++) { marked += hist[v]; if (v >= 150) light += hist[v]; }
+    const picture = marked > W * H * 0.3 || light > W * H * 0.08;
+    if (canDeflate && !picture) {
+      // Between ink and paper, never so low that faint pencil is lost nor so high that the paper's grain shows.
+      const t = Math.max(150, Math.min(215, otsu(hist, W * H)));
+      const stride = (W + 7) >> 3, bits = new Uint8Array(stride * H).fill(0xff);   // 1 = white
+      for (let y = 0; y < H; y++) {
+        const row = y * stride;
+        for (let x = 0; x < W; x++) if (p[(y * W + x) * 4] < t) bits[row + (x >> 3)] &= ~(0x80 >> (x & 7));
+      }
+      return { width: W, height: H, bits: await deflate(bits) };
+    }
+    let q = 0.8, jpeg = await toJpeg(canvas, q);
+    while (jpeg.size > PAGE_BUDGET && q > 0.5) { q = Math.round((q - 0.1) * 10) / 10; jpeg = await toJpeg(canvas, q); }
+    return { width: W, height: H, jpeg };
+  }
+
+  /* ---------- a small PDF writer: one image per page (JPEG, or 1-bit deflated), A4 width ---------- */
   async function pdf(pages) {
     const enc = new TextEncoder(), parts = [], offsets = [];
     let len = 0;
@@ -222,12 +271,13 @@ const Scanner = (() => {
     obj(1, () => put('<< /Type /Catalog /Pages 2 0 R >>'));
     obj(2, () => put(`<< /Type /Pages /Count ${n} /Kids [${kids.join(' ')}] >>`));
     for (let i = 0; i < n; i++) {
-      const { jpeg, width, height } = pages[i];
-      const bytes = new Uint8Array(await jpeg.arrayBuffer());
+      const { jpeg, bits, width, height } = pages[i];
+      const bytes = bits || new Uint8Array(await jpeg.arrayBuffer());
+      const kind = bits ? '/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /FlateDecode' : '/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode';
       const pw = 595.28, ph = Math.round((pw * height / width) * 100) / 100;
       const page = 3 + i * 3, img = page + 1, content = page + 2;
       obj(page, () => put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im${i} ${img} 0 R >> >> /Contents ${content} 0 R >>`));
-      obj(img, () => { put(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`); put(bytes); put('\nendstream'); });
+      obj(img, () => { put(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ${kind} /Length ${bytes.length} >>\nstream\n`); put(bytes); put('\nendstream'); });
       const cs = `q ${pw} 0 0 ${ph} 0 0 cm /Im${i} Do Q`;
       obj(content, () => put(`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`));
     }
@@ -238,5 +288,5 @@ const Scanner = (() => {
     return new Blob(parts, { type: 'application/pdf' });
   }
 
-  return { load, rotate, findCorners, defaultQuad, flatten, filter, toJpeg, pdf, release, thumb };
+  return { load, rotate, findCorners, defaultQuad, flatten, filter, toJpeg, page, pdf, release, thumb };
 })();

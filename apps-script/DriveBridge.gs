@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.4.3';
+var BRIDGE_VERSION = '1.4.4';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -405,7 +405,10 @@ function writeRegister_(ss, u) {
   v[4][0] = 'GENERAL CLASS REGISTER';
   v[5][0] = 'FILTERED BY: {Class: ' + u.misClass + '}   ·   ' + u.termName + '   ·   updated ' + Utilities.formatDate(new Date(), 'Africa/Nairobi', 'd MMM yyyy HH:mm');
   v[6][0] = '#'; v[6][1] = 'ADMISSION NO'; v[6][2] = 'NAMES';
+  // A CAT week (server 6.9.0): its three columns are one cell down the register, reading "CAT 1" upwards.
+  var cats = (u.catCols || []).filter(function (c) { return c.merge && u.rows.length; });
   for (var w = 0; w < WEEKS; w++) { v[6][3 + w * 3] = 'WK' + (w + 1); for (var k = 0; k < 3; k++) v[7][3 + w * 3 + k] = k + 1; }
+  cats.forEach(function (c) { if (c.date) v[6][3 + c.w * 3] = 'WK' + (c.w + 1) + '\n' + c.date; v[7][3 + c.w * 3] = ''; v[7][4 + c.w * 3] = ''; v[7][5 + c.w * 3] = ''; }); 
   v[6][W - 3] = 'Possible Hrs'; v[6][W - 2] = 'Actual Hrs'; v[6][W - 1] = 'Actual Attendance %';
   u.rows.forEach(function (r, i) {
     var row = v[8 + i];
@@ -419,6 +422,7 @@ function writeRegister_(ss, u) {
   sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart();
   if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
   if (sh.getMaxRows() < last) sh.insertRowsAfter(sh.getMaxRows(), last - sh.getMaxRows());
+  cats.forEach(function (c) { v[8][3 + c.w * 3] = c.label; });
   sh.getRange(1, 1, last, W).setValues(v);
   var L = colName_(W);
   ['C1:' + L + '1', 'D2:U2', 'V2:AA2', 'AB2:' + L + '2', 'D3:U3', 'V3:AA3', 'AB3:' + L + '3', 'D4:' + L + '4', 'A5:' + L + '5', 'A6:' + L + '6',
@@ -427,6 +431,8 @@ function writeRegister_(ss, u) {
   for (w = 0; w < WEEKS; w++) sh.getRange(7, 4 + w * 3, 1, 3).merge();
   ['A7:A8', 'B7:B8', 'C7:C8', colName_(W - 2) + '7:' + colName_(W - 2) + '8', colName_(W - 1) + '7:' + colName_(W - 1) + '8', L + '7:' + L + '8'].forEach(function (a) { sh.getRange(a).merge(); });
   sh.getRange(1, 1, 8, W).setFontWeight('bold').setVerticalAlignment('middle');
+  sh.getRange(7, 4, 1, CELLS).setWrap(true);
+  sh.getRange(9, 4, n, CELLS).setBackground(null).setTextRotation(0);
   sh.getRange('C1').setFontSize(14).setHorizontalAlignment('center');
   sh.getRange('A5:A6').setHorizontalAlignment('center');
   sh.getRange(7, 1, 2 + n, W).setBorder(true, true, true, true, true, true).setHorizontalAlignment('center');
@@ -434,6 +440,10 @@ function writeRegister_(ss, u) {
   sh.getRange(9, W, n, 1).setNumberFormat('0.0%');
   sh.getRange(last - 1, 1, 2, W).setBorder(true, true, true, true, true, true).setVerticalAlignment('top').setWrap(true);
   sh.getRange(last - 1, 1, 2, 3).setFontWeight('bold');
+  cats.forEach(function (c) {
+    sh.getRange(9, 4 + c.w * 3, n, 3).merge().setTextRotation(90).setVerticalAlignment('middle').setHorizontalAlignment('center').setFontWeight('bold').setBackground('#f1f1ee');
+    sh.getRange(8, 4 + c.w * 3, 1, 3).merge();
+  });
   if (fresh) {
     sh.setColumnWidth(1, 32); sh.setColumnWidth(2, 150); sh.setColumnWidth(3, 230);
     sh.setColumnWidths(4, CELLS, 22); sh.setColumnWidths(W - 2, 2, 70); sh.setColumnWidth(W, 90);
@@ -446,16 +456,22 @@ function writeRegister_(ss, u) {
   sh.setConditionalFormatRules(rules);
 }
 
-/** CATs and extra CAT attendance: one column per CAT register. */
+/** CATs and extra CAT attendance: one column per CAT register, with totals. From server 6.9.0 (u.catTable) a student
+ * absent from a CAT who sat its make-up reads "Ab (Supplementary CAT - Sat 19 Mar)". */
 function writeCats_(ss, u) {
   var name = tabName_(u, ' CATs'), sh = ss.getSheetByName(name) || ss.insertSheet(name);
-  var head = ['#', 'ADMISSION NO', 'NAMES'].concat(u.cats.map(function (c) { return c.title + '\n' + c.date; }));
+  var t = u.catTable || { cols: u.cats.map(function (c) { return { label: c.title, date: c.date }; }),
+    vals: u.rows.map(function (r) { return u.cats.map(function (c) { return c.marks[r.admNo] || ''; }); }), totals: [] };
+  var head = ['#', 'ADMISSION NO', 'NAMES'].concat(t.cols.map(function (c) { return c.label + '\n' + c.date; }));
   var v = [[u.unitCode + ' - ' + u.unitName + ' · ' + u.misClass + ' · CAT attendance (not counted in the class register hours)'].concat(head.slice(1).map(function () { return ''; })), head];
-  u.rows.forEach(function (r, i) { v.push([i + 1, r.admNo, r.name].concat(u.cats.map(function (c) { return c.marks[r.admNo] || ''; }))); });
+  u.rows.forEach(function (r, i) { v.push([i + 1, r.admNo, r.name].concat(t.vals[i] || [])); });
+  t.totals.forEach(function (x) { v.push([x[0], '', ''].concat(x[1])); });
   sh.clear();
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart();
   sh.getRange(1, 1, v.length, head.length).setValues(v);
   sh.getRange(1, 1, 2, head.length).setFontWeight('bold');
   sh.getRange(2, 1, v.length - 1, head.length).setBorder(true, true, true, true, true, true).setHorizontalAlignment('center').setWrap(true);
+  t.totals.forEach(function (x, i) { var r = v.length - t.totals.length + 1 + i; sh.getRange(r, 1, 1, 3).merge().setFontWeight('bold').setHorizontalAlignment('left'); });
   sh.setFrozenRows(2);
 }
 

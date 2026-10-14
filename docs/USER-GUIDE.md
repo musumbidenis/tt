@@ -100,9 +100,16 @@ There is a separate **demo copy** of both apps for training sessions. It works e
 | **Att Register(s)** | Trainers and HODs | Choose a lesson on the weekly timetable and mark the register. |
 | **Report(s)** | Everyone | Term registers (Attendance) and marksheets (Marks). |
 | **POE** | Everyone | Students' evidence: review, approve, return, receive. |
+| **Tools** | Trainers and HODs | Professional tools: learning plans, session plans and assessment tools. **Coming soon.** |
 | **Absences** | HOD and MIS Officer | Students who have missed more lessons than the limit you set. |
 | **Manage** | HOD and MIS Officer | Approvals, the department overview, term, loading, class lists, staff and Google Drive. |
 | **Profile** | Everyone | Your PIN, how attendance is counted, class lists, backups. |
+
+The **Tools** tab shows what is coming: learning plans, session plans and assessment tools, made from your loading and timetable and kept in your Drive folder. They cannot be used yet.
+
+<p align="center">
+<img src="images/tools.png" width="280" alt="The Tools tab: three professional tools, coming soon">
+</p>
 
 A **red dot** on a tab shows how many things are waiting for you (evidence to review, students over the absence limit, requests in Manage).
 
@@ -279,8 +286,9 @@ Open **Report(s)** and choose **Attendance** at the top.
 ### 5.2 What it shows
 
 - **Four cards**: lessons recorded, number of trainees, average attendance, and how many are below the minimum.
-- **List view** (phones): one row per student with a strip of the 12 weeks × 3 lessons (green present, amber late, red absent, blue excused), their percentage and their Actual/Possible hours.
+- **List view** (phones): one row per student with a strip of the 12 weeks × 3 lessons (green present, amber late, red absent, blue excused), their percentage and their Actual/Possible hours. A CAT week is one striped bar.
 - **Sheet view** (tablets and computers, or a phone turned sideways): the full grid, laid out like the Excel class register. Tap a heading (Admission no, Name, Possible hrs, Actual hrs, %) to sort.
+- **CAT weeks**: a CAT week has no lessons, so its three cells are joined into one column down the whole register, reading **CAT 1** (or CAT 2) upwards, as on the paper register. The CAT's date is at the top. If lessons were marked in a CAT week anyway, that week shows them instead.
 - **Filters**: **All**, **Below 75%**, **Pending**.
 - **Sort**: by admission number (the default), by name, or lowest % first.
 - **Legend**: the colours, and how Late and Excused are counted, for example *Late counts - 50%, Excused counts - 100%*.
@@ -297,12 +305,16 @@ Open **Report(s)** and choose **Attendance** at the top.
 
 CAT and extra CAT attendance are listed in their own card under the term register. They do not count in the register's hours or percentage. Tap one to open it.
 
+In the Excel register and the printed copy they get their own **CATs** sheet (a page of its own when printed): one column for each CAT and extra CAT attendance, with its date, and for each student **P**, **Ab** (absent), **L** or **E**. A student who missed a CAT and sat its make-up shows, under the CAT, as **Ab (Supplementary CAT - Sat 19 Mar)**. Totals at the foot give how many sat, how many were absent, and how many of those sat the supplementary.
+
+An extra CAT attendance makes up the CAT its title names (for example *CAT 1 make-up*); if the title names none, it makes up the latest CAT before it. So give make-ups a title that names the CAT.
+
 ### 5.4 Export and print
 
 | Button | Result |
 |---|---|
-| **Export Excel register** | RVNP's General Class Register template, filled in: crest and title block, lecturer, class, level, duration, subject, WK1–WK12, Possible and Actual hours, the % formula, and the lecturer's and HOD's comments. Pending students are tagged *(pending)*. |
-| **Print or save PDF** | The same layout, to print or save as a PDF from the print dialog. |
+| **Export Excel register** | RVNP's General Class Register template, filled in: crest and title block, lecturer, class, level, duration, subject, WK1–WK12 (CAT weeks as one merged **CAT 1** column with the date in the heading), Possible and Actual hours, the % formula, and the lecturer's and HOD's comments. Pending students are tagged *(pending)*. A second sheet, **CATs**, has the CAT attendance ([5.3](#53-cat-registers)). |
+| **Print or save PDF** | The same layout, to print or save as a PDF from the print dialog, with the CAT attendance on a page of its own. |
 
 ### 5.5 Submit to the HOD
 
@@ -650,6 +662,8 @@ On the **Evidence (POE)** tab:
 4. Tap **Save and send**. The PDF is saved on your device first, then saved in your Google Drive and shared with your trainer when you have internet.
    - Google asks you to sign in again after about an hour. If a document says **Sign in to Google to send it**, tap **Sign in to Google and send**.
    - Do not change or delete your POE files in Drive: your trainer is told if a file changed after it was sent.
+
+**Clear and small.** Pages of writing are saved in sharp black and white at a higher resolution, so every stroke is clear and a page is usually under 100 KB (a 10-page CAT is about 1 MB). A page with a photo or shading on it is kept in grey at up to about 350 KB. Take pages in good light and hold the page flat, so faint pencil comes out too.
 
 Files can be up to 20 MB. If the camera inside the app cannot start on a device, the app says so and the next tap on **Take photo of a page** uses the phone's own camera app instead.
 

@@ -504,3 +504,10 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - The bridge runs in the app's Google Cloud project and lists its permissions, adding managing Google Groups and sending email.
 - **`testGroups()`** (new `Groups.gs`) checks that the bridge can make a group, set it to owners-only posting, add and remove a member, email it and delete it, without any admin role. It is the first step towards class, trainer, class-rep and panel email groups kept in step with the app. Setup: TECHNICAL 4.6.
+
+## Changes in 4.25 (server 6.9.0, bridge 1.4.4)
+
+- **CAT weeks in the term register.** A CAT week's three cells are one column down the whole register, reading **CAT 1** upwards with the CAT's date at the top: in Report(s) (sheet and list views), the Excel register, the printed copy and the Drive copy.
+- **CATs sheet.** The Excel register gets a second sheet, and the printed copy a second page, with a column for each CAT and extra CAT attendance: P, Ab, L or E per student, totals, and **Ab (Supplementary CAT - Sat 19 Mar)** for a student who missed a CAT and sat its make-up.
+- **Clearer, smaller scans.** Pages of writing are saved as sharp black and white at a higher resolution (usually under 100 KB a page instead of about 300 KB); pages with photos or shading stay JPEG, up to 350 KB.
+- **Tools tab** for trainers and HODs: learning plans, session plans and assessment tools, marked *coming soon*.

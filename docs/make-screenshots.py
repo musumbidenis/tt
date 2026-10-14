@@ -243,6 +243,9 @@ def staff(pw, browser, pdf64):
     pg.wait_for_selector('#m-staff details.fold', timeout=15000)
     pg.click('details.fold[data-sec=staff] > summary')
     shot(pg, 'manage-staff.png', '#m-staff')
+    # Tools (coming soon)
+    pg.click('.tabs button[data-tab=tools]'); pg.wait_for_timeout(400)
+    shot(pg, 'tools.png')
     # Profile
     pg.click('.tabs button[data-tab=me]'); pg.wait_for_timeout(500)
     shot(pg, 'profile.png')

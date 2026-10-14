@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.24.1**, server (Worker) **6.8.0**, database schema **11**, Drive bridge **1.4.3**.
+Describes app **4.25.0**, server (Worker) **6.9.0**, database schema **11**, Drive bridge **1.4.4**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -539,7 +539,8 @@ Both directions are signed with `BRIDGE_SECRET` (HMAC-SHA-256, rejected if more 
 
 **Scanning on the device** (`scanner.js`, `poe-student.js`) is built to fit in a phone's memory, because a phone that runs out closes the browser and the app reloads:
 - the JPEG header is read first (size and EXIF orientation) and the photo is decoded already shrunk to at most 2400 px on its long side (`createImageBitmap` with `resizeWidth`); the decoded bitmap is closed at once;
-- straightening reads only the part of the photo the page is in, and the page is kept at most 1800 px (about A4 at 200 dpi), saved as JPEG with a 320 px thumbnail beside it (`t-<page>` attachment), which is what the list of pages shows;
+- straightening reads only the part of the photo the page is in, and the page is kept at most 2200 px (about A4 at 190 dpi; decoded at up to 2600 px), saved as JPEG with a 320 px thumbnail beside it (`t-<page>` attachment), which is what the list of pages shows;
+- **the PDF** (from 4.25): each page goes through the Document filter, then `Scanner.page()` looks at its grey levels. Writing (under 30% of the page marked and under 8% light grey) becomes a **1-bit image** at the threshold Otsu's method finds between ink and paper (kept between 150 and 215, so faint pencil stays and paper grain does not), deflated with `CompressionStream('deflate')` and embedded as `/DeviceGray /BitsPerComponent 1 /FlateDecode`: typically 30–90 KB a page and sharper than JPEG. A page with photos or shading stays **JPEG**, from quality 0.8 down to 0.5 until it fits 350 KB. Browsers without `CompressionStream` get JPEG for every page;
 - every canvas is emptied (`Scanner.release`) as soon as it is used, and the PDF is built one page at a time;
 - pages are taken with a **camera inside the page** (`getUserMedia`, the rear camera at up to 2560×1920; `ImageCapture.takePhoto()` where the browser has it, else the video frame). Opening the phone's camera app through `<input capture>` sends the browser to the background, where Android often closes it ("unable to complete previous operation due to low memory") and the photo is lost. The camera is stopped while a page is adjusted and reopened for the next page. If it cannot start, the device falls back to the camera app on the next tap;
 - the student app does not reload for a new version while the crop screen is open, a page is being saved, or the camera may be up (`POE.busy()`); it waits until the student is idle.
@@ -567,6 +568,14 @@ There is no Shared Drive, so the archive lives in the **backup account's own Dri
 - **Space**: with pooled Workspace storage, Drive's `about.storageQuota` gives the whole organisation's usage and limit, so the bridge reports the account's own `DriveApp.getStorageUsed()` and the limit is `meta.backup_quota_gb` (Space (GB) in Manage → Google Drive, default 50), sent back with each job. The Worker marks the level `warn` from 80% (a banner and a Manage badge for the HOD and MIS Officer) and stops handing out work at 95%; the bridge also stops before a copy would cross 95%.
 - **Changing account**: copies are made by the bridge, so a new backup account means deploying the bridge as that account (4.3) and setting the Backup account to it. If the two differ, the Worker refuses to hand out work and Manage says so.
 - `meta.backup_report` keeps the last start and finish, the counts, storage and any error. Per document: `archived_at`, `archive_id`, `archive_tries`, `archive_error`.
+
+### 9.6c CAT weeks in the term register (from 4.25, server 6.9.0, bridge 1.4.4)
+
+- `TermReport.build` takes the term's `catWeeks` and the CAT and extra registers, and returns `cats: [{ w, label: 'CAT n', dates, merge }]`. `merge` is false when lessons were marked in that week anyway (they are shown instead). With all streams together, a week is merged only if it is in every stream.
+- Sheet view and print draw a merged week as one cell (`colspan 3`, `rowspan` = students) with the label in `writing-mode: vertical-rl` turned 180°, and the CAT date in the second heading row. The list view's strip shows one striped bar.
+- The Excel export merges `<col>9:<col+2><last>` for each CAT week, adds a cell format with `textRotation="90"` to `styles.xml`, and puts the date under the week label. `TermReport.catTable()` adds the **CATs** sheet (`sheet2.xml`, with its workbook, relationship, content type and `app.xml` entries).
+- An extra CAT attendance makes up the CAT its title names (`CAT 1`), else the latest CAT on or before its date. A student absent (A) from a CAT and present or late at its make-up reads `Ab (Supplementary CAT - Sat 19 Mar)`.
+- The Drive copy: `bridgeFeed` sends `catCols` and `catTable` per class-unit (worker `catColumns()`, `catTable()`), and the bridge merges and rotates the CAT weeks and writes the CAT tab with totals.
 
 ### 9.7 Keeping Drive up to date
 

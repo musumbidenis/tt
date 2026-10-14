@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.8.0';
+export const VERSION = '6.9.0';
 const SCHEMA_VERSION = '11';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -1549,17 +1549,55 @@ async function bridgeFeed(env, q) {
     const h = term.lessonHours || (Number(u.hours_per_week) || 3) / (Number(u.lessons_per_week) || 2);
     const so = signoffs.find((x) => x.class_code === u.class_code && x.unit_code === u.unit_code);
     const lessons = all.filter((l) => l.kind === 'lesson');
+    const regRows = buildRegister({ weeks, lessons, roster, alias, rejected, h, latePct: pct.late_pct ?? 50, excPct: pct.excused_pct ?? 100 });
+    const catItems = all.filter((l) => l.kind !== 'lesson');
     out.units.push({
       key: unitKey(u), trainerCode: u.trainer_code, trainerName: u.trainer_name, classCode: u.class_code, unitCode: u.unit_code, unitName: u.unit_name,
       misClass: (classes.find((c) => c.code === u.class_code) || {}).mis_class || u.class_code, level: levelOf(u.class_code), termName: term.name, duration: term.duration || '',
       weeks, lessonHours: h, lessonsHeld: lessons.length,
-      rows: buildRegister({ weeks, lessons, roster, alias, rejected, h, latePct: pct.late_pct ?? 50, excPct: pct.excused_pct ?? 100 }),
+      rows: regRows, catCols: catColumns(term, weeks, all), catTable: catItems.length ? catTable(regRows, catItems) : null,
       lecturerComment: so?.lecturer_comment || '', hodComment: so?.hod_comment || '', signoff: so?.status || '',
       cats: all.filter((l) => l.kind !== 'lesson').sort((a, c) => a.date.localeCompare(c.date)).map((l) => ({ title: l.title || (l.kind === 'cat' ? 'CAT' : 'Extra'), date: l.date, kind: l.kind, marks: l.marks })),
       marksheet: marksheetOf(u, roster, trainees, markRows, classes, term),
     });
   });
   return out;
+}
+
+const shortDate = (iso) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+/** The CAT weeks of the term register: each is one merged "CAT 1" column, unless lessons were marked in that week anyway. */
+function catColumns(term, weeks, all) {
+  return (term.catWeeks || []).filter((n) => n >= 1 && n <= weeks.length).map((n, i) => {
+    const inWeek = all.filter((l) => mondayOf(l.date) === weeks[n - 1]);
+    return { w: n - 1, label: `CAT ${i + 1}`, merge: !inWeek.some((l) => l.kind === 'lesson'),
+      date: [...new Set(inWeek.filter((l) => l.kind === 'cat').map((l) => l.date))].sort().map(shortDate).join(', ') };
+  });
+}
+/** The CATs tab, as report.js catTable(): a student absent from a CAT who sat the extra attendance making it up reads
+ * "Ab (Supplementary CAT - Sat 19 Mar)"; an extra attendance makes up the CAT its title names, else the latest CAT before it. */
+export function catTable(rows, items) {
+  const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date));
+  const cats = sorted.filter((a) => a.kind === 'cat'), makesUp = new Map();
+  for (const x of sorted.filter((a) => a.kind === 'extra')) {
+    const m = /CAT\s*(\d+)/i.exec(x.title || '');
+    const t = (m && cats.find((c) => new RegExp(`CAT\\s*${m[1]}\\b`, 'i').test(c.title || ''))) || [...cats].reverse().find((c) => c.date <= x.date);
+    if (t) makesUp.set(x, t);
+  }
+  const sat = (v) => v === 'P' || v === 'L';
+  const out = rows.map((r) => sorted.map((a) => {
+    const v = a.marks[r.admNo] || '';
+    if (a.kind === 'cat' && v === 'A') {
+      const sup = sorted.find((x) => makesUp.get(x) === a && sat(x.marks[r.admNo]));
+      if (sup) return `Ab (Supplementary CAT - Sat ${shortDate(sup.date)})`;
+    }
+    return v === 'A' ? 'Ab' : v;
+  }));
+  const count = (k, test) => out.filter((v) => test(v[k])).length;
+  return {
+    cols: sorted.map((a) => ({ label: a.title || (a.kind === 'cat' ? 'CAT' : 'Extra CAT attendance'), date: shortDate(a.date), kind: a.kind })), vals: out,
+    totals: [['Sat', sorted.map((a, k) => count(k, sat))], ['Absent', sorted.map((a, k) => count(k, (v) => v.startsWith('Ab')))],
+      ['Absent, sat the supplementary', sorted.map((a, k) => (a.kind === 'cat' ? count(k, (v) => v.startsWith('Ab (')) : ''))]],
+  };
 }
 
 /** The marksheet for one class-unit, students in admission number order (as the register). */

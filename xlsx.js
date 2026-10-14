@@ -1,6 +1,7 @@
 /* Small Excel helpers built on JSZip:
  *   Xlsx.open(data)          read the sheets of an .xlsx / .xlsm file (values only)
- *   Xlsx.registerFile(t, d)  fill the class register template (templates/class-register.xlsx)
+ *   Xlsx.registerFile(t, d)  fill the class register template (templates/class-register.xlsx), with CAT weeks as one
+ *                            merged column reading "CAT 1" upwards, and a CATs sheet when there are CATs
  *   Xlsx.marksheetFile(t, d) fill the continuous assessment marksheet (templates/marksheet.xlsx)
  * The template keeps RVNP's layout exactly: crest, title block, 12 week blocks of 3 lessons,
  * Possible / Actual hours, the % formula, landscape A4 print setup and the comment rows. */
@@ -113,7 +114,8 @@ const Xlsx = (() => {
   /**
    * d = { lecturer, duration, classLabel, level, subject, filter, weekLabels[10], sheetName,
    *       students: [{ admNo, name, cells: [36 × 'P'|'A'|'L'|'E'|''], possible, actual }],
-   *       lecturerComment, hodComment }
+   *       lecturerComment, hodComment,
+   *       cats: [{ w (0-11), label: 'CAT 1', date }], catSheet: TermReport.catTable() result or null }
    */
   async function registerFile(templateData, d) {
     const zip = await JSZip.loadAsync(templateData);
@@ -131,7 +133,11 @@ const Xlsx = (() => {
     setCell(doc, byNum['3'], 'AB3', d.level || '');
     setCell(doc, byNum['4'], 'D4', d.subject || '');
     setCell(doc, byNum['6'], 'A6', d.filter || '');
-    for (let w = 0; w < 12; w++) setCell(doc, byNum['7'], colName(4 + w * 3) + '7', (d.weekLabels || [])[w] || `WK${w + 1}`);
+    const cats = new Map((d.cats || []).map((c) => [c.w, c]));
+    for (let w = 0; w < 12; w++) {
+      const label = (d.weekLabels || [])[w] || `WK${w + 1}`;
+      setCell(doc, byNum['7'], colName(4 + w * 3) + '7', cats.get(w)?.date ? `${label}\n${cats.get(w).date}` : label);
+    }
 
     const list = d.students.length ? d.students : [{ admNo: '', name: '', cells: [], possible: '', actual: '' }];
     list.forEach((s, i) => {
@@ -161,8 +167,17 @@ const Xlsx = (() => {
     for (const m of kids(merges, 'mergeCell')) {
       if (Number((m.getAttribute('ref').match(/\d+/) || ['0'])[0]) >= 9) merges.removeChild(m);
     }
-    for (const ref of [`A${lr}:C${lr}`, `D${lr}:AP${lr}`, `A${hr}:C${hr}`, `D${hr}:AP${hr}`]) {
-      const m = doc.createElementNS(NS, 'mergeCell'); m.setAttribute('ref', ref); merges.appendChild(m);
+    const addMerge = (ref) => { const m = doc.createElementNS(NS, 'mergeCell'); m.setAttribute('ref', ref); merges.appendChild(m); };
+    for (const ref of [`A${lr}:C${lr}`, `D${lr}:AP${lr}`, `A${hr}:C${hr}`, `D${hr}:AP${hr}`]) addMerge(ref);
+    // A CAT week: its three columns, all the student rows, as one cell reading "CAT 1" upwards.
+    if (d.students.length && cats.size) {
+      const xf = await addStyle(zip, '<xf numFmtId="0" fontId="3" fillId="0" borderId="4" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" textRotation="90"/></xf>');
+      const first = kids(sheetData, 'row').find((r) => r.getAttribute('r') === '9');
+      for (const c of cats.values()) {
+        const a = colName(4 + c.w * 3), b = colName(6 + c.w * 3);
+        setCell(doc, first, a + '9', c.label).setAttribute('s', String(xf));
+        addMerge(`${a}9:${b}${8 + d.students.length}`);
+      }
     }
     merges.setAttribute('count', String(kids(merges, 'mergeCell').length));
     doc.getElementsByTagName('dimension')[0]?.setAttribute('ref', `A1:AP${hr}`);
@@ -175,7 +190,61 @@ const Xlsx = (() => {
     zip.file('xl/workbook.xml', wb);
     const app = zip.file('docProps/app.xml');
     if (app) zip.file('docProps/app.xml', (await app.async('string')).replace('<vt:lpstr>Register</vt:lpstr>', `<vt:lpstr>${xmlEsc(name)}</vt:lpstr>`));
+    if (d.catSheet?.cols.length) await addCatSheet(zip, d);
     return zip.generateAsync({ type: 'blob', mimeType: MIME, compression: 'DEFLATE' });
+  }
+
+  /** Adds a cell format to the workbook's styles and gives its index. */
+  async function addStyle(zip, xfXml) {
+    let st = await zip.file('xl/styles.xml').async('string');
+    const m = /<cellXfs count="(\d+)">/.exec(st);
+    const n = Number(m[1]);
+    st = st.replace(m[0], `<cellXfs count="${n + 1}">`).replace('</cellXfs>', xfXml + '</cellXfs>');
+    zip.file('xl/styles.xml', st);
+    return n;
+  }
+
+  /** The CATs sheet: a column for each CAT and extra CAT attendance, its date, P / Ab / L / E per student, and totals. */
+  async function addCatSheet(zip, d) {
+    const cs = d.catSheet, X = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Template formats: 22 bold title, 17 bold boxed heading (wrapped), 10 boxed centred, 11 boxed left, 3 boxed left (bold row label).
+    const cell = (ref, v, s) => (typeof v === 'number' ? `<c r="${ref}" s="${s}"><v>${v}</v></c>`
+      : `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`);
+    const last = colName(3 + cs.cols.length), rows = [];
+    rows.push(`<row r="1" ht="21" customHeight="1">${cell('A1', `CAT ATTENDANCE · ${d.subject || ''}`, 22)}</row>`);
+    rows.push(`<row r="2">${cell('A2', d.classLabel || '', 22)}</row>`);
+    rows.push(`<row r="4" ht="45" customHeight="1">${cell('A4', '#', 17)}${cell('B4', 'ADMISSION NO', 17)}${cell('C4', 'NAMES', 17)}${cs.cols.map((c, k) => cell(colName(4 + k) + '4', `${c.label}\n${c.date}`, 17)).join('')}</row>`);
+    cs.rows.forEach((r, i) => {
+      const n = 5 + i;
+      rows.push(`<row r="${n}">${cell('A' + n, i + 1, 10)}${cell('B' + n, r.admNo, 11)}${cell('C' + n, r.name, 11)}${r.vals.map((v, k) => cell(colName(4 + k) + n, v, 10)).join('')}</row>`);
+    });
+    const t0 = 5 + cs.rows.length;
+    cs.totals.forEach((t, i) => {
+      const n = t0 + i;
+      rows.push(`<row r="${n}">${cell('A' + n, t.label, 3)}${cell('B' + n, '', 3)}${cell('C' + n, '', 3)}${t.vals.map((v, k) => cell(colName(4 + k) + n, v, 10)).join('')}</row>`);
+    });
+    const end = t0 + cs.totals.length - 1;
+    const wide = cs.rows.some((r) => r.vals.some((v) => String(v).length > 4));
+    const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+      + `<dimension ref="A1:${last}${end}"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
+      + `<sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="5" customWidth="1"/><col min="2" max="2" width="22" customWidth="1"/><col min="3" max="3" width="34" customWidth="1"/>`
+      + `<col min="4" max="${3 + cs.cols.length}" width="${wide ? 22 : 14}" customWidth="1"/></cols>`
+      + `<sheetData>${rows.join('')}</sheetData>`
+      + `<mergeCells count="${2 + cs.totals.length}"><mergeCell ref="A1:${last}1"/><mergeCell ref="A2:${last}2"/>${cs.totals.map((t, i) => `<mergeCell ref="A${t0 + i}:C${t0 + i}"/>`).join('')}</mergeCells>`
+      + `<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="${cs.cols.length > 4 ? 'landscape' : 'portrait'}" fitToHeight="0"/></worksheet>`;
+    zip.file('xl/worksheets/sheet2.xml', sheet);
+    const ct = await zip.file('[Content_Types].xml').async('string');
+    zip.file('[Content_Types].xml', ct.replace('</Types>', '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'));
+    const rels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    zip.file('xl/_rels/workbook.xml.rels', rels.replace('</Relationships>', '<Relationship Id="rIdCats" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>'));
+    const wb = await zip.file('xl/workbook.xml').async('string');
+    zip.file('xl/workbook.xml', wb.replace('</sheets>', '<sheet name="CATs" sheetId="2" r:id="rIdCats"/></sheets>'));
+    const app = zip.file('docProps/app.xml');
+    if (app) {
+      zip.file('docProps/app.xml', (await app.async('string'))
+        .replace('<vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4>', '<vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>2</vt:i4>')
+        .replace(/<TitlesOfParts><vt:vector size="(\d+)" baseType="lpstr">((?:<vt:lpstr>[^<]*<\/vt:lpstr>))/, (m, n, firstName) => `<TitlesOfParts><vt:vector size="${Number(n) + 1}" baseType="lpstr">${firstName}<vt:lpstr>CATs</vt:lpstr>`));
+    }
   }
 
   /**

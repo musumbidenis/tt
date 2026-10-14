@@ -212,6 +212,13 @@ label.file input { padding: .45rem; }
 .tt-cell.cont { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -4px; }
 .tt-lunch { display: flex; align-items: center; justify-content: center; border-left: 1px dashed var(--line); border-right: 1px dashed var(--line); }
 .tt-lunch span { writing-mode: vertical-rl; transform: rotate(180deg); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+/* Tools: professional tools, coming soon */
+.tool-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+@media (min-width: 760px) { .tool-cards { grid-template-columns: repeat(3, 1fr); } }
+.tool-card { position: relative; margin: 0; }
+.tool-card h3 { margin: .1rem 0 .35rem; font: 600 1.0625rem var(--display); }
+.tool-card p { margin: 0; color: var(--muted); font-size: .9375rem; line-height: 1.45; }
+.tool-card .soon { display: inline-block; margin-bottom: .45rem; font-size: .75rem; font-weight: 700; letter-spacing: .02em; padding: .15rem .55rem; border-radius: 99px; background: var(--e-soft); color: var(--e); }
 .empty-state { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: .3rem; text-align: center; padding: 2rem 1rem; color: var(--muted); background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); }
 .empty-state .i { width: 2rem; height: 2rem; color: var(--p); }
 .empty-state b { color: var(--ink); font: 600 1.05rem var(--display); }
@@ -508,6 +515,9 @@ details.advanced[open] summary { margin-bottom: .75rem; }
 .strip i.L, .legend i.L { background: var(--l); }
 .strip i.A, .legend i.A { background: var(--a); }
 .strip i.E, .legend i.E { background: var(--e); }
+.strip i.cat { width: 20px; background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--line-strong); }
+@media (min-width: 400px) { .strip i.cat { width: 23px; } }
+.legend i.cat { width: 14px; background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .legend { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-size: .8125rem; color: var(--muted); margin: -.25rem 0 1rem; }
 .legend span { display: inline-flex; align-items: center; gap: .35rem; }
 .sheet-wrap { padding: 0; overflow: auto; max-height: 75vh; }
@@ -527,6 +537,10 @@ details.advanced[open] summary { margin-bottom: .75rem; }
 .sheet-table td.c.L { color: var(--l); background: var(--l-soft); } .sheet-table td.c.E { color: var(--e); background: var(--e-soft); }
 .sheet-table .num { text-align: right; min-width: 4rem; }
 .sheet-table tr.below td.pct { color: var(--a); font-weight: 700; }
+/* A CAT week: one merged column down the whole register, reading upwards as on the paper register. */
+.sheet-table td.catcol { text-align: center; vertical-align: top; background: var(--sunk); padding: 1rem 0; min-width: 4.8rem; }
+.sheet-table td.catcol span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font: 700 .8125rem var(--display); letter-spacing: .12em; color: var(--ink-2); }
+.sheet-table th.sub.cat { font-size: .625rem; white-space: nowrap; }
 @media (max-width: 560px) { .sheet-table .adm { display: none; } .sheet-table .nm { left: 2.25rem; min-width: 9rem; } }
 .signoff .so-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }
 .signoff h2 { margin: 0; }
@@ -593,7 +607,7 @@ fieldset .more[open] summary { flex-basis: 100%; }
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
   body.print-register .print-area { display: block !important; padding: 0 !important; }
-  .reg-print { font: 8.5pt "Times New Roman", serif; color: #000; }
+  .reg-print, .rp-cats { font: 8.5pt "Times New Roman", serif; color: #000; }
   .rp-head { display: flex; gap: 6mm; align-items: flex-start; }
   .rp-head img { width: 26mm; height: auto; }
   .rp-title { flex: 1; }
@@ -610,6 +624,15 @@ fieldset .more[open] summary { flex-basis: 100%; }
   .rp-grid .e { border-right-width: .5mm; }
   .rp-grid thead { display: table-header-group; }
   .rp-grid tr { break-inside: avoid; }
+  .rp-grid tbody tr:first-child { break-inside: auto; }   /* it holds the CAT columns, which run down every row: let the grid break across pages */
+  .rp-grid td.cat { vertical-align: top; padding: 14mm 0 0; }
+  .rp-grid td.cat span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; letter-spacing: .15em; }
+  .rp-grid th.catd { font-size: 6.5pt; font-weight: 400; }
+  .rp-cats { break-before: page; }
+  .rp-cats h2 { font-size: 12pt; margin: 0 0 1mm; text-align: center; }
+  .rp-cats p { text-align: center; margin: 0 0 2mm; }
+  .rp-cat td { white-space: nowrap; }
+  .rp-cat tr.tot td { font-weight: 700; }
   .rp-comments th { width: 40mm; text-align: left; height: 10mm; }
   .rp-comments td { text-align: left; }
 }
