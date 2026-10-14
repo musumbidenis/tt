@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.6.0';
+var BRIDGE_VERSION = '1.7.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -65,6 +65,7 @@ function doPost(e) {
     if (b.action === 'upload') return json_(upload_(b));
     if (b.action === 'file') return json_(viewFile_(b.ticket));
     if (b.action === 'nudge') return json_(nudge_(b));
+    if (b.action === 'bulk') return json_(bulkSave_(b));
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -169,6 +170,22 @@ function upload_(b) {
     file.setDescription('POE evidence ' + t.item + ' for ' + t.unit + ', uploaded from the student app ' + new Date().toISOString());
     return { ok: true, fileId: file.getId(), fileName: name, version: v, sig: hmacHex_('done|' + t.id + '|' + file.getId() + '|' + v + '|' + name) };
   } finally { lock.releaseLock(); }
+}
+/** Reports in bulk (server 7.7.0): the app's Excel and PDF files go into Reports / <run> / <folder>, next to the Trainers
+ * folder. A file with the same name in that folder is replaced. */
+function bulkSave_(b) {
+  var t = readTicket_(b.ticket, 'bulk');
+  var trainers = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('TRAINERS_FOLDER_ID'));
+  var parents = trainers.getParents(), base = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  var run = childFolder_(childFolder_(base, 'Reports'), t.run);
+  var folder = b.folder ? childFolder_(run, String(b.folder).replace(/[\/]+/g, '-').slice(0, 90)) : run;
+  (b.files || []).slice(0, 12).forEach(function (f) {
+    var name = String(f.name || 'file').slice(0, 120);
+    var old = folder.getFilesByName(name);
+    while (old.hasNext()) old.next().setTrashed(true);
+    folder.createFile(Utilities.newBlob(Utilities.base64Decode(f.data), f.mime || 'application/octet-stream', name)).setDescription('Made in bulk by ' + (t.by || 'the app') + ' ' + new Date().toISOString());
+  });
+  return { ok: true, url: run.getUrl(), folderUrl: folder.getUrl() };
 }
 function viewFile_(ticket) {
   try {

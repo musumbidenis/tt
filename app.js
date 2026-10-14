@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.33.1';
+const APP_VERSION = '4.34.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1452,13 +1452,18 @@ function approvalBlock(a) {
     ${qr ? `<div class="approval-qr">${qr}</div>` : ''}</div>`;
 }
 
-function registerExportData() {
-  const rep = state.report;
+/** One class and unit's term register, built like the Reports screen (for reports made in bulk). */
+async function reportFor(classCode, unitCode) {
+  const p = await reportPart(classCode, unitCode);
+  const cls = state.classes.find((c) => c.code === classCode) || { code: classCode };
+  return { r: p.r, unit: p.unit, cls, classCode, unitCode, mine: false, signoff: p.src.server?.signoff || null, term: p.src.server?.term || state.meta.term, parts: [p], streams: null };
+}
+function registerExportData(rep = state.report) {
   const { r, unit, cls, classCode, unitCode, signoff, term } = rep;
   // All streams together: one register for the MIS class, with every stream's lecturer.
   const lecturers = rep.streams ? [...new Set(rep.parts.map((p) => p.unit.trainerName).filter(Boolean))].join(' / ') : '';
   const so = signoff;
-  const lect = (rep.mine ? $('#soComment')?.value.trim() : '') || so?.lecturerComment || '';
+  const lect = (rep.mine && rep === state.report ? $('#soComment')?.value.trim() : '') || so?.lecturerComment || '';
   const hod = so?.status === 'approved' ? [so.hodComment, `APPROVED by ${so.hodName} (HOD), ${fmtShort(so.decidedAt)}`, so.approvalRef && `Ref ${so.approvalRef} - check at ${checkUrl(so.approvalRef)}`].filter(Boolean).join(' - ') : (so?.hodComment || '');
   return TermReport.exportData(r, {
     lecturer: lecturers || unit.trainerName || (rep.mine ? trainerLabel() : ''), duration: term?.duration || '',
@@ -1804,6 +1809,7 @@ async function pullRoster({ silent = false } = {}) {
     renderSheetsStatus();
     // Manage drawn before the lists arrived: its class and unit choices fill in now.
     if ($('#cdClass') && !$('#cdClass').value) window.Admin?.redrawCandidates?.();
+    if ($('#m-bulk') && !$('#m-bulk [data-bkpick]')) window.Bulk?.redraw();
     if (!silent) toast(`Class lists saved: ${markClasses().length} of your classes, ${r.trainees} students — you can now mark offline`, 'ok');
   } catch (e) {
     showSyncStatus('Class list download failed: ' + e.message);

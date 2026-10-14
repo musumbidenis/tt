@@ -234,7 +234,7 @@ const Scanner = (() => {
   }
 
   /* ---------- a small PDF writer: one image per page (JPEG, or 1-bit deflated), A4 width ---------- */
-  async function pdf(pages) {
+  async function pdf(pages, { landscape = false } = {}) {
     const enc = new TextEncoder(), parts = [], offsets = [];
     let len = 0;
     const put = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
@@ -248,7 +248,8 @@ const Scanner = (() => {
       const { jpeg, bits, width, height } = pages[i];
       const bytes = bits || new Uint8Array(await jpeg.arrayBuffer());
       const kind = bits ? '/ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /FlateDecode' : '/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode';
-      const pw = 595.28, ph = Math.round((pw * height / width) * 100) / 100;
+      // A4 width (portrait), or A4 landscape's width for a page made landscape (HtmlPdf).
+      const pw = landscape ? 841.89 : 595.28, ph = Math.round((pw * height / width) * 100) / 100;
       const page = 3 + i * 3, img = page + 1, content = page + 2;
       obj(page, () => put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im${i} ${img} 0 R >> >> /Contents ${content} 0 R >>`));
       obj(img, () => { put(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ${kind} /Length ${bytes.length} >>\nstream\n`); put(bytes); put('\nendstream'); });

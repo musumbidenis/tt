@@ -1088,3 +1088,30 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .cand-res { margin-top: .75rem; }
 .cand-table tr.below td { background: color-mix(in srgb, var(--a-soft, #fbe4e5) 45%, var(--surface)); }
 @media print { .cand-print .rp-title h2 { margin: .5mm 0; } .cand-print > table:not(.sign-lines) { margin-top: 3mm; } }
+
+/* The printed marksheet (reports in bulk) */
+@media print {
+  .ms-print { font: 9pt "Times New Roman", serif; color: #000; }
+  .ms-more { break-before: page; }
+  .ms-head { text-align: center; }
+  .ms-head img { width: 22mm; height: auto; }
+  .ms-head h1 { font: bold 11pt "Times New Roman", serif; margin: .5mm 0; }
+  .ms-head h2 { font: bold 11pt "Times New Roman", serif; margin: 1mm 0 2mm; color: #0070c0; }
+  .ms-fields { width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 2mm; }
+  .ms-fields th { width: 32mm; padding: 1mm 0; }
+  .ms-fields td { border-bottom: .3mm dotted #000; padding: 1mm 2mm; }
+  .ms-grid { width: 100%; border-collapse: collapse; }
+  .ms-grid th, .ms-grid td { border: .2mm solid #000; padding: .9mm 1mm; text-align: center; }
+  .ms-grid td.l { text-align: left; }
+  .ms-grid th.g { background: #d9d9d9; } .ms-grid th.p { background: #fbe4d5; }
+  .ms-foot { width: 100%; border-collapse: collapse; margin-top: 6mm; }
+  .ms-foot th { text-align: left; width: 26mm; padding: 2.5mm 1mm 0; }
+  .ms-foot td { border-bottom: .3mm dotted #000; padding: 2.5mm 2mm 0; }
+}
+
+/* Reports in bulk */
+.bk-picks { display: flex; flex-wrap: wrap; gap: .35rem; margin: .5rem 0; max-height: 14rem; overflow: auto; }
+.bk-picks small { color: var(--muted); }
+.bk-opts { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin: .4rem 0 .6rem; }
+.bk-prog { display: flex; align-items: center; gap: .6rem; margin-top: .6rem; }
+.bk-prog progress { flex: 1; max-width: 22rem; }

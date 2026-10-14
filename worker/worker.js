@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.6.0';
+export const VERSION = '7.7.0';
 const SCHEMA_VERSION = '17';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -360,6 +360,7 @@ const ACTIONS = {
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   msList: { fn: (env, b, me) => msList(env, b, me) },
   candidates: { role: ['IAO', 'HOD', 'MIS'], fn: (env, b, me) => candidates(env, b, me) },
+  bulkTicket: { role: ['MIS', 'HOD'], fn: (env, b, me) => bulkTicket(env, b, me) },
   msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
   msReceive: { role: ['IAO', 'HOD'], fn: (env, b, me) => msReceive(env, b, me) },
   msDecide: { role: ['HOD'], fn: (env, b, me) => msDecide(env, b, me) },
@@ -2160,6 +2161,14 @@ async function poeView(env, b, me) {
   const url = await getMeta(env, 'drive_url');
   if (!url) fail('The Google Drive link is not set up yet');
   return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
+}
+/** Reports in bulk: a ticket for the bridge to save this run's files in Drive (Reports / <run> / ...), good for three hours. */
+async function bulkTicket(env, b, me) {
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  const run = String(b.run || todayIso()).replace(/[\/:*?"<>|]+/g, '-').slice(0, 80);
+  await audit(env, me, 'reports in bulk', run);
+  return { ok: true, driveUrl: url, ticket: await signTicket(env, { k: 'bulk', run, by: me.name, exp: Date.now() + 3 * 3600e3 }) };
 }
 /** A trainer's device found the file in the student's Drive no longer matches what was sent. */
 async function poeChanged(env, b, me) {

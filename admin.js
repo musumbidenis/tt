@@ -32,6 +32,7 @@ const Admin = (() => {
     if (hasRole('HOD') || hasRole('IAO')) parts.push(section('m-marksheets', hasRole('HOD') ? 'Marksheets' : 'Marksheets to receive', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD')) parts.push(section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
     if (window.Candidates?.allowed()) parts.push(section('m-candidates', 'Summative assessment candidates', Candidates.html()));
+    if (window.Bulk?.allowed()) parts.push(section('m-bulk', 'Reports in bulk', Bulk.html()));
     if (hasRole('MIS')) {
       parts.push(section('m-requests', 'Students added by trainers', '<p class="muted">Loading…</p>'));
       parts.push(section('m-term', 'Term', termHtml()));

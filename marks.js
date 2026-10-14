@@ -310,6 +310,41 @@ const Marks = (() => {
     return { prepared, received, approved };
   }
 
+  /* ---------- one class and unit's marksheet, for reports made in bulk ---------- */
+  /** The marksheet's data (as the Excel file takes it) for a class and unit, from the server when there is internet. */
+  async function dataFor(cls, unitCode) {
+    let doc;
+    try { doc = await pull(cls, unitCode); } catch { doc = await load(cls, unitCode); }
+    const u = state.units.find((x) => x.classCode === cls && x.code === unitCode) || { code: unitCode, name: unitCode };
+    const c = state.classes.find((x) => x.code === cls) || {};
+    const students = rosterFor(cls).map((t) => {
+      const r = doc.rows[lower(t.admNo)] || {};
+      return { regCode: t.regCode || '', admNo: t.admNo, name: t.name, cat: ['cat1', 'cat2', 'cat3'].map((k) => r[k] ?? ''), prac: ['prac1', 'prac2', 'prac3'].map((k) => r[k] ?? '') };
+    }).sort((a, b) => String(a.admNo).localeCompare(String(b.admNo)));
+    return { courseCode: c.misClass || cls, courseName: c.name && c.name !== c.code ? c.name : (c.misClass || cls), unitCode: u.code, unitTitle: u.name,
+      series: state.meta.term?.series || '', sheetName: `${String(cls).split(' ').pop()} ${u.code}`, students, footer: footerOf([{ cls, doc }], u) };
+  }
+  const xlsxFor = async (d) => Xlsx.marksheetFile(await (await fetch('templates/marksheet.xlsx')).arrayBuffer(), d);
+  /** The printed marksheet (for PDF): the RVNP heading, the marks (AVG or C.R.N.M), and the Prepared / Received / Approved rows. */
+  function printHtml(d) {
+    const PER = 18, pages = [];
+    for (let i = 0; i < Math.max(1, d.students.length); i += PER) pages.push(d.students.slice(i, i + PER));
+    const av = (xs) => (xs.filter((x) => x !== '' && x != null).length === 3 ? String(Math.round(xs.reduce((n, x) => n + Number(x), 0) / 3)) : 'C.R.N.M');
+    const head = `<thead><tr><th rowspan="2">S/N</th><th rowspan="2">Candidate's Reg Code</th><th rowspan="2">Center Admission No.</th><th rowspan="2">Candidate's Name</th>
+      <th colspan="4" class="g">Oral/Theory Marks (100%)</th><th colspan="4" class="p">Practical Marks (100%)</th></tr>
+      <tr><th class="g">CAT 1</th><th class="g">CAT 2</th><th class="g">CAT 3</th><th class="g">AVG</th><th class="p">PRAC 1</th><th class="p">PRAC 2</th><th class="p">PRAC 3</th><th class="p">AVG</th></tr></thead>`;
+    let n = 0;
+    const f = d.footer || {}, line = (label, w) => `<tr><th>${label}</th><td>${esc(w?.name || '')}</td><th>Signature:</th><td class="sig">${esc(w?.initials || '')}</td><th>Date:</th><td>${esc(w?.date || '')}</td></tr>`;
+    return `<div class="ms-print">${pages.map((list, p) => `<div class="ms-page${p ? ' ms-more' : ''}">
+      ${p ? '' : `<div class="ms-head"><img src="icons/rvnp-logo.png" alt=""><h1>THE RIFT VALLEY NATIONAL POLYTECHNIC</h1><h1>DEPARTMENT OF COMPUTING AND INFORMATICS</h1>
+        <h2>CONTINUOUS ASSESSMENT MARKS SHEET PER UNIT OF COMPETENCY</h2>
+        <table class="ms-fields"><tr><th>Course Code:</th><td>${esc(d.courseCode)}</td><th>Course Name:</th><td>${esc(d.courseName)}</td></tr>
+        <tr><th>Unit Code:</th><td>${esc(d.unitCode)}</td><th>Unit Title:</th><td>${esc(d.unitTitle)}</td></tr><tr><th>Assessment Series:</th><td>${esc(d.series)}</td><th></th><td></td></tr></table></div>`}
+      <table class="ms-grid">${head}<tbody>${list.map((s) => `<tr><td>${++n}</td><td>${esc(s.regCode)}</td><td class="l">${esc(s.admNo)}</td><td class="l">${esc(s.name)}</td>
+        ${s.cat.map((v) => `<td>${v ?? ''}</td>`).join('')}<td>${av(s.cat)}</td>${s.prac.map((v) => `<td>${v ?? ''}</td>`).join('')}<td>${av(s.prac)}</td></tr>`).join('')}</tbody></table>
+      ${p === pages.length - 1 ? `<table class="ms-foot">${line('Prepared by:', f.prepared)}${line('Received by:', f.received)}${line('Approved by:', f.approved)}</table>` : ''}</div>`).join('')}</div>`;
+  }
+
   async function exportXlsx() {
     const codes = reportCodes(), unit = $('#rUnit').value;
     if (!codes.length || !unit) return;
@@ -373,5 +408,5 @@ const Marks = (() => {
     $('#tab-reports').classList.toggle('marks-mode', mode === 'marks');
     renderReport();
   }
-  return { render, wire, syncAll, setMode, state: ms, footerOf };
+  return { render, wire, syncAll, setMode, state: ms, footerOf, dataFor, xlsxFor, printHtml };
 })();
