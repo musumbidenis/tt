@@ -210,31 +210,45 @@ const Xlsx = (() => {
     // Template formats: 22 bold title, 17 bold boxed heading (wrapped), 10 boxed centred, 11 boxed left, 3 boxed left (bold row label).
     const cell = (ref, v, s) => (typeof v === 'number' ? `<c r="${ref}" s="${s}"><v>${v}</v></c>`
       : `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`);
-    const last = colName(3 + cs.cols.length), rows = [];
-    rows.push(`<row r="1" ht="21" customHeight="1">${cell('A1', `CAT ATTENDANCE · ${d.subject || ''}`, 22)}</row>`);
-    rows.push(`<row r="2">${cell('A2', d.classLabel || '', 22)}</row>`);
-    rows.push(`<row r="4" ht="45" customHeight="1">${cell('A4', '#', 17)}${cell('B4', 'ADMISSION NO', 17)}${cell('C4', 'NAMES', 17)}${cs.cols.map((c, k) => cell(colName(4 + k) + '4', `${c.label}\n${c.date}`, 17)).join('')}</row>`);
+    // The heading copies the class register's (template formats 23 college, 14 field label, 18-20 field value, 22 right label, 5 title).
+    const width = Math.max(cs.cols.length, 4), last = colName(3 + width), rows = [];
+    const blanks = (r, from, to, s) => { let out = ''; for (let k = from; k <= to; k++) out += `<c r="${colName(k)}${r}" s="${s}"/>`; return out; };
+    rows.push(`<row r="1" ht="28.95" customHeight="1">${cell('C1', 'RIFT VALLEY NATIONAL POLYTECHNIC', 23)}${blanks(1, 4, 3 + width, 23)}</row>`);
+    rows.push(`<row r="2" ht="28.95" customHeight="1">${cell('C2', 'NAME OF LECTURER', 14)}${cell('D2', d.lecturer || '', 18)}${blanks(2, 5, 5, 18)}${cell('F2', 'DURATION', 22)}${cell('G2', d.duration || '', 18)}${blanks(2, 8, 3 + width, 18)}</row>`);
+    rows.push(`<row r="3" ht="28.95" customHeight="1">${cell('C3', 'CLASS', 14)}${cell('D3', d.classLabel || '', 19)}${blanks(3, 5, 5, 19)}${cell('F3', 'LEVEL', 22)}${cell('G3', d.level || '', 19)}${blanks(3, 8, 3 + width, 19)}</row>`);
+    rows.push(`<row r="4" ht="28.95" customHeight="1">${cell('C4', 'SUBJECT', 14)}${cell('D4', d.subject || '', 20)}${blanks(4, 5, 3 + width, 20)}</row>`);
+    rows.push(`<row r="5" ht="28.95" customHeight="1">${cell('A5', 'CAT ATTENDANCE REGISTER', 5)}${blanks(5, 2, 3 + width, 5)}</row>`);
+    rows.push(`<row r="6" ht="28.95" customHeight="1">${cell('A6', d.filter || '', 5)}${blanks(6, 2, 3 + width, 5)}</row>`);
+    rows.push(`<row r="7" ht="45" customHeight="1">${cell('A7', 'S/NO', 17)}${cell('B7', 'ADMISSION NO', 17)}${cell('C7', 'NAMES', 17)}${cs.cols.map((c, k) => cell(colName(4 + k) + '7', `${c.label}\n${c.date}`, 17)).join('')}</row>`);
     cs.rows.forEach((r, i) => {
-      const n = 5 + i;
+      const n = 8 + i;
       rows.push(`<row r="${n}">${cell('A' + n, i + 1, 10)}${cell('B' + n, r.admNo, 11)}${cell('C' + n, r.name, 11)}${r.vals.map((v, k) => cell(colName(4 + k) + n, v, 10)).join('')}</row>`);
     });
-    const t0 = 5 + cs.rows.length;
+    const t0 = 8 + cs.rows.length;
     cs.totals.forEach((t, i) => {
       const n = t0 + i;
       rows.push(`<row r="${n}">${cell('A' + n, t.label, 3)}${cell('B' + n, '', 3)}${cell('C' + n, '', 3)}${t.vals.map((v, k) => cell(colName(4 + k) + n, v, 10)).join('')}</row>`);
     });
     const end = t0 + cs.totals.length - 1;
     const wide = cs.rows.some((r) => r.vals.some((v) => String(v).length > 4));
+    const merges = [`C1:${last}1`, 'D2:E2', `G2:${last}2`, 'D3:E3', `G3:${last}3`, `D4:${last}4`, `A5:${last}5`, `A6:${last}6`, ...cs.totals.map((t, i) => `A${t0 + i}:C${t0 + i}`)];
     const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
-      + `<dimension ref="A1:${last}${end}"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
-      + `<sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="5" customWidth="1"/><col min="2" max="2" width="22" customWidth="1"/><col min="3" max="3" width="34" customWidth="1"/>`
-      + `<col min="4" max="${3 + cs.cols.length}" width="${wide ? 22 : 14}" customWidth="1"/></cols>`
+      + `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${last}${end}"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"><pane ySplit="7" topLeftCell="A8" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
+      + `<sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="7" customWidth="1"/><col min="2" max="2" width="22" customWidth="1"/><col min="3" max="3" width="37" customWidth="1"/>`
+      + `<col min="4" max="${3 + width}" width="${wide ? 22 : 14}" customWidth="1"/></cols>`
       + `<sheetData>${rows.join('')}</sheetData>`
-      + `<mergeCells count="${2 + cs.totals.length}"><mergeCell ref="A1:${last}1"/><mergeCell ref="A2:${last}2"/>${cs.totals.map((t, i) => `<mergeCell ref="A${t0 + i}:C${t0 + i}"/>`).join('')}</mergeCells>`
-      + `<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="${cs.cols.length > 4 ? 'landscape' : 'portrait'}" fitToHeight="0"/></worksheet>`;
+      + `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>`
+      + `<printOptions horizontalCentered="1"/><pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="${cs.cols.length > 4 ? 'landscape' : 'portrait'}" fitToWidth="1" fitToHeight="0"/>`
+      + `<drawing r:id="rIdCrest"/></worksheet>`;
     zip.file('xl/worksheets/sheet2.xml', sheet);
+    // The crest: a copy of the register's drawing, pointing at the same picture.
+    zip.file('xl/drawings/drawing2.xml', await zip.file('xl/drawings/drawing1.xml').async('string'));
+    zip.file('xl/drawings/_rels/drawing2.xml.rels', await zip.file('xl/drawings/_rels/drawing1.xml.rels').async('string'));
+    zip.file('xl/worksheets/_rels/sheet2.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rIdCrest" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>');
     const ct = await zip.file('[Content_Types].xml').async('string');
-    zip.file('[Content_Types].xml', ct.replace('</Types>', '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'));
+    zip.file('[Content_Types].xml', ct.replace('</Types>', '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+      + '<Override PartName="/xl/drawings/drawing2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>'));
     const rels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
     zip.file('xl/_rels/workbook.xml.rels', rels.replace('</Relationships>', '<Relationship Id="rIdCats" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>'));
     const wb = await zip.file('xl/workbook.xml').async('string');

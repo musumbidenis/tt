@@ -1703,9 +1703,9 @@ export function catTable(rows, items) {
     if (t) makesUp.set(x, t);
   }
   const sat = (v) => v === 'P' || v === 'L';
-  const out = rows.map((r) => sorted.map((a) => {
+  const out = rows.map((r) => cats.map((a) => {
     const v = a.marks[r.admNo] || '';
-    if (a.kind === 'cat' && v === 'A') {
+    if (v === 'A') {
       const sup = sorted.find((x) => makesUp.get(x) === a && sat(x.marks[r.admNo]));
       if (sup) return `Ab (Supplementary CAT - Sat ${shortDate(sup.date)})`;
     }
@@ -1713,9 +1713,10 @@ export function catTable(rows, items) {
   }));
   const count = (k, test) => out.filter((v) => test(v[k])).length;
   return {
-    cols: sorted.map((a) => ({ label: a.title || (a.kind === 'cat' ? 'CAT' : 'Extra CAT attendance'), date: shortDate(a.date), kind: a.kind })), vals: out,
-    totals: [['Sat', sorted.map((a, k) => count(k, sat))], ['Absent', sorted.map((a, k) => count(k, (v) => v.startsWith('Ab')))],
-      ['Absent, sat the supplementary', sorted.map((a, k) => (a.kind === 'cat' ? count(k, (v) => v.startsWith('Ab (')) : ''))]],
+    // A column per CAT ("CAT 1", "CAT 2" …); a make-up shows inside the CAT it makes up.
+    cols: cats.map((a, i) => { const m = /^\s*CAT\s*(\d+)\s*$/i.exec(a.title || ''); return { label: `CAT ${m ? m[1] : i + 1}`, date: shortDate(a.date), kind: 'cat' }; }), vals: out,
+    totals: [['Sat', cats.map((a, k) => count(k, sat))], ['Absent', cats.map((a, k) => count(k, (v) => v.startsWith('Ab')))],
+      ['Sat the supplementary', cats.map((a, k) => count(k, (v) => v.startsWith('Ab (')))]],
   };
 }
 

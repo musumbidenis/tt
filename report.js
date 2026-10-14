@@ -132,6 +132,8 @@ const TermReport = (() => {
    * title names ("CAT 1 make-up"), else the latest CAT before it.
    * students: [{ admNo, name }], items: [{ date, period, kind, title, marks }]
    */
+  /** "CAT 1", "CAT 2" … in date order, unless the CAT's own title already says which one. */
+  const catLabel = (a, i) => { const m = /^\s*CAT\s*(\d+)\s*$/i.exec(a.title || ''); return `CAT ${m ? m[1] : i + 1}`; };
   function catTable(students, items) {
     const sorted = [...items].sort((a, b) => (a.date + PERIOD_ORDER(a.period)).localeCompare(b.date + PERIOD_ORDER(b.period)));
     const cats = sorted.filter((a) => a.kind === 'cat');
@@ -142,9 +144,9 @@ const TermReport = (() => {
       if (t) makesUp.set(x, t);
     }
     const sat = (v) => v === 'P' || v === 'L';
-    const rows = students.map((s) => ({ admNo: s.admNo, name: s.name, vals: sorted.map((a) => {
+    const rows = students.map((s) => ({ admNo: s.admNo, name: s.name, vals: cats.map((a) => {
       const v = a.marks?.[s.admNo] || '';
-      if (a.kind === 'cat' && v === 'A') {
+      if (v === 'A') {
         const sup = sorted.find((x) => makesUp.get(x) === a && sat(x.marks?.[s.admNo]));
         if (sup) return `Ab (Supplementary CAT - Sat ${dshort(sup.date)})`;
       }
@@ -152,12 +154,12 @@ const TermReport = (() => {
     }) }));
     const count = (k, test) => rows.filter((r) => test(r.vals[k])).length;
     return {
-      cols: sorted.map((a) => ({ label: a.title || (a.kind === 'cat' ? 'CAT' : 'Extra CAT attendance'), date: dshort(a.date), kind: a.kind })),
+      cols: cats.map((a, i) => ({ label: catLabel(a, i), date: dshort(a.date), kind: 'cat' })),
       rows,
       totals: [
-        { label: 'Sat', vals: sorted.map((a, k) => count(k, sat)) },
-        { label: 'Absent', vals: sorted.map((a, k) => count(k, (v) => String(v).startsWith('Ab'))) },
-        { label: 'Absent, sat the supplementary', vals: sorted.map((a, k) => (a.kind === 'cat' ? count(k, (v) => String(v).startsWith('Ab (')) : '')) },
+        { label: 'Sat', vals: cats.map((a, k) => count(k, sat)) },
+        { label: 'Absent', vals: cats.map((a, k) => count(k, (v) => String(v).startsWith('Ab'))) },
+        { label: 'Sat the supplementary', vals: cats.map((a, k) => count(k, (v) => String(v).startsWith('Ab ('))) },
       ],
     };
   }
@@ -181,6 +183,13 @@ const TermReport = (() => {
   /** Printable copy of the register (Save as PDF from the print dialog), same layout as the Excel file. The grid is one table
    * per printed page (headings repeated), so each page's CAT column is its own cell with "CAT 1" in the middle of it. */
   const PRINT_ROWS = { first: 24, next: 31 };
+  /** The heading of the printed registers: crest, college, lecturer, class, level, subject, then the register's title. */
+  const headOf = (d, esc, title) => `<div class="rp-head"><img src="icons/rvnp-logo.png" alt=""><div class="rp-title">
+        <h1>RIFT VALLEY NATIONAL POLYTECHNIC</h1>
+        <table class="rp-fields"><tr><th>NAME OF LECTURER</th><td>${esc(d.lecturer)}</td><th>DURATION</th><td>${esc(d.duration)}</td></tr>
+        <tr><th>CLASS</th><td>${esc(d.classLabel)}</td><th>LEVEL</th><td>${esc(d.level)}</td></tr>
+        <tr><th>SUBJECT</th><td colspan="3">${esc(d.subject)}</td></tr></table>
+        <h2>${title}</h2><p>${esc(d.filter)}</p></div></div>`;
   function printHtml(d, esc) {
     const cats = new Map((d.cats || []).map((c) => [c.w, c]));
     const pages = [];
@@ -194,8 +203,9 @@ const TermReport = (() => {
       ? (i ? '' : `<td class="cat e" colspan="3" rowspan="${n}"><span>${esc(cats.get(w).label)}</span></td>`)
       : [0, 1, 2].map((k) => `<td class="c${k === 2 ? ' e' : ''}">${s.cells[w * 3 + k] || ''}</td>`).join(''))).join('');
     const cs = d.catSheet;
-    const catPage = cs ? `<div class="rp-cats"><h2>CAT ATTENDANCE - ${esc(d.subject)}</h2><p>${esc(d.classLabel)}</p>
-      <table class="rp-grid rp-cat"><thead><tr><th>#</th><th>ADMISSION NO</th><th>NAMES</th>${cs.cols.map((c) => `<th>${esc(c.label)}<br><small>${esc(c.date)}</small></th>`).join('')}</tr></thead>
+    // The CAT register: the same heading as the class register, then S/NO, admission no, names and a column per CAT.
+    const catPage = cs?.cols.length ? `<div class="reg-print rp-cats">${headOf(d, esc, 'CAT ATTENDANCE REGISTER')}
+      <table class="rp-grid rp-cat"><thead><tr><th>S/NO</th><th>ADMISSION NO</th><th>NAMES</th>${cs.cols.map((c) => `<th>${esc(c.label)}<br><small>${esc(c.date)}</small></th>`).join('')}</tr></thead>
       <tbody>${cs.rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${esc(r.admNo)}</td><td class="l">${esc(r.name)}</td>${r.vals.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}
       ${cs.totals.map((t) => `<tr class="tot"><td colspan="3" class="l">${esc(t.label)}</td>${t.vals.map((v) => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '';
     const rowsOf = (list, from) => list.map((s, i) => `<tr><td>${from + i + 1}</td><td class="l">${esc(s.admNo)}</td><td class="l">${esc(s.name)}${s.pending ? ' (pending)' : ''}</td>
@@ -208,12 +218,7 @@ const TermReport = (() => {
     let from = 0;
     const grids = pages.map((list, p) => { const html = `<table class="rp-grid${p ? ' rp-more' : ''}">${head}<tbody>${rowsOf(list, from)}</tbody></table>`; from += list.length; return html; }).join('');
     return `<div class="reg-print">
-      <div class="rp-head"><img src="icons/rvnp-logo.png" alt=""><div class="rp-title">
-        <h1>RIFT VALLEY NATIONAL POLYTECHNIC</h1>
-        <table class="rp-fields"><tr><th>NAME OF LECTURER</th><td>${esc(d.lecturer)}</td><th>DURATION</th><td>${esc(d.duration)}</td></tr>
-        <tr><th>CLASS</th><td>${esc(d.classLabel)}</td><th>LEVEL</th><td>${esc(d.level)}</td></tr>
-        <tr><th>SUBJECT</th><td colspan="3">${esc(d.subject)}</td></tr></table>
-        <h2>GENERAL CLASS REGISTER</h2><p>${esc(d.filter)}</p></div></div>
+      ${headOf(d, esc, 'GENERAL CLASS REGISTER')}
       ${grids}
       <table class="rp-comments"><tr><th>Lecturer's Comment</th><td>${esc(d.lecturerComment)}</td></tr><tr><th>HOD's Comment</th><td>${esc(d.hodComment)}</td></tr></table>
       ${d.approval && typeof approvalBlock === 'function' ? approvalBlock(d.approval) : ''}

@@ -629,8 +629,6 @@ fieldset .more[open] summary { flex-basis: 100%; }
   .rp-grid td.cat span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; font-size: 10pt; letter-spacing: .4em; }
   .rp-grid th.catd { font-size: 6.5pt; font-weight: 400; }
   .rp-cats { break-before: page; }
-  .rp-cats h2 { font-size: 12pt; margin: 0 0 1mm; text-align: center; }
-  .rp-cats p { text-align: center; margin: 0 0 2mm; }
   .rp-cat td { white-space: nowrap; }
   .rp-cat tr.tot td { font-weight: 700; }
   .rp-comments th { width: 40mm; text-align: left; height: 10mm; }

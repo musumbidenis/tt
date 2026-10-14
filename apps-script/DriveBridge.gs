@@ -458,23 +458,42 @@ function writeRegister_(ss, u) {
   sh.setConditionalFormatRules(rules);
 }
 
-/** CATs and extra CAT attendance: one column per CAT register, with totals. From server 6.9.0 (u.catTable) a student
- * absent from a CAT who sat its make-up reads "Ab (Supplementary CAT - Sat 19 Mar)". */
+/** The CAT register: the class register's heading (college, lecturer, class, level, subject), then S/NO, admission no, names
+ * and a column per CAT with totals. From server 6.9.0 (u.catTable) a student absent from a CAT who sat its make-up reads
+ * "Ab (Supplementary CAT - Sat 19 Mar)"; from 7.3.0 the columns are CAT 1, CAT 2 … */
 function writeCats_(ss, u) {
   var name = tabName_(u, ' CATs'), sh = ss.getSheetByName(name) || ss.insertSheet(name);
   var t = u.catTable || { cols: u.cats.map(function (c) { return { label: c.title, date: c.date }; }),
     vals: u.rows.map(function (r) { return u.cats.map(function (c) { return c.marks[r.admNo] || ''; }); }), totals: [] };
-  var head = ['#', 'ADMISSION NO', 'NAMES'].concat(t.cols.map(function (c) { return c.label + '\n' + c.date; }));
-  var v = [[u.unitCode + ' - ' + u.unitName + ' - ' + u.misClass + ' - CAT attendance (not counted in the class register hours)'].concat(head.slice(1).map(function () { return ''; })), head];
-  u.rows.forEach(function (r, i) { v.push([i + 1, r.admNo, r.name].concat(t.vals[i] || [])); });
-  t.totals.forEach(function (x) { v.push([x[0], '', ''].concat(x[1])); });
+  var W = 3 + Math.max(t.cols.length, 4), H = 7;
+  var blank = function () { var r = []; for (var i = 0; i < W; i++) r.push(''); return r; };
+  var v = [];
+  for (var i = 0; i < H; i++) v.push(blank());
+  v[0][2] = 'RIFT VALLEY NATIONAL POLYTECHNIC';
+  v[1][2] = 'NAME OF LECTURER'; v[1][3] = u.trainerName; v[1][5] = 'DURATION'; v[1][6] = u.duration;
+  v[2][2] = 'CLASS'; v[2][3] = u.misClass + (u.misClass !== u.classCode ? ' (' + u.classCode + ')' : ''); v[2][5] = 'LEVEL'; v[2][6] = u.level;
+  v[3][2] = 'SUBJECT'; v[3][3] = u.unitCode + ' - ' + u.unitName;
+  v[4][0] = 'CAT ATTENDANCE REGISTER';
+  v[5][0] = 'FILTERED BY: {Class: ' + u.misClass + '}   -   ' + u.termName + '   -   not counted in the class register hours';
+  v[6][0] = 'S/NO'; v[6][1] = 'ADMISSION NO'; v[6][2] = 'NAMES';
+  t.cols.forEach(function (c, k) { v[6][3 + k] = c.label + '\n' + c.date; });
+  u.rows.forEach(function (r, i) { var row = blank(); row[0] = i + 1; row[1] = r.admNo; row[2] = r.name; (t.vals[i] || []).forEach(function (x, k) { row[3 + k] = x; }); v.push(row); });
+  t.totals.forEach(function (x) { var row = blank(); row[0] = x[0]; x[1].forEach(function (y, k) { row[3 + k] = y; }); v.push(row); });
   sh.clear();
   sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart();
-  sh.getRange(1, 1, v.length, head.length).setValues(v);
-  sh.getRange(1, 1, 2, head.length).setFontWeight('bold');
-  sh.getRange(2, 1, v.length - 1, head.length).setBorder(true, true, true, true, true, true).setHorizontalAlignment('center').setWrap(true);
+  if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
+  if (sh.getMaxRows() < v.length) sh.insertRowsAfter(sh.getMaxRows(), v.length - sh.getMaxRows());
+  sh.getRange(1, 1, v.length, W).setValues(v);
+  var L = colName_(W);
+  ['C1:' + L + '1', 'D2:E2', 'G2:' + L + '2', 'D3:E3', 'G3:' + L + '3', 'D4:' + L + '4', 'A5:' + L + '5', 'A6:' + L + '6'].forEach(function (a) { sh.getRange(a).merge(); });
+  sh.getRange(1, 1, H, W).setFontWeight('bold').setVerticalAlignment('middle');
+  sh.getRange('C1').setFontSize(14).setHorizontalAlignment('center');
+  sh.getRange('A5:A6').setHorizontalAlignment('center');
+  var tc = 3 + t.cols.length;
+  sh.getRange(H, 1, v.length - H + 1, tc).setBorder(true, true, true, true, true, true).setHorizontalAlignment('center').setWrap(true);
+  sh.getRange(H + 1, 2, u.rows.length || 1, 2).setHorizontalAlignment('left');
   t.totals.forEach(function (x, i) { var r = v.length - t.totals.length + 1 + i; sh.getRange(r, 1, 1, 3).merge().setFontWeight('bold').setHorizontalAlignment('left'); });
-  sh.setFrozenRows(2);
+  sh.setFrozenRows(H);
 }
 
 /** The continuous assessment marks sheet per unit of competency, in the RVNP layout. AVG = sum ÷ 3. */
