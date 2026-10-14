@@ -7,7 +7,7 @@
 const PoeStaff = (() => {
   const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
   const STATUS = { submitted: ['pending', 'To review'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
-  const ps = { list: [], status: '', cls: '', unit: '', q: '', loaded: false, sheetUrl: '', indexUrl: '', driveReady: true, open: null, files: new Map(), seq: 0, mode: 'unit', classes: [], roster: new Map(), sCls: '', sFilter: '', order: [], marks: new Map() };
+  const ps = { picked: new Set(), list: [], status: '', cls: '', unit: '', q: '', loaded: false, sheetUrl: '', indexUrl: '', driveReady: true, open: null, files: new Map(), seq: 0, mode: 'unit', classes: [], roster: new Map(), sCls: '', sFilter: '', order: [], marks: new Map() };
   /* Marks from the unit's marksheet, beside the evidence they are for: CAT1 → cat1 … PRAC3 → prac3 (CAT4 has no mark column). */
   const markKey = (cls, unit, adm) => `${cls}|${unit}|${lower(adm)}`;
   const keepMarks = (rows) => { for (const m of rows || []) ps.marks.set(markKey(m.c, m.u, m.a), m); };
@@ -92,19 +92,24 @@ const PoeStaff = (() => {
   function unitTable(rows) {
     const page = Tables.slice('poeUnit', rows);
     const th = (col, label, cls = '') => Tables.th('poeUnit', col, label, cls);
-    return `<div class="card table-card"><div class="table-wrap"><table class="report-table poe-table poe-unit-table">
-      <thead><tr>${th('name', 'Student')}${th('adm', 'Admission no.')}${th('unit', 'Unit')}${th('item', 'Item')}${th('mark', 'Mark', 'num')}${th('sent', 'Sent')}${th('status', 'Status')}<th><span class="sr">Preview</span></th></tr></thead>
-      <tbody>${page.map(unitRow).join('')}</tbody></table></div>
+    const pick = batchable(page);
+    return `<div class="card table-card">${pick.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-pickall${pick.every((e) => ps.picked.has(e.id)) ? ' checked' : ''}><span>Select all ${pick.length} shown</span></label>
+      <button type="button" class="btn primary small" data-act="batch-approve"${ps.picked.size ? '' : ' disabled'}>Approve selected${ps.picked.size ? ` (${ps.picked.size})` : ''}</button>
+      <span class="muted small">Approving without a note says: ${esc(OK_SAID.poe)}</span></div>` : ''}<div class="table-wrap"><table class="report-table poe-table poe-unit-table">
+      <thead><tr>${pick.length ? '<th><span class="sr">Select</span></th>' : ''}${th('name', 'Student')}${th('adm', 'Admission no.')}${th('unit', 'Unit')}${th('item', 'Item')}${th('mark', 'Mark', 'num')}${th('sent', 'Sent')}${th('status', 'Status')}<th><span class="sr">Preview</span></th></tr></thead>
+      <tbody>${page.map((e) => unitRow(e, pick.length > 0)).join('')}</tbody></table></div>
       ${Tables.bar('poeUnit', rows)}
       <div class="row-actions table-actions">
         <button type="button" class="btn" data-act="unit-xlsx"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel</button>
         <button type="button" class="btn" data-act="unit-pdf"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg>Save as PDF</button>
       </div></div>`;
   }
-  function unitRow(e) {
+  /** Rows this person may approve in one go: waiting ones (the server checks each is theirs to decide). */
+  const batchable = (rows) => (canDecide() ? rows.filter((e) => e.status === 'submitted') : []);
+  function unitRow(e, picking) {
     const [cls, label] = statusOf(e);
     const verb = canDecide() && e.status === 'submitted' ? 'Review' : 'Preview';
-    return `<tr data-id="${esc(e.id)}">
+    return `<tr data-id="${esc(e.id)}">${picking ? `<td>${e.status === 'submitted' ? `<input type="checkbox" data-pick="${esc(e.id)}"${ps.picked.has(e.id) ? ' checked' : ''} aria-label="Select ${esc(e.name)} ${esc(e.item)}">` : ''}</td>` : ''}
       <td><b>${esc(e.name)}</b></td><td class="tadm">${esc(e.admNo)}</td>
       <td class="unit-cell" title="${esc(e.classCode)}">${esc(e.unitName)}</td>
       <td><span class="item-tag">${esc(e.item)}</span>${e.version > 1 ? ` <small class="muted">v${e.version}</small>` : ''}</td>
@@ -339,7 +344,8 @@ const PoeStaff = (() => {
       </div>
       ${canDecide() && (e.status === 'submitted' || hasRole('HOD') || e.decidedName === me().name) ? `
       <div class="poe-decide">
-        <label>Note to the student <span class="muted small">(needed when returning)</span><textarea id="poeComment" rows="2" maxlength="500" placeholder="For example: page 2 is missing">${esc(e.status === 'returned' ? e.comment : '')}</textarea></label>
+        <label>Note to the student <span class="muted small">(needed when returning)</span><textarea id="poeComment" rows="2" maxlength="500" placeholder="Approving with it empty: ${esc(OK_SAID.poe)}">${esc(e.status === 'returned' ? e.comment : '')}</textarea></label>
+        ${quickSays('poe', 'poeComment')}
         <div class="row-actions"><button type="button" class="btn danger" data-decide="returned">Return to student</button><button type="button" class="btn primary" data-decide="approved">${e.status === 'approved' ? 'Approved ✓' : 'Approve'}</button></div>
       </div>` : ''}`;
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
@@ -379,12 +385,31 @@ const PoeStaff = (() => {
     }
     doc.destroy?.();
   }
+  /** Approves the ticked rows, 50 at a time, with one PIN. */
+  async function batchApprove(btn) {
+    const ids = [...ps.picked].filter((id) => ps.list.find((x) => x.id === id)?.status === 'submitted');
+    if (!ids.length) return;
+    btn.disabled = true;
+    let done = 0, failed = 0;
+    try {
+      for (let i = 0; i < ids.length; i += 50) {
+        const r = await withPin(`Approve ${ids.length} piece${ids.length === 1 ? '' : 's'} of evidence`, (pin) => api('poeDecideMany', { ids: ids.slice(i, i + 50), pin }));
+        if (!r) break;
+        if (!r.ok) throw new Error(r.error);
+        for (const ev of r.evidence) { const k = ps.list.findIndex((x) => x.id === ev.id); if (k >= 0) ps.list[k] = ev; ps.picked.delete(ev.id); }
+        done += r.evidence.length; failed += r.failed.length;
+      }
+      if (done) toast(`Approved ${done}${failed ? ` - ${failed} could not be approved` : ''}`, failed ? 'err' : 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+    badge(); draw();
+  }
   async function decide(decision, btn) {
     const comment = $('#poeComment')?.value.trim() || '';
     if (decision === 'returned' && !comment) { toast('Write what needs fixing, then return it', 'err'); $('#poeComment').focus(); return; }
     btn.disabled = true;
     try {
-      const r = await api('poeDecide', { id: ps.open, decision, comment });
+      const r = decision === 'approved' ? await withPin('Approve this evidence', (pin) => api('poeDecide', { id: ps.open, decision, comment, pin })) : await api('poeDecide', { id: ps.open, decision, comment });
+      if (!r) { btn.disabled = false; return; }
       if (!r.ok) throw new Error(r.error);
       const i = ps.list.findIndex((x) => x.id === r.evidence.id); if (i >= 0) ps.list[i] = r.evidence;
       toast(decision === 'approved' ? 'Approved' : 'Returned to the student', 'ok');
@@ -398,6 +423,12 @@ const PoeStaff = (() => {
   }
 
   function wire() {
+    document.addEventListener('change', (e) => {
+      const t = e.target;
+      if (!t.closest?.('#poe')) return;
+      if (t.matches('[data-pick]')) { if (t.checked) ps.picked.add(t.dataset.pick); else ps.picked.delete(t.dataset.pick); draw(); }
+      if (t.matches('[data-pickall]')) { for (const e2 of batchable(Tables.slice('poeUnit', shownUnit()))) { if (t.checked) ps.picked.add(e2.id); else ps.picked.delete(e2.id); } draw(); }
+    });
     document.addEventListener('click', (e) => {
       if (!e.target.closest('#poe, #poeDialog')) return;
       const t = e.target;
@@ -426,6 +457,7 @@ const PoeStaff = (() => {
       const d = t.closest('[data-decide]'); if (d) { decide(d.dataset.decide, d); return; }
       const a = t.closest('[data-act]');
       if (a?.dataset.act === 'close') $('#poeDialog').close();
+      if (a?.dataset.act === 'batch-approve') { batchApprove(a); return; }
       if (a?.dataset.act === 'slip') printSlip(ps.list.find((x) => x.id === ps.open));
       if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (ok && id) { ps.files.delete(id); openViewer(id); } }); }
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; Verify.reset(); render(); }

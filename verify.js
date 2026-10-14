@@ -165,15 +165,16 @@ const Verify = (() => {
   const HEAD = ['#', 'Admission no.', 'Name', 'Why in the sample', 'Valid', 'Authentic', 'Current', 'Sufficient', 'Trainer\'s decision', 'Comment'];
   function printReport(v) {
     const panel = vs.data.panels.find((p) => p.id === v.panelId);
+    const chairSigned = !!(v.signedAt && panel && lower(staffName(panel.chair)) === lower(v.signedBy || ''));
     $('#printArea').innerHTML = `<div class="tbl-print ver-print"><h1>INTERNAL VERIFICATION REPORT</h1>
       <p>${esc(v.classCode)} - ${esc(v.unitCode)} ${esc(v.unitName)} - trainer ${esc(v.trainerName || v.trainerCode)}</p>
       <p>Panel: ${esc(panel?.name || '')} - verifier ${esc(staffName(v.verifier))} - sample ${v.size} of ${v.population}${v.risk > 1 ? ` (risk × ${v.risk})` : ''}</p>
       <table><thead><tr>${HEAD.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${reportRows(v).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>
       <p><b>Result:</b> ${esc(RESULT[v.result] || 'not given yet')}${v.actions ? ` - <b>Actions:</b> ${esc(v.actions)}` : ''}</p>
       ${v.response ? `<p><b>Trainer's response:</b> ${esc(v.response)}</p>` : ''}
-      <table class="sign-lines"><tr><th>Verifier</th><td>${esc(staffName(v.verifier))}</td><th>Signature</th><td></td><th>Date</th><td>${esc(v.submittedAt ? fmtShort(v.submittedAt) : '')}</td></tr>
-        <tr><th>Panel chair</th><td>${esc(panel ? staffName(panel.chair) : '')}</td><th>Signature</th><td></td><th>Date</th><td></td></tr>
-        <tr><th>HOD</th><td>${esc(v.signedBy || '')}</td><th>Signature</th><td></td><th>Date</th><td>${esc(v.signedAt ? fmtShort(v.signedAt) : '')}</td></tr></table></div>`;
+      <table class="sign-lines"><tr><th>Verifier</th><td>${esc(staffName(v.verifier))}</td><th>Signature</th><td class="sig">${v.submittedAt ? esc(initials(staffName(v.verifier))) : ''}</td><th>Date</th><td>${esc(v.submittedAt ? fmtShort(v.submittedAt) : '')}</td></tr>
+        <tr><th>Panel chair</th><td>${esc(panel ? staffName(panel.chair) : '')}</td><th>Signature</th><td class="sig">${chairSigned ? esc(initials(staffName(panel.chair))) : ''}</td><th>Date</th><td>${chairSigned ? esc(fmtShort(v.signedAt)) : ''}</td></tr>
+        <tr><th>HOD</th><td>${esc(v.signedBy || '')}</td><th>Signature</th><td class="sig">${v.signedAt ? esc(initials(v.signedBy)) : ''}</td><th>Date</th><td>${esc(v.signedAt ? fmtShort(v.signedAt) : '')}</td></tr></table></div>`;
     document.body.classList.add('printing', 'print-table');
     const done = () => { document.body.classList.remove('printing', 'print-table'); window.removeEventListener('afterprint', done); };
     window.addEventListener('afterprint', done);

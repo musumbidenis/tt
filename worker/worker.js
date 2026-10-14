@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.2.0';
-const SCHEMA_VERSION = '14';
+export const VERSION = '7.3.0';
+const SCHEMA_VERSION = '15';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -156,7 +156,16 @@ async function many(env, ...items) {
 const ACTIVE_TERM = "(SELECT id FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1)";
 
 /** Statements that insert or update many rows, one per ~900 KB (well under D1's 2 MB value limit). */
+/* Names are shown with each word starting with a capital letter ("JOHN KAMAU" -> "John Kamau"); short forms like ICT stay. */
+const KEEP_UPPER = new Set(['ICT', 'IT', 'CAT', 'POE', 'HOD', 'MIS', 'PC', 'CCTV', 'HTML', 'CSS', 'SQL', 'PHP', 'ID', 'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'XI', 'XII',
+  'AI', 'IOT', 'LAN', 'WAN', 'UI', 'UX', 'OS', 'CAD', 'GIS', 'KCSE', 'TVET', 'CDACC', 'RVNP', 'ICDL', 'DTP', 'ERP', 'GPS', 'API', 'CBET', 'KNEC', 'NITA', 'ICTS']);
+const nameCase = (s) => (s === null || s === undefined ? s : String(s).replace(/\s+/g, ' ').trim().toLowerCase()
+  .replace(/(^|[\s\-'’(./])([a-z])/g, (m, p, c) => p + c.toUpperCase())
+  .split(' ').map((w) => (KEEP_UPPER.has(w.toUpperCase().replace(/[^A-Z]/g, '')) ? w.toUpperCase() : w)).join(' '));
+const NAME_COLS = { trainees: ['name'], staff: ['name'], requests: ['name', 'requested_name'], loading: ['unit_name', 'trainer_name'], units: ['name'] };
 function upsertStmts(table, cols, rows, key, update = cols.filter((c) => !(key || []).includes(c))) {
+  const named = (NAME_COLS[table] || []).filter((c) => cols.includes(c));
+  if (named.length) rows = rows.map((r) => { const o = { ...r }; for (const c of named) o[c] = nameCase(o[c]); return o; });
   const conflict = key ? ` ON CONFLICT(${key.join(',')}) DO ${update.length ? 'UPDATE SET ' + update.map((c) => `${c}=excluded.${c}`).join(',') : 'NOTHING'}` : '';
   const sql = `INSERT INTO ${table} (${cols.join(',')}) SELECT ${cols.map((_, j) => `json_extract(value,'$[${j}]')`).join(',')} FROM json_each(?) WHERE true${conflict}`;
   const out = [];
@@ -183,8 +192,26 @@ async function ready(env) {
   // Columns added after a database was first created (fail harmlessly when already there).
   for (const sql of MIGRATIONS) { try { await env.DB.exec(sql); } catch { /* column exists */ } }
   for (const sql of DATA_MIGRATIONS) { try { await env.DB.prepare(sql).run(); } catch (e) { console.error('data migration', e); } }
+  try { await caseNames(env); } catch (e) { console.error('names', e); }
   await setMeta(env, 'schema', SCHEMA_VERSION);
   schemaReady = true;
+}
+/** Once: names already in the database get a capital letter at the start of each word. */
+const CASE_COLS = [['trainees', 'name'], ['staff', 'name'], ['requests', 'name'], ['requests', 'requested_name'], ['loading', 'unit_name'], ['loading', 'trainer_name'],
+  ['units', 'name'], ['evidence', 'name'], ['evidence', 'decided_name'], ['signoffs', 'trainer_name'], ['signoffs', 'hod_name'], ['signoffs', 'unit_name'], ['devices', 'name'],
+  ['sessions', 'trainer_name'], ['sessions', 'unit_name'], ['verifications', 'trainer_name'], ['verifications', 'unit_name'], ['notices', 'by_name'], ['approvals', 'by_name']];
+async function caseNames(env) {
+  if (await getMeta(env, 'names_cased')) return;
+  for (const [t, c] of CASE_COLS) {
+    const rows = await all(env, `SELECT rowid AS k, ${c} AS v FROM ${t} WHERE ${c} IS NOT NULL AND ${c} <> ''`);
+    const changed = rows.map((r) => ({ k: r.k, v: nameCase(r.v) })).filter((r, i) => r.v !== rows[i].v);
+    for (let i = 0; i < changed.length; i += 500) {
+      const part = JSON.stringify(changed.slice(i, i + 500));
+      await run(env, `UPDATE ${t} SET ${c} = (SELECT json_extract(value,'$.v') FROM json_each(?1) WHERE json_extract(value,'$.k') = ${t}.rowid) WHERE rowid IN (SELECT json_extract(value,'$.k') FROM json_each(?1))`, part);
+    }
+  }
+  await setMeta(env, 'names_cased', nowIso());
+  await bumpRoster(env);   // staff phones fetch the lists again
 }
 const getMeta = async (env, key) => (await one(env, 'SELECT value FROM meta WHERE key=?', key))?.value ?? null;
 const metaStmt = (key, value) => ['INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, String(value)];
@@ -258,6 +285,7 @@ export default {
       const out = { ok: false, error: String(err && err.message || err) };
       if (err && err.authError) out.authError = true;
       if (err && err.mustChange) out.mustChange = true;
+      if (err && err.needPin) out.needPin = true;
       if (!(err instanceof Fail)) console.error(err);
       return reply(out);
     }
@@ -278,6 +306,7 @@ const ACTIONS = {
   submitSignoff: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => submitSignoff(env, b, me) },
   signoffs: { fn: (env, b, me) => listSignoffs(env, b, me) },
   decideSignoff: { role: ['HOD'], fn: (env, b, me) => decideSignoff(env, b, me) },
+  decideSignoffs: { role: ['HOD'], fn: (env, b, me) => decideSignoffs(env, b, me) },
   overview: { role: ['HOD', 'MIS'], pre: (b) => overviewPre(b), fn: (env, b, me, pre) => overview(pre) },
   termUnits: { fn: (env, b, me) => termUnits(env, b, me) },
   unlock: { role: ['HOD', 'MIS'], fn: (env, b, me) => setUnlock(env, b, me, true) },
@@ -304,6 +333,7 @@ const ACTIONS = {
   backupStatus: { role: ['MIS', 'HOD'], fn: (env) => backupStatus(env) },
   setBackup: { role: ['MIS', 'HOD'], fn: (env, b, me) => setBackup(env, b, me) },
   poeDecide: { role: ['TRAINER', 'HOD'], fn: (env, b, me, pre, ctx) => poeDecide(env, b, me, ctx) },
+  poeDecideMany: { role: ['TRAINER', 'HOD'], fn: (env, b, me, pre, ctx) => poeDecideMany(env, b, me, ctx) },
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
   poeClass: { role: ['MIS', 'HOD', 'IAO'], fn: (env, b) => poeClass(env, b) },
@@ -333,7 +363,7 @@ const ACTIONS = {
 
 /* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
-const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeReceive', 'submitSignoff', 'decideSignoff',
+const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
   'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep', 'decidePanel']);
 
@@ -399,6 +429,25 @@ async function login(env, b) {
   if (firstTime && !row.must_change) { await run(env, 'UPDATE staff SET must_change=1 WHERE code=?', row.code); row.must_change = 1; }
   return { ok: true, token: await makeToken(env, row), staff: staffPublic(row), mustChange: firstTime || !!row.must_change };
 }
+
+/** Approving asks for the PIN again (the app remembers it for a few minutes). Wrong PINs count towards the sign-in lock. */
+async function confirmPin(env, me, pin) {
+  pin = String(pin || '').trim();
+  if (!pin) fail('Enter your PIN to approve', { needPin: true });
+  const [lfRows, rows] = await many(env, ['SELECT * FROM login_fails WHERE code=?', me.code], ['SELECT pin_salt, pin_hash FROM staff WHERE code=?', me.code]);
+  const lf = lfRows[0], r = rows[0];
+  if (lf && lf.fails >= 5 && lf.until > nowIso()) fail('Too many wrong PINs. Try again in 15 minutes.', { needPin: true });
+  if (!r || !r.pin_hash || (await sha256Hex(r.pin_salt + '|' + pin)) !== r.pin_hash) {
+    const fails = lf && lf.until > nowIso() ? lf.fails + 1 : 1;
+    await run(env, 'INSERT INTO login_fails (code,fails,until) VALUES (?,?,?) ON CONFLICT(code) DO UPDATE SET fails=excluded.fails, until=excluded.until',
+      me.code, fails, new Date(Date.now() + 15 * 6e4).toISOString());
+    fail('Wrong PIN', { needPin: true });
+  }
+  if (lf) await run(env, 'DELETE FROM login_fails WHERE code=?', me.code);
+}
+/** What an approval says when the approver leaves the comment empty: the copy is taken as good. */
+const OK_SAID = { register: 'Checked - complete and in order.', poe: 'Checked - complete and acceptable.', marksheet: 'Checked - marks complete and in order.' };
+const BATCH_MAX = 50;
 
 /** Checks a sign-in token: genuine, staff still active, PIN not changed or reset since.
  * Reads the staff row, the change markers and any `extra` statements in one database trip;
@@ -830,9 +879,9 @@ async function updateStaff(env, b, me) {
   let row = await getStaff(env, code);
   if (!row) {
     if (!b.name) fail("Enter the staff member's name");
-    row = { code, name: b.name, roles: 'TRAINER', responsibility: '', active: 1, pin_version: 0, must_change: 1 };
+    row = { code, name: nameCase(b.name), roles: 'TRAINER', responsibility: '', active: 1, pin_version: 0, must_change: 1 };
   }
-  if (b.name) row.name = String(b.name).trim();
+  if (b.name) row.name = nameCase(b.name);
   if (b.roles) {
     const roles = rolesList(Array.isArray(b.roles) ? b.roles.join(',') : b.roles);
     if (lower(code) === lower(me.code) && !roles.includes('MIS')) fail('You cannot remove your own MIS role');
@@ -1177,12 +1226,14 @@ async function submitSignoff(env, b, me) {
   return { ok: true, signoff: signoffOut(await one(env, 'SELECT * FROM signoffs WHERE id=?', id)) };
 }
 
-async function decideSignoff(env, b, me) {
+async function decideSignoff(env, b, me, pinDone = false) {
   const old = await one(env, 'SELECT * FROM signoffs WHERE id=?', b.id);
   if (!old) fail('That register has not been submitted');
   if (b.decision !== 'approved' && b.decision !== 'returned') fail('Choose approve or return');
   if (b.decision === 'returned' && !String(b.comment || '').trim()) fail('Say what needs fixing when returning a register');
-  await run(env, 'UPDATE signoffs SET status=?, hod_code=?, hod_name=?, hod_comment=?, decided_at=? WHERE id=?', b.decision, me.code, me.name, String(b.comment || '').slice(0, 1000), nowIso(), b.id);
+  if (b.decision === 'approved' && !pinDone) await confirmPin(env, me, b.pin);
+  const said = String(b.comment || '').trim() || (b.decision === 'approved' ? OK_SAID.register : '');
+  await run(env, 'UPDATE signoffs SET status=?, hod_code=?, hod_name=?, hod_comment=?, decided_at=? WHERE id=?', b.decision, me.code, me.name, said.slice(0, 1000), nowIso(), b.id);
   if (b.decision === 'approved') {
     const ref = await makeApproval(env, me, 'HOD', 'register', old.id, `Term register - ${old.unit_code} ${old.unit_name || ''}`.trim(),
       { classCode: old.class_code, unitCode: old.unit_code, unitName: old.unit_name, trainer: old.trainer_name, termId: old.term_id }, await registerPrint(env, old));
@@ -1192,6 +1243,17 @@ async function decideSignoff(env, b, me) {
   return { ok: true, signoff: signoffOut(await one(env, 'SELECT * FROM signoffs WHERE id=?', b.id)) };
 }
 
+/** The HOD approves several registers at once (one PIN). Each gets its own approval. */
+async function decideSignoffs(env, b, me) {
+  const ids = [...new Set((b.ids || []).map(String))].slice(0, BATCH_MAX);
+  if (!ids.length) fail('Choose the registers to approve');
+  await confirmPin(env, me, b.pin);
+  const out = [], failed = [];
+  for (const id of ids) {
+    try { out.push((await decideSignoff(env, { id, decision: 'approved', comment: b.comment }, me, true)).signoff); } catch (e) { failed.push({ id, error: e.message }); }
+  }
+  return { ok: true, signoffs: out, failed };
+}
 async function listSignoffs(env, b, me) {
   const term = b.termId ? termOut(await one(env, 'SELECT * FROM terms WHERE id=?', String(b.termId))) : await activeTerm(env);
   const mine = !me.roles.includes('HOD') && !me.roles.includes('MIS');
@@ -2078,11 +2140,13 @@ async function setArchiveEmail(env, b, me) {
   await audit(env, me, 'backup account', `${email || '(none)'}, ${quotaGb} GB`);
   return { ok: true, email, quotaGb };
 }
-async function poeDecide(env, b, me, ctx) {
+async function poeDecide(env, b, me, ctx, pinDone = false) {
   const r = await evidenceFor(env, b.id, me, true);
   if (!['approved', 'returned'].includes(b.decision)) fail('Choose approve or return');
-  const comment = String(b.comment || '').trim().slice(0, 500);
+  let comment = String(b.comment || '').trim().slice(0, 500);
   if (b.decision === 'returned' && !comment) fail('Say what needs fixing when returning evidence');
+  if (b.decision === 'approved' && !pinDone) await confirmPin(env, me, b.pin);
+  if (b.decision === 'approved' && !comment) comment = OK_SAID.poe;
   const now = nowIso();
   // seen_at goes back to empty: a fresh decision is something the student has not been told yet.
   await run(env, 'UPDATE evidence SET status=?, decided_by=?, decided_name=?, decided_at=?, comment=?, updated_at=?, seen_at=NULL WHERE id=?', b.decision, me.code, me.name, now, comment, now, r.id);
@@ -2094,6 +2158,17 @@ async function poeDecide(env, b, me, ctx) {
   await audit(env, me, 'evidence', `${r.adm_no} ${r.unit_code} ${r.item} v${r.version} ${b.decision}`);
   pushLater(ctx, env, r.adm_no);
   return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', r.id)) };
+}
+/** Approves several submissions at once (one PIN). Each gets its own approval; the students are told. */
+async function poeDecideMany(env, b, me, ctx) {
+  const ids = [...new Set((b.ids || []).map(String))].slice(0, BATCH_MAX);
+  if (!ids.length) fail('Choose the evidence to approve');
+  await confirmPin(env, me, b.pin);
+  const out = [], failed = [];
+  for (const id of ids) {
+    try { out.push((await poeDecide(env, { id, decision: 'approved', comment: b.comment }, me, ctx, true)).evidence); } catch (e) { failed.push({ id, error: e.message }); }
+  }
+  return { ok: true, evidence: out, failed };
 }
 async function poeReceive(env, b, me) {
   const ids = (b.ids || []).map(String).slice(0, 1000), now = nowIso();

@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.29.1';
+const APP_VERSION = '4.30.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1334,7 +1334,7 @@ function renderSignoff() {
       <button type="button" class="btn primary" id="soSubmit"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg>${so ? 'Submit again' : 'Submit to HOD'}</button>`;
   } else if (so?.lecturerComment) html += `<p class="so-quote"><b>Lecturer's comment:</b> ${esc(so.lecturerComment)}</p>`;
   if (isHod && so && so.status !== 'approved') {
-    html += `<label>HOD's comment<textarea id="soHod" rows="2" placeholder="Shown on the register under HOD's Comment">${esc(so.hodComment || '')}</textarea></label>
+    html += `<label>HOD's comment<textarea id="soHod" rows="2" placeholder="Left empty: ${esc(OK_SAID.register)}">${esc(so.hodComment || '')}</textarea></label>${quickSays('register', 'soHod')}
       <div class="row-actions"><button type="button" class="btn primary" id="soApprove">Approve register</button><button type="button" class="btn" id="soReturn">Return to trainer</button></div>`;
   }
   card.innerHTML = html;
@@ -1356,13 +1356,67 @@ async function submitSignoff() {
 async function decideSignoff(decision) {
   const rep = state.report; if (!rep?.signoff) return;
   try {
-    const res = await api('decideSignoff', { id: rep.signoff.id, decision, comment: $('#soHod').value.trim() });
+    const body = { id: rep.signoff.id, decision, comment: $('#soHod').value.trim() };
+    const res = decision === 'approved' ? await withPin('Approve this register', (pin) => api('decideSignoff', { ...body, pin })) : await api('decideSignoff', body);
+    if (!res) return;
     if (!res.ok) throw new Error(res.error);
     rep.signoff = res.signoff;
     renderSignoff();
     toast(decision === 'approved' ? 'Register approved' : 'Register returned to the trainer', 'ok');
     window.Admin?.refreshBadge?.();
   } catch (e) { toast(e.message, 'err'); }
+}
+
+/* ---------- approving: the PIN again, short ready comments, initials for signatures ---------- */
+/** What an approval says when the comment is left empty (the server writes the same). */
+const OK_SAID = { register: 'Checked - complete and in order.', poe: 'Checked - complete and acceptable.', marksheet: 'Checked - marks complete and in order.' };
+const SAYS = {
+  register: ['Complete and in order.', 'Attendance well kept.', 'Approved - meets the requirements.'],
+  poe: ['Complete and acceptable.', 'Well presented.', 'Meets the requirements.'],
+  marksheet: ['Marks complete and in order.', 'Checked against the evidence.', 'Approved - meets the requirements.'],
+};
+/** Ready comments under a comment box: a tap puts one in the box. */
+const quickSays = (kind, target) => `<div class="says" role="group" aria-label="Ready comments">${SAYS[kind].map((s) => `<button type="button" class="chipbtn small" data-say="${esc(s)}" data-say-to="${target}">${esc(s)}</button>`).join('')}</div>`;
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-say]'); if (!b) return;
+  const box = document.getElementById(b.dataset.sayTo); if (box) { box.value = b.dataset.say; box.focus(); }
+});
+/** A signature written as the person's initials: "Musumbi Denis" -> "M.D." */
+const initials = (name) => String(name || '').replace(/[^A-Za-z\s'-]/g, ' ').split(/[\s-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + '.').join('');
+/** Approving asks for the PIN again. It is kept in memory (never saved) for 5 minutes, so a run of approvals asks once. */
+let pinMemo = null;
+function askPin(what) {
+  if (pinMemo && pinMemo.until > Date.now()) return Promise.resolve(pinMemo.pin);
+  return new Promise((resolve) => {
+    let d = $('#pinDialog');
+    if (!d) {
+      document.body.insertAdjacentHTML('beforeend', `<dialog id="pinDialog" class="pin-dialog"><form method="dialog"><h2>Confirm with your PIN</h2><p id="pinWhat" class="muted small"></p>
+        <label>PIN<input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password" maxlength="12"></label>
+        <div class="row-actions"><button value="cancel" class="btn" formnovalidate>Cancel</button><button value="ok" class="btn primary">Approve</button></div></form></dialog>`);
+      d = $('#pinDialog');
+    }
+    $('#pinWhat').textContent = what;
+    $('#pinInput').value = '';
+    d.returnValue = '';
+    d.onclose = () => {
+      const v = $('#pinInput').value.trim();
+      $('#pinInput').value = '';
+      if (d.returnValue === 'ok' && v) { pinMemo = { pin: v, until: Date.now() + 5 * 6e4 }; resolve(v); } else resolve(null);
+    };
+    d.showModal();
+    $('#pinInput').focus();
+  });
+}
+/** Runs call(pin); a wrong PIN asks again once. Gives null when the person cancels. */
+async function withPin(what, call) {
+  for (let i = 0; i < 3; i++) {
+    const pin = await askPin(what);
+    if (!pin) return null;
+    const res = await call(pin);
+    if (res && !res.ok && res.needPin) { pinMemo = null; toast(res.error, 'err'); continue; }
+    return res;
+  }
+  return null;
 }
 
 /* ---------- approvals: the stamp, the approver's name and a QR code to the public check page ---------- */
@@ -1380,7 +1434,7 @@ function approvalBlock(a) {
       <text x="110" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">${esc(String(a.role || '').toUpperCase())} - ${esc(day)}</text>
       <text x="110" y="84" text-anchor="middle" font-size="8.5" font-weight="700" textLength="178" lengthAdjust="spacingAndGlyphs" fill="currentColor">DEPARTMENT OF COMPUTING AND INFORMATICS</text></g></svg>
     <div class="approval-who"><b>Approved by ${esc(a.by)} (${esc(a.role)})</b><span>${esc(d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
-      <span>Ref <b>${esc(a.ref)}</b></span><span class="small">Scan the code or open ${esc(new URL('check.html', location.href).href)} to check this document.</span></div>
+      <span>Ref <b>${esc(a.ref)}</b></span><span class="small">Scan the code to check this document.</span></div>
     ${qr ? `<div class="approval-qr">${qr}</div>` : ''}</div>`;
 }
 

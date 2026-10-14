@@ -1062,3 +1062,14 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
   .approval-qr { width: 24mm; }
   .slip-print table th { text-align: left; width: 40mm; }
 }
+
+/* Approving: ready comments, ticking several, the PIN, signatures as initials */
+.says { display: flex; flex-wrap: wrap; gap: .35rem; margin: -.25rem 0 .6rem; }
+.says .chipbtn { font-size: .8rem; padding: .2rem .6rem; }
+.batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem .25rem .75rem; }
+.mlist li.pickable { display: flex; align-items: center; gap: .5rem; }
+.mlist li.pickable .mrow { flex: 1; min-width: 0; }
+.so-pick { width: 1.15rem; height: 1.15rem; flex: none; }
+.pin-dialog form { display: grid; gap: .6rem; min-width: min(20rem, 80vw); }
+.pin-dialog input { font-size: 1.2rem; letter-spacing: .3em; }
+td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriting", cursive; font-style: italic; font-size: 1.05em; }

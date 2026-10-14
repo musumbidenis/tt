@@ -56,6 +56,25 @@ const Admin = (() => {
 
   /* ---------- HOD: registers to approve ---------- */
   let soQuery = '', soSort = 'new', staffSort = 'name';
+  const soPicked = new Set();
+  /** The HOD approves the ticked registers with one PIN; each gets its own reference. */
+  async function batchSignoffs(btn) {
+    const ids = [...soPicked];
+    if (!ids.length) return;
+    btn.disabled = true;
+    try {
+      let done = 0, failed = 0;
+      for (let i = 0; i < ids.length; i += 50) {
+        const r = await withPin(`Approve ${ids.length} register${ids.length === 1 ? '' : 's'}`, (pin) => api('decideSignoffs', { ids: ids.slice(i, i + 50), pin }));
+        if (!r) break;
+        need(r);
+        for (const s of r.signoffs) { const k = cache.signoffs.findIndex((x) => x.id === s.id); if (k >= 0) cache.signoffs[k] = s; soPicked.delete(s.id); }
+        done += r.signoffs.length; failed += r.failed.length;
+      }
+      if (done) toast(`Approved ${done} register${done === 1 ? '' : 's'}${failed ? ` - ${failed} could not be approved` : ''}`, failed ? 'err' : 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+    drawSignoffs(); refreshBadge();
+  }
   const SO_SORT = {
     new: (a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)), old: (a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt)),
     class: (a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode), unit: (a, b) => String(a.unitName || a.unitCode).localeCompare(String(b.unitName || b.unitCode)) || a.classCode.localeCompare(b.classCode),
@@ -75,11 +94,16 @@ const Admin = (() => {
     const hit = (s) => !q || [s.classCode, s.unitCode, s.unitName, s.trainerName].some((x) => String(x || '').toLowerCase().includes(q));
     const waiting = cache.signoffs.filter((s) => s.status === 'submitted' && hit(s)).sort(SO_SORT[soSort]);
     const done = cache.signoffs.filter((s) => s.status !== 'submitted' && hit(s)).sort(SO_SORT[soSort]);
-    const item = (s) => `<li><button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
+    const item = (s) => `<li class="${s.status === 'submitted' ? 'pickable' : ''}">${s.status === 'submitted' ? `<input type="checkbox" class="so-pick" data-sopick="${esc(s.id)}"${soPicked.has(s.id) ? ' checked' : ''} aria-label="Select ${esc(s.classCode)} ${esc(s.unitCode)}">` : ''}<button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
       <span><b>${esc(s.classCode)} - ${esc(s.unitCode)}</b><small>${esc(s.unitName)} - ${esc(s.trainerName)}</small></span>
       <span class="pill ${s.status === 'approved' ? 'synced' : s.status === 'returned' ? 'rejected' : 'pending'}">${s.status === 'submitted' ? 'Submitted ' + fmtShort(s.submittedAt) : s.status === 'approved' ? 'Approved' : 'Returned'}</span></button></li>`;
     const none = q ? '<p class="muted">Nothing matches that search.</p>' : '<p class="muted">Nothing is waiting. Trainers submit their term registers from Reports.</p>';
-    box.innerHTML = (waiting.length ? `<ul class="mlist">${Tables.slice('signoffs', waiting).map(item).join('')}</ul>${Tables.bar('signoffs', waiting)}` : none)
+    const shown = Tables.slice('signoffs', waiting);
+    for (const id of [...soPicked]) if (!waiting.some((s) => s.id === id)) soPicked.delete(id);
+    const bar = waiting.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-sopickall${shown.every((s) => soPicked.has(s.id)) ? ' checked' : ''}><span>Select all ${shown.length} shown</span></label>
+      <button type="button" class="btn primary small" id="soBatch"${soPicked.size ? '' : ' disabled'}>Approve selected${soPicked.size ? ` (${soPicked.size})` : ''}</button>
+      <span class="muted small">Each gets the comment: ${esc(OK_SAID.register)}</span></div>` : '';
+    box.innerHTML = (waiting.length ? `${bar}<ul class="mlist">${shown.map(item).join('')}</ul>${Tables.bar('signoffs', waiting)}` : none)
       + (done.length ? fold('signoffsDone', `Approved or returned (${done.length})`, `<ul class="mlist">${Tables.slice('signoffsDone', done).map(item).join('')}</ul>${Tables.bar('signoffsDone', done)}`) : '');
   }
 
@@ -701,6 +725,7 @@ const Admin = (() => {
     const t = e.target;
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
+    if (t.closest('#soBatch')) { batchSignoffs(t.closest('#soBatch')); return; }
     const arc = t.closest('[data-archive]');
     if (arc) { const codes = classGroups().get(arc.dataset.archive) || []; if (codes.length && confirm(`Archive ${arc.dataset.archive}? It can be brought back later.`)) archive(codes, true, arc.dataset.archive); return; }
     const res = t.closest('[data-restore]');
@@ -768,6 +793,12 @@ const Admin = (() => {
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.closest('#loadingDepts')) drawLoadingSummary();
     if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
+    if (t.matches?.('[data-sopick]')) { if (t.checked) soPicked.add(t.dataset.sopick); else soPicked.delete(t.dataset.sopick); drawSignoffs(); return; }
+    if (t.matches?.('[data-sopickall]')) {
+      const q = soQuery.trim().toLowerCase(), hit = (s) => !q || [s.classCode, s.unitCode, s.unitName, s.trainerName].some((v) => String(v || '').toLowerCase().includes(q));
+      for (const s of Tables.slice('signoffs', cache.signoffs.filter((s) => s.status === 'submitted' && hit(s)).sort(SO_SORT[soSort]))) { if (t.checked) soPicked.add(s.id); else soPicked.delete(s.id); }
+      drawSignoffs(); return;
+    }
     if (t.id === 'soSort') { soSort = t.value; Tables.reset('signoffs'); Tables.reset('signoffsDone'); drawSignoffs(); }
     if (t.id === 'staffSort') { staffSort = t.value; drawStaff(); }
     if (t.id === 'classFiles' && t.files.length) { addClassFiles([...t.files]); t.value = ''; }
