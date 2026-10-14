@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.27.0';
+const CACHE = 'rvnp-attendance-v4.28.0';
 /* What this worker needs in order to answer a notification: the server address, this phone's ID and
  * the student's admission number. The student app writes it here when notifications are switched on,
  * because a service worker woken by a notification cannot read the app's own database. */
@@ -15,6 +15,8 @@ const ASSETS = [
   './admin.js',
   './poe-staff.js',
   './verify.js',
+  './notices.js',
+  './student-msgs.js',
   './alerts.js',
   './marks.js',
   './templates/marksheet.xlsx',
@@ -96,8 +98,14 @@ async function pushIdentity() {
   } catch { return null; }
 }
 
-/** Plain wording for what came back from the server. */
+/** Plain wording for what came back from the server. Messages (from a trainer or the office) and evidence decisions. */
 function noticeText(list) {
+  const msgs = list.filter((n) => n.kind === 'message');
+  if (msgs.length && msgs.length === list.length) {
+    return msgs.length === 1 ? { title: msgs[0].title, body: `${msgs[0].from}: ${msgs[0].body}`.slice(0, 180), url: './student.html#msgs' }
+      : { title: `${msgs.length} new messages`, body: msgs.map((m) => m.title).join(' - ').slice(0, 180), url: './student.html#msgs' };
+  }
+  if (msgs.length) list = list.filter((n) => n.kind !== 'message');
   if (list.length > 1) {
     const yes = list.filter((n) => n.status === 'approved').length, no = list.length - yes;
     return { title: `${list.length} updates on your evidence`,
@@ -126,7 +134,7 @@ async function showNotices() {
   await self.registration.showNotification(t.title, {
     body: t.body, tag: 'rvnp-evidence', renotify: true, lang: 'en',
     icon: './icons/icon-192.png', badge: './icons/icon-192.png',
-    data: { url: './student.html#poe' },
+    data: { url: t.url || './student.html#poe' },
   });
 }
 

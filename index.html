@@ -69,6 +69,7 @@
   </div>
   <div class="status">
     <span id="netBadge" class="badge">Offline</span>
+    <button type="button" id="bellBtn" class="bell-btn" hidden aria-label="Messages"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span id="bellCount" class="dot" hidden></span></button>
   </div>
 </header>
 
@@ -328,6 +329,7 @@
 
 <dialog id="poeDialog" class="sheet-dialog wide poe-dialog" aria-label="Evidence"><div id="poeDialogBody"></div></dialog>
 <dialog id="adminDialog" class="sheet-dialog wide"><div id="adminDialogBody"></div></dialog>
+<dialog id="noticeDialog" class="sheet-dialog wide" aria-label="Messages"><div id="noticeBody"></div></dialog>
 
 <!-- Kept for one release: lets phones still running version 3.x start up on this page and update themselves. -->
 <div id="legacyShim" hidden aria-hidden="true"><form id="sheetsForm"><input id="setName"><input id="setStaff"><input id="setSheetsUrl"><input id="setSheetsToken"><button type="button" id="testSheets"></button></form><input type="file" id="importTrainees"><input type="file" id="importUnits"><input type="date" id="rFrom"><input type="date" id="rTo"><button type="button" id="exportReport"></button><table id="reportTable"></table></div>
@@ -348,6 +350,7 @@
 <script src="admin.js"></script>
 <script src="poe-staff.js"></script>
 <script src="verify.js"></script>
+<script src="notices.js"></script>
 <script src="alerts.js"></script>
 <script src="marks.js"></script>
 <!-- Design notes: for pointing at parts of this screen and saying what should change.

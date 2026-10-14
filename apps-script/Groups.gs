@@ -1,4 +1,9 @@
-/* Google Groups for class, staff and panel email (bridge 1.4.3: a test only).
+/* Google Groups for class, staff and panel email, and the app's messages (bridge 1.5.0).
+ *
+ * mailAndGroups_(started), at the end of every bridge run: asks the Worker (groupsJob) for the messages waiting to be
+ * emailed and the groups whose members changed; sends each message from this account as a hidden copy (Bcc) to the groups
+ * and people it is for, with Reply-To the sender, so a reply never goes to a whole class; makes any group that does not
+ * exist yet and adds or removes members (only members this script added are ever removed); reports back (groupsDone).
  *
  * The groups are made and kept by this script through the Cloud Identity Groups API, as the account the script runs as.
  * That account needs no admin role: it can create groups (as it can at groups.google.com) and, as their owner, add
@@ -117,4 +122,63 @@ function testGroups() {
   p.setProperty('GROUPS_TEST_RESULT', new Date().toISOString() + '\n' + summary);
   Logger.log(summary);
   return summary;
+}
+
+/* ---------- the app's groups and messages ---------- */
+function groupMembers_(name) {
+  var out = [], token = '';
+  do {
+    var page = groupsApi_('get', CI + name + '/memberships?view=BASIC&pageSize=200' + (token ? '&pageToken=' + encodeURIComponent(token) : ''));
+    (page.memberships || []).forEach(function (m) { if (m.preferredMemberKey && m.preferredMemberKey.id) out.push({ email: m.preferredMemberKey.id.toLowerCase(), name: m.name, owner: (m.roles || []).some(function (r) { return r.name === 'OWNER'; }) }); });
+    token = page.nextPageToken || '';
+  } while (token);
+  return out;
+}
+function ensureGroup_(g) {
+  var name = g.groupName || groupByEmail_(g.email);
+  if (name) return name;
+  groupsApi_('post', CI + 'groups?initialGroupConfig=WITH_INITIAL_OWNER', { parent: groupsCustomer_(), groupKey: { id: g.email },
+    displayName: g.name, description: g.description || 'Kept by The ARK.', labels: { 'cloudidentity.googleapis.com/groups.discussion_forum': '' } });
+  for (var i = 0; i < 10 && !name; i++) { Utilities.sleep(1500); name = groupByEmail_(g.email); }
+  if (!name) throw new Error('Google has not finished making ' + g.email + ' yet');
+  return name;
+}
+/** Returns true when work is left over for the next run. */
+function mailAndGroups_(started) {
+  var job = callWorker_('groupsJob', {}), out = { mail: [], groups: [] }, me = Session.getEffectiveUser().getEmail(), left = false;
+  (job.mail || []).forEach(function (m) {
+    if (Date.now() - started > TIME_BUDGET_MS) { left = true; return; }
+    try {
+      var bcc = (m.bcc || []).filter(Boolean);
+      if (!bcc.length) throw new Error('nobody to send it to');
+      if (MailApp.getRemainingDailyQuota() < bcc.length) { left = true; out.mail.push({ id: m.id, ok: false, error: 'the daily email allowance is used up; it goes tomorrow', later: true }); return; }
+      MailApp.sendEmail({ to: me, bcc: bcc.join(','), name: 'The ARK', replyTo: m.replyTo || me, subject: m.subject, body: m.text, htmlBody: m.html });
+      out.mail.push({ id: m.id, ok: true });
+    } catch (e) { out.mail.push({ id: m.id, ok: false, error: String(e.message || e) }); }
+  });
+  (job.groups || []).forEach(function (g) {
+    if (Date.now() - started > TIME_BUDGET_MS) { left = true; return; }
+    var rep = { key: g.key, email: g.email, added: [], removed: [], failed: [] };
+    try {
+      rep.groupName = ensureGroup_(g);
+      var have = groupMembers_(rep.groupName), haveSet = {};
+      have.forEach(function (m) { haveSet[m.email] = m; });
+      var want = {}; (g.want || []).forEach(function (e) { want[String(e).toLowerCase()] = true; });
+      Object.keys(want).forEach(function (e) {
+        if (haveSet[e]) return;
+        try { groupsApi_('post', CI + rep.groupName + '/memberships', { preferredMemberKey: { id: e }, roles: [{ name: 'MEMBER' }] }); rep.added.push(e); }
+        catch (err) { rep.failed.push(e + ': ' + err.message); }
+      });
+      // Only those this script added, and no longer wanted, are taken out: anyone added by hand stays.
+      (g.added || []).forEach(function (e) {
+        e = String(e).toLowerCase();
+        if (want[e] || !haveSet[e] || haveSet[e].owner) return;
+        try { groupsApi_('delete', CI + haveSet[e].name); rep.removed.push(e); }
+        catch (err) { rep.failed.push(e + ': ' + err.message); }
+      });
+    } catch (e) { rep.error = String(e.message || e); }
+    out.groups.push(rep);
+  });
+  if (out.mail.length || out.groups.length) callWorker_('groupsDone', out);
+  return left || !!job.more;
 }

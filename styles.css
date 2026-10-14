@@ -662,7 +662,8 @@ fieldset .more[open] summary { flex-basis: 100%; }
 .view-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding: 4px; margin-bottom: 1rem; background: var(--sunk); border-radius: var(--r-lg); }
 .view-tabs button { appearance: none; border: 0; border-radius: 9px; padding: .65rem .5rem; background: none; color: var(--ink-2); font: 600 .9375rem var(--display); cursor: pointer; }
 .view-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
-body.student .view-checkin, body.student .view-poe, body.student .view-subs { display: none; }
+body.student .view-checkin, body.student .view-poe, body.student .view-subs, body.student .view-msgs { display: none; }
+body.student[data-view="msgs"] .view-msgs { display: block; }
 body.student:not([data-view]) .view-checkin, body.student[data-view="checkin"] .view-checkin,
 body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-subs { display: block; }
 .field-label { font-weight: 600; margin: .75rem 0 .4rem; }
@@ -1032,3 +1033,16 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .ver-print .sign-lines { margin-top: 8mm; }
 .ver-print .sign-lines th { text-align: left; }
 .ver-print .sign-lines td { min-width: 30mm; border-bottom: .2mm solid #000; }
+
+/* Messages: the bell in the staff header, the messages dialog, the student list */
+.bell-btn { position: relative; appearance: none; border: 0; background: rgba(255,255,255,.12); color: #fff; width: 36px; height: 36px; border-radius: 50%; display: inline-grid; place-items: center; cursor: pointer; margin-left: .4rem; }
+.bell-btn svg.i { width: 20px; height: 20px; }
+.bell-btn .dot { position: absolute; top: -4px; right: -4px; }
+.notice-list li { display: block; }
+.notice-list li.unread b::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--a); margin-right: .4rem; vertical-align: middle; }
+.notice-list p { margin: .3rem 0; white-space: pre-wrap; }
+.notice-form { display: grid; gap: .6rem; }
+.notice-form .to-box { border: 1px solid var(--line); border-radius: var(--r); padding: .5rem .6rem; display: grid; gap: .35rem; }
+.notice-form .chips-wrap { display: flex; flex-wrap: wrap; gap: .35rem; }
+#viewTabs [data-view=msgs] { position: relative; }
+#viewTabs .dot { margin-left: .3rem; }

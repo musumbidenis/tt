@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.0.0';
-const SCHEMA_VERSION = '12';
+export const VERSION = '7.1.0';
+const SCHEMA_VERSION = '13';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -66,6 +66,11 @@ CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);
 CREATE TABLE IF NOT EXISTS panels (id TEXT PRIMARY KEY, term_id TEXT, name TEXT, chair TEXT, members TEXT, status TEXT, note TEXT, created_by TEXT, created_at TEXT, decided_by TEXT, decided_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS verifications (id TEXT PRIMARY KEY, panel_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, verifier TEXT, external TEXT, population INTEGER, risk REAL, size INTEGER, seed TEXT, sample TEXT, reasons TEXT, round INTEGER DEFAULT 1, status TEXT, result TEXT, actions TEXT, response TEXT, responded_at TEXT, submitted_at TEXT, signed_by TEXT, signed_at TEXT, ext_result TEXT, ext_note TEXT, ext_at TEXT, log TEXT, updated_at TEXT);
 CREATE INDEX IF NOT EXISTS verifications_panel ON verifications (panel_id);
+CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT);
+CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
+CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
+CREATE TABLE IF NOT EXISTS mail_groups (key TEXT PRIMARY KEY, email TEXT, name TEXT, group_name TEXT, added TEXT, want_hash TEXT, synced_at TEXT, error TEXT, failed TEXT);
+CREATE TABLE IF NOT EXISTS mail_out (id TEXT PRIMARY KEY, notice_id TEXT, bcc TEXT, reply_to TEXT, subject TEXT, body TEXT, status TEXT, tries INTEGER DEFAULT 0, error TEXT, at TEXT, sent_at TEXT);
 CREATE TABLE IF NOT EXISTS verify_checks (verification_id TEXT, adm_no TEXT COLLATE NOCASE, who TEXT, valid INTEGER, authentic INTEGER, current INTEGER, sufficient INTEGER, agree INTEGER, comment TEXT, by_code TEXT, at TEXT, PRIMARY KEY (verification_id, adm_no, who));`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
@@ -82,7 +87,9 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // Classes taught one unit together ("ICT L6ICT-26J, ICT L6ICT-26M-CT" in the loading): each class's row names them all.
   'ALTER TABLE loading ADD COLUMN joint TEXT',
   // An External Assessment Officer's account stops working after this date.
-  'ALTER TABLE staff ADD COLUMN ends_on TEXT'];
+  'ALTER TABLE staff ADD COLUMN ends_on TEXT',
+  // A class representative (in the class reps' email group).
+  'ALTER TABLE trainees ADD COLUMN rep INTEGER'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -307,6 +314,10 @@ const ACTIONS = {
   respondVerification: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => respondVerification(env, b, me) },
   signVerification: { fn: (env, b, me) => signVerification(env, b, me) },
   externalVerdict: { role: ['EAO'], fn: (env, b, me) => externalVerdict(env, b, me) },
+  noticeOptions: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => noticeOptions(env, me) },
+  sendNotice: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me, pre, ctx) => sendNotice(env, b, me, ctx) },
+  myNotices: { fn: (env, b, me) => myNotices(env, b, me) },
+  setRep: { role: ['MIS', 'HOD', 'TRAINER'], fn: (env, b, me) => setRep(env, b, me) },
   marksPull: { fn: (env, b, me) => marksPull(env, b, me) },
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   importRegCodes: { role: ['MIS'], fn: (env, b, me) => importRegCodes(env, b, me) },
@@ -319,7 +330,7 @@ const ACTIONS = {
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'poeDone', 'poeDecide', 'poeReceive', 'submitSignoff', 'decideSignoff',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
-  'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup']);
+  'updateStudent', 'updateStaff', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep', 'decidePanel']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -706,7 +717,7 @@ async function studentsOf(env, misClass, classCode) {
   const rows = classCode
     ? await all(env, 'SELECT * FROM trainees WHERE class_code=?', classCode)
     : await all(env, 'SELECT t.* FROM trainees t LEFT JOIN classes c ON c.code=t.class_code WHERE t.mis_class=? OR c.mis_class=?', misClass, misClass);
-  return { ok: true, students: rows.map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, status: active(r) ? 'active' : (r.status || 'withdrawn'), note: r.note })) };
+  return { ok: true, students: rows.map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, status: active(r) ? 'active' : (r.status || 'withdrawn'), note: r.note, rep: !!r.rep, email: !!r.email })) };
 }
 
 /** MIS: move a student to another stream, withdraw them, or bring them back. */
@@ -1385,6 +1396,8 @@ const BRIDGE_ACTIONS = {
   },
   backupJob: async (env, b) => backupJob(env, await verifyBridge(env, b)),
   backupDone: async (env, b) => backupDone(env, await verifyBridge(env, b)),
+  groupsJob: async (env, b) => { await verifyBridge(env, b); return groupsJob(env); },
+  groupsDone: async (env, b) => groupsDone(env, await verifyBridge(env, b)),
 };
 
 /* ---------- backup: approved documents copied into the backup account's Drive ----------
@@ -1934,12 +1947,19 @@ const STUDENT_ACTIONS = {
   /** What to tell this student, and nothing they have already been told. `seen` marks notices read,
    *  so the same decision is never shown twice. More kinds can be added to the list later (each one
    *  carries its own `kind`), for example a warning when attendance falls below the minimum. */
+  /** Messages to this student (from a trainer, the HOD, the MIS Officer or the Internal Assessment Officer), newest first;
+   *  `read` marks some read. */
+  async messages(env, b) {
+    const t = await studentOf(env, b);
+    return { ok: true, messages: await noticesFor(env, t.adm_no, 'students', b.read) };
+  },
   async notices(env, b) {
     const t = await studentOf(env, b);
     const seen = (b.seen || []).map(String).filter(Boolean).slice(0, 50);
     if (seen.length) await run(env, `UPDATE evidence SET seen_at=? WHERE adm_no=? AND seen_at IS NULL AND id IN ${IN}`, nowIso(), t.adm_no, JSON.stringify(seen));
     const rows = await all(env, "SELECT * FROM evidence WHERE adm_no=? AND status IN ('approved','returned') AND seen_at IS NULL ORDER BY decided_at DESC LIMIT 20", t.adm_no);
-    return { ok: true, notices: rows.map(noticeOut) };
+    const msgs = (await noticesFor(env, t.adm_no, 'students')).filter((m) => !m.read).slice(0, 5).map((m) => ({ kind: 'message', id: m.id, title: m.title, body: m.body, from: m.from, at: m.at }));
+    return { ok: true, notices: [...rows.map(noticeOut), ...msgs] };
   },
 };
 
@@ -2407,6 +2427,186 @@ async function externalVerdict(env, b, me) {
   const result = String(b.result || '');
   if (!VERDICTS.includes(result)) fail('Choose the result');
   return { ok: true, verification: await saveVer(env, v, { ext_result: result, ext_note: String(b.note || '').trim().slice(0, 2000), ext_at: nowIso() }, logLine(me, `external result: ${result.replace('_', ' ')}`)) };
+}
+/* ---------- messages: in the app, on the phone, and by email to Google Groups ----------
+ * Anyone with a staff role but the External Assessment Officer can send a message. Who it can reach follows their access:
+ * a trainer their own classes, their class reps and their panels; the HOD, MIS Officer and Internal Assessment Officer
+ * anyone. Each message shows in the bell of everyone it is for, wakes students' phones (when notifications are set up),
+ * and goes by email to the groups the bridge keeps (one email per group, sent as a hidden copy) and to anyone named. */
+const NOTICE_TARGETS = ['class', 'trainers', 'reps', 'coordinators', 'panel', 'student'];
+const slugOf = (s) => lower(s).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+/** A group's address: a class by its code (ict-l6cs-25sa@…); the others start with "ark-" so they cannot clash with a person. */
+function groupEmail(env, key, panels = []) {
+  if (!env.GOOGLE_DOMAIN) return '';
+  const local = key.startsWith('class:') ? slugOf(key.slice(6))
+    : key.startsWith('panel:') ? 'ark-panel-' + slugOf(panels.find((p) => p.id === key.slice(6))?.name || key.slice(6, 14))
+      : { trainers: 'ark-trainers', reps: 'ark-class-reps', coordinators: 'ark-coordinators' }[key] || 'ark-' + slugOf(key);
+  return `${local}@${env.GOOGLE_DOMAIN}`;
+}
+/** Everything the groups and audiences are made from. */
+async function audienceFacts(env) {
+  const [loading, trainees, staff, panels, classRows] = await many(env, [`SELECT class_code, unit_code, trainer_code FROM loading WHERE term_id=${ACTIVE_TERM}`],
+    [`SELECT adm_no, name, class_code, email, rep, status FROM trainees WHERE COALESCE(status,'') NOT IN ${GONE}`],
+    ['SELECT code, name, roles, responsibility, email, active FROM staff WHERE active=1'], ["SELECT * FROM panels WHERE status='approved'"], ["SELECT code FROM classes WHERE status='archived'"]);
+  const gone = new Set(classRows.map((r) => r.code));
+  const classes = [...new Set(loading.flatMap((u) => classParts(u.class_code)))].filter((c) => !gone.has(c)).sort();
+  const trainers = new Set(loading.map((u) => lower(u.trainer_code)).filter(Boolean));
+  return { loading, trainees: trainees.filter((t) => !gone.has(t.class_code)), staff, panels, classes, trainers };
+}
+/** The audiences one person may send to. */
+function allowedTargets(me, f) {
+  const all = seesAll(me);
+  const myClasses = new Set(f.loading.filter((u) => lower(u.trainer_code) === lower(me.code)).flatMap((u) => classParts(u.class_code)));
+  const classes = all ? f.classes : f.classes.filter((c) => myClasses.has(c));
+  const panels = f.panels.filter((p) => all || inPanel(p, me.code));
+  return { classes, panels, trainers: all, reps: all || classes.length > 0, coordinators: all, students: all ? null : new Set(f.trainees.filter((t) => myClasses.has(t.class_code)).map((t) => lower(t.adm_no))) };
+}
+async function noticeOptions(env, me) {
+  const f = await audienceFacts(env), a = allowedTargets(me, f);
+  const count = (c) => f.trainees.filter((t) => t.class_code === c).length;
+  return { ok: true, classes: a.classes.map((c) => ({ code: c, students: count(c), emails: f.trainees.filter((t) => t.class_code === c && t.email).length })),
+    panels: a.panels.map((p) => ({ id: p.id, name: p.name })), trainers: a.trainers, reps: a.reps, coordinators: a.coordinators,
+    email: !!env.GOOGLE_DOMAIN, push: !!env.VAPID_PRIVATE_KEY };
+}
+/** Who one message reaches: staff codes and students for the bell and phones, group addresses and named people for email. */
+function resolveAudience(env, targets, me, f) {
+  const a = allowedTargets(me, f), staff = new Set(), students = new Set(), groups = new Set(), people = new Set(), label = [];
+  const staffBy = new Map(f.staff.map((s) => [lower(s.code), s]));
+  for (const t of targets) {
+    if (!NOTICE_TARGETS.includes(t.t)) continue;
+    if (t.t === 'class') {
+      if (!a.classes.includes(t.code)) fail(`You cannot send to ${t.code}`);
+      for (const s of f.trainees.filter((x) => x.class_code === t.code)) students.add(lower(s.adm_no));
+      groups.add('class:' + t.code); label.push(t.code);
+    } else if (t.t === 'trainers') {
+      if (!a.trainers) fail('Only the HOD, the MIS Officer or the Internal Assessment Officer can send to all trainers');
+      f.trainers.forEach((c) => staff.add(c)); groups.add('trainers'); label.push('All trainers');
+    } else if (t.t === 'reps') {
+      if (!a.reps) fail('You cannot send to the class reps');
+      const mine = new Set(a.classes);
+      for (const s of f.trainees.filter((x) => x.rep && mine.has(x.class_code))) { students.add(lower(s.adm_no)); if (seesAll(me)) continue; if (s.email) people.add(lower(s.email)); }
+      if (seesAll(me)) groups.add('reps'); label.push('Class reps');
+    } else if (t.t === 'coordinators') {
+      if (!a.coordinators) fail('You cannot send to the class coordinators');
+      for (const s of f.staff.filter((x) => /coordinat/i.test(x.responsibility || ''))) staff.add(lower(s.code));
+      groups.add('coordinators'); label.push('Class coordinators');
+    } else if (t.t === 'panel') {
+      const p = a.panels.find((x) => x.id === t.id);
+      if (!p) fail('You cannot send to that panel');
+      [p.chair, ...JSON.parse(p.members || '[]')].forEach((c) => staff.add(lower(c))); groups.add('panel:' + p.id); label.push(p.name);
+    } else if (t.t === 'student') {
+      const s = f.trainees.find((x) => lower(x.adm_no) === lower(t.adm));
+      if (!s || (a.students && !a.students.has(lower(s.adm_no)))) fail('You can only write to students in your classes');
+      students.add(lower(s.adm_no)); if (s.email) people.add(lower(s.email)); label.push(s.name);
+    }
+  }
+  staff.delete(lower(me.code));
+  return { staff: [...staff], students: [...students], groups: [...groups].filter((g) => groupEmail(env, g, f.panels)), people: [...people], label: label.join(', ') };
+}
+async function sendNotice(env, b, me, ctx) {
+  const title = String(b.title || '').trim().slice(0, 120), body = String(b.body || '').trim().slice(0, 4000);
+  if (!title) fail('Give the message a title');
+  if (!body) fail('Write the message');
+  const targets = Array.isArray(b.to) ? b.to.slice(0, 50) : [];
+  if (!targets.length) fail('Choose who the message is for');
+  const ch = { app: true, push: b.push !== false, email: b.email !== false };
+  const f = await audienceFacts(env), aud = resolveAudience(env, targets, me, f);
+  if (!aud.staff.length && !aud.students.length && !aud.groups.length && !aud.people.length) fail('Nobody is in that audience yet');
+  const id = crypto.randomUUID(), now = nowIso();
+  const sender = f.staff.find((s) => lower(s.code) === lower(me.code));
+  const groupMails = ch.email ? aud.groups.map((g) => groupEmail(env, g, f.panels)) : [];
+  const bcc = ch.email ? [...new Set([...groupMails, ...aud.people])] : [];
+  const stmts = [[`INSERT INTO notices (id,at,by_code,by_name,title,body,audience,channels,staff,students,groups,counts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    id, now, me.code, me.name, title, body, aud.label, JSON.stringify(ch), JSON.stringify(aud.staff), JSON.stringify(aud.students), JSON.stringify(aud.groups),
+    JSON.stringify({ staff: aud.staff.length, students: aud.students.length, emails: bcc.length })]];
+  if (bcc.length) {
+    const text = `${body}\n\n— ${me.name}, through The ARK (${aud.label}). Reply to this email to answer ${me.name}.`;
+    stmts.push(['INSERT INTO mail_out (id,notice_id,bcc,reply_to,subject,body,status,at) VALUES (?,?,?,?,?,?,?,?)', crypto.randomUUID(), id, JSON.stringify(bcc), sender?.email || '', title, text, 'queued', now]);
+  }
+  await many(env, ...stmts);
+  await audit(env, me, 'message', `${title} → ${aud.label}`);
+  // Students' phones (only when notifications are set up), after the reply has gone out.
+  if (ch.push && env.VAPID_PRIVATE_KEY && aud.students.length) ctx?.waitUntil?.((async () => { for (const a of aud.students.slice(0, 300)) { try { await pushToStudent(env, a); } catch { /* next */ } } })());
+  if (bcc.length) ctx?.waitUntil?.(nudgeDrive(env).catch(() => {}));
+  return { ok: true, id, reached: { staff: aud.staff.length, students: aud.students.length, groups: groupMails.length, people: ch.email ? aud.people.length : 0 } };
+}
+const noticeView = (r, read) => ({ id: r.id, at: r.at, title: r.title, body: r.body, from: r.by_name, fromCode: r.by_code, to: r.audience, read: !!read });
+/** Messages for one person (`staff` code or `students` admission number), newest first, the last 60 days. */
+async function noticesFor(env, who, col, markRead) {
+  const ids = (Array.isArray(markRead) ? markRead : []).map(String).filter(Boolean).slice(0, 100);
+  if (ids.length) await run(env, `INSERT OR IGNORE INTO notice_reads (notice_id, who, at) SELECT value, ?, ? FROM json_each(?)`, who, nowIso(), JSON.stringify(ids));
+  const since = new Date(Date.now() - 60 * 864e5).toISOString();
+  const rows = await all(env, `SELECT n.*, r.at AS read_at FROM notices n LEFT JOIN notice_reads r ON r.notice_id=n.id AND r.who=?1
+    WHERE n.at > ?2 AND EXISTS (SELECT 1 FROM json_each(n.${col}) WHERE lower(value)=lower(?1)) ORDER BY n.at DESC LIMIT 80`, who, since);
+  return rows.map((r) => noticeView(r, r.read_at));
+}
+async function myNotices(env, b, me) {
+  const inbox = await noticesFor(env, me.code, 'staff', b.read);
+  const sent = (await all(env, 'SELECT * FROM notices WHERE lower(by_code)=lower(?) ORDER BY at DESC LIMIT 30', me.code))
+    .map((r) => ({ ...noticeView(r, true), counts: JSON.parse(r.counts || '{}'), channels: JSON.parse(r.channels || '{}') }));
+  const mail = sent.length ? await all(env, `SELECT notice_id, status, error FROM mail_out WHERE notice_id IN (SELECT value FROM json_each(?))`, JSON.stringify(sent.map((s) => s.id))) : [];
+  for (const s of sent) { const m = mail.find((x) => x.notice_id === s.id); if (m) s.email = { status: m.status, error: m.error || '' }; }
+  return { ok: true, inbox, sent, unread: inbox.filter((n) => !n.read).length };
+}
+async function setRep(env, b, me) {
+  const t = await one(env, 'SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || ''));
+  if (!t) fail('That student is not on a class list');
+  if (!seesAll(me) && !(await myUnitPairs(env, me)).loading.some((u) => lower(u.trainer_code) === lower(me.code) && classParts(u.class_code).includes(t.class_code))) fail('You can only choose class reps for your classes');
+  await many(env, ['UPDATE trainees SET rep=?, updated_at=? WHERE adm_no=?', b.rep ? 1 : null, nowIso(), t.adm_no], changedStmt());
+  await audit(env, me, 'class rep', `${t.adm_no} ${b.rep ? 'is' : 'is no longer'} a class rep of ${t.class_code}`);
+  return { ok: true };
+}
+/* The groups the bridge keeps: one per class, all trainers, class reps, class coordinators, one per approved panel. */
+async function wantedGroups(env) {
+  if (!env.GOOGLE_DOMAIN) return [];
+  const f = await audienceFacts(env), em = (list) => [...new Set(list.map((x) => lower(x.email || '')).filter(Boolean))].sort();
+  const staffBy = new Map(f.staff.map((s) => [lower(s.code), s]));
+  const out = f.classes.map((c) => ({ key: 'class:' + c, name: `${c} - students`, want: em(f.trainees.filter((t) => t.class_code === c)) }));
+  out.push({ key: 'trainers', name: 'All trainers', want: em([...f.trainers].map((c) => staffBy.get(c)).filter(Boolean)) });
+  out.push({ key: 'reps', name: 'Class reps', want: em(f.trainees.filter((t) => t.rep)) });
+  out.push({ key: 'coordinators', name: 'Class coordinators', want: em(f.staff.filter((s) => /coordinat/i.test(s.responsibility || ''))) });
+  for (const p of f.panels) out.push({ key: 'panel:' + p.id, name: `Panel - ${p.name}`, want: em([p.chair, ...JSON.parse(p.members || '[]')].map((c) => staffBy.get(lower(c))).filter(Boolean)) });
+  return out.map((g) => ({ ...g, email: groupEmail(env, g.key, f.panels) }));
+}
+const hashOf = async (s) => (await sha256Hex(s)).slice(0, 16);
+/** For the bridge: messages waiting to be emailed, and the groups whose members changed (a few at a time). */
+async function groupsJob(env) {
+  const [mail, known] = await many(env, ["SELECT * FROM mail_out WHERE status='queued' ORDER BY at LIMIT 25"], ['SELECT * FROM mail_groups']);
+  const byKey = new Map(known.map((g) => [g.key, g])), groups = [], wantedList = await wantedGroups(env);
+  for (const g of wantedList) {
+    const k = byKey.get(g.key), h = await hashOf(g.email + '|' + g.want.join(','));
+    if (k && k.group_name && k.want_hash === h && !k.error) continue;
+    groups.push({ key: g.key, email: g.email, name: g.name, description: `${g.name}. Kept by The ARK: members are added and removed automatically.`,
+      groupName: k?.email === g.email ? k?.group_name || '' : '', want: g.want, added: JSON.parse(k?.added || '[]'), hash: h });
+  }
+  // Group email is sent to the group's address, so a message waits until every group it is for exists.
+  const ready = new Set(known.filter((g) => g.group_name).map((g) => lower(g.email)));
+  const wanted = new Set(wantedList.map((g) => lower(g.email)));
+  const sendable = mail.filter((m) => JSON.parse(m.bcc || '[]').every((e) => !wanted.has(lower(e)) || ready.has(lower(e))))
+    .map((m) => ({ id: m.id, bcc: JSON.parse(m.bcc || '[]'), replyTo: m.reply_to || '', subject: m.subject, text: m.body,
+    html: `<div style="font:15px/1.5 Arial,sans-serif;white-space:pre-wrap">${String(m.body).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</div>` }))
+    .filter((m) => m.bcc.length);
+  return { ok: true, mail: sendable, groups: groups.slice(0, 8), more: groups.length > 8 };
+}
+async function groupsDone(env, b) {
+  const now = nowIso(), stmts = [];
+  const wanted = new Map((await wantedGroups(env)).map((g) => [g.key, g]));
+  for (const r of b.groups || []) {
+    const g = wanted.get(r.key); if (!g) continue;
+    const k = await one(env, 'SELECT * FROM mail_groups WHERE key=?', r.key);
+    const added = new Set(JSON.parse(k?.added || '[]').map(lower));
+    (r.added || []).forEach((e) => added.add(lower(e))); (r.removed || []).forEach((e) => added.delete(lower(e)));
+    const h = r.error ? null : await hashOf(g.email + '|' + g.want.join(','));
+    stmts.push([`INSERT INTO mail_groups (key,email,name,group_name,added,want_hash,synced_at,error,failed) VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(key) DO UPDATE SET email=excluded.email, name=excluded.name, group_name=COALESCE(excluded.group_name, mail_groups.group_name), added=excluded.added, want_hash=excluded.want_hash, synced_at=excluded.synced_at, error=excluded.error, failed=excluded.failed`,
+    r.key, g.email, g.name, r.groupName || k?.group_name || null, JSON.stringify([...added]), (r.failed || []).length ? null : h, now, r.error || null, JSON.stringify((r.failed || []).slice(0, 20))]);
+  }
+  for (const m of b.mail || []) {
+    if (m.ok) stmts.push(["UPDATE mail_out SET status='sent', sent_at=?, error=NULL WHERE id=?", now, m.id]);
+    else stmts.push([`UPDATE mail_out SET tries=COALESCE(tries,0)+?, error=?, status=CASE WHEN COALESCE(tries,0)+? >= 5 THEN 'failed' ELSE 'queued' END WHERE id=?`, m.later ? 0 : 1, String(m.error || '').slice(0, 300), m.later ? 0 : 1, m.id]);
+  }
+  if (stmts.length) await many(env, ...stmts);
+  return { ok: true };
 }
 async function driveStatus(env) {
   const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);

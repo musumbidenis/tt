@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.27.0';
+const APP_VERSION = '4.28.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1869,6 +1869,7 @@ let liveTimer = null, liveBusy = false;
 let lastTouch = Date.now();
 const idle = () => Date.now() - lastTouch > IDLE_AFTER_MS;
 async function liveTick() {
+  Notices.tick();
   clearTimeout(liveTimer);
   if (liveBusy) return; // a check is already running; it schedules the next one when done
   // Off screen: nothing is asked and nothing is scheduled. visibilitychange starts it again.
@@ -2029,6 +2030,7 @@ async function signOut() {
   if (!confirm(pending ? `${pending} register(s) are not sent yet. They stay on this device and are sent after you sign in again. Sign out?` : 'Sign out of this device?')) return;
   await saveAuth(null);
   PoeStaff.reset();
+  Notices.reset();
   showSignin();
 }
 
@@ -2104,6 +2106,8 @@ function applyRoles() {
   window.Admin?.refreshBadge?.();
   if (me()) PoeStaff.refreshBadge();
   if (me()) window.Alerts?.refreshBadge();
+  Notices.show();
+  if (me()) Notices.tick();
 }
 
 function updateNet() {
@@ -2174,6 +2178,7 @@ function wire() {
   if (window.ResizeObserver) new ResizeObserver(measureBar).observe(bar);
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   PoeStaff.wire();
+  Notices.wire();
   Marks.wire();
   document.addEventListener('click', (e) => { const g = e.target.closest('[data-goto]'); if (g) { e.preventDefault(); switchTab(g.dataset.goto); } });
 

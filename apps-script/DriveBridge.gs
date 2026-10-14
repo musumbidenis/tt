@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.4.5';
+var BRIDGE_VERSION = '1.5.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -243,6 +243,8 @@ function sync() {
     report.folders = folders.map(function (f) { return { id: f.id, name: f.name }; });
     report.bridge = BRIDGE_VERSION;
     callWorker_('bridgeReport', report);
+    // The app's messages and class groups (Groups.gs) go first: people are waiting for them.
+    try { if (mailAndGroups_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('groups and email: ' + e); }
     // Backups use whatever time this run has left; unfinished ones carry on in the next run.
     try { if (backup_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('backup: ' + e); }
   } finally { lock.releaseLock(); }

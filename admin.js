@@ -417,8 +417,8 @@ const Admin = (() => {
       $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} - ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
         <input type="search" id="grpSearch" placeholder="Search name or admission no." aria-label="Search students">
         <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" class="${s.status !== 'active' ? 'gone' : ''}">
-          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status) : ''}</small></span>
-          <span class="st-actions"><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status) : ''}${s.email ? '' : ' - no college email yet'}</small></span>
+          <span class="st-actions"><label class="check small"><input type="checkbox" data-rep="${esc(s.admNo)}"${s.rep ? ' checked' : ''}> Class rep</label><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button></span></li>`).join('')}</ul>`;
       if (hasRole('MIS')) {
         $('#adminDialogBody').insertAdjacentHTML('beforeend', `<div class="archive-row"><p class="muted small">Finished with this class? Archiving hides it, its students and its loading from day-to-day screens. Nothing is deleted, and it can be brought back.</p>
@@ -777,6 +777,7 @@ const Admin = (() => {
     if (t.matches('[data-drivefolder]')) setDriveFolder(t);
     if (t.matches('[data-drivelink]') && t.value.trim()) setDriveFolder(t);
     if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
+    if (t.matches('.students [data-rep]')) api('setRep', { admNo: t.dataset.rep, rep: t.checked }).then((r) => toast(r.ok ? (t.checked ? 'Class rep: added to the class reps\' group' : 'No longer a class rep') : r.error, r.ok ? 'ok' : 'err'));
     if (t.matches('.staff .rolechip input')) { const li = t.closest('li'); staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved'); }
     if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
     if (t.id === 'nsRole') { $('#nsEndsBox').hidden = t.value !== 'EAO'; $('#nsEnds').required = t.value === 'EAO'; }
