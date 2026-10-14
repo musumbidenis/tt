@@ -262,8 +262,11 @@ const Admin = (() => {
     try {
       const breaks = $$('#tBreaks input').map((i) => i.value).filter(Boolean);
       const catWeeks = $$('.catweeks input:checked').map((i) => Number(i.value));
-      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks, lessonHours: Number($('#tHours').value) || null, series: $('#tSeries').value.trim() }));
+      const termId = $('#tId').value.trim(), cur = state.meta.term;
+      if (cur && termId && termId !== cur.id && !confirm(`Starting ${$('#tName').value.trim() || 'a new term'} ends ${cur.name}. Every student is marked inactive until their class list for the new term is uploaded - the upload brings them back, with their marks and evidence. Continue?`)) return;
+      const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId, duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks, lessonHours: Number($('#tHours').value) || null, series: $('#tSeries').value.trim() }));
       const last = res.weeks.length;
+      if (res.ended) toast(`${res.ended} ended: ${res.inactive} student${res.inactive === 1 ? '' : 's'} inactive until the new class lists are uploaded`, 'ok');
       toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week ${last} starts ${fmtShort(res.weeks[last - 1])}${res.term.catWeeks?.length ? ` - CAT weeks ${res.term.catWeeks.join(', ')}` : ''}`, 'ok');
       await pullRoster({ silent: true });
       $('#m-term') && replaceBody($('#m-term'), termHtml());
@@ -274,7 +277,8 @@ const Admin = (() => {
   /* ---------- MIS: loading ---------- */
   function loadingHtml() {
     const units = state.units.filter((u) => u.trainerCode);
-    return `<p class="muted">${units.length ? `${units.length} class units loaded for ${esc(state.meta.term?.name || 'this term')}.` : 'No loading uploaded for this term yet.'}
+    const carry = units.filter((u) => u.continuing).length;
+    return `<p class="muted">${units.length ? `${units.length} class units loaded for ${esc(state.meta.term?.name || 'this term')}: ${units.length - carry} new, ${carry} carrying on from an earlier term.` : 'No loading uploaded for this term yet.'}
       Upload the department loading workbook; the app reads its <b>Subject Loading</b>, <b>List of Trainers</b> and <b>List of Subject</b> tabs only.</p>
       <label class="btn file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Choose loading workbook<input type="file" id="loadingFile" accept=".xlsx,.xlsm"></label>
       <div id="loadingPreview"></div>`;
@@ -325,10 +329,12 @@ const Admin = (() => {
     busy(btn, true, 'Uploading…');
     try {
       const res = need(await api('uploadLoading', { rows: loadingRows(), trainers: loadingPreview.trainers }));
-      toast(`Loading saved: ${res.rows} class units, ${res.trainers} trainers${res.newStaff ? ` (${res.newStaff} new — issue their PINs under Staff)` : ''}`, 'ok');
+      toast(`Loading saved: ${res.rows} class units (${res.newUnits} new, ${res.continuing} carrying on), ${res.trainers} trainers${res.newStaff ? ` (${res.newStaff} new - issue their PINs under Staff)` : ''}`, 'ok');
       loadingPreview = null;
       await pullRoster({ silent: true });
       replaceBody($('#m-loading'), loadingHtml());
+      if (res.finished?.length) $('#m-loading').insertAdjacentHTML('beforeend', fold('finishedUnits', `Finished last term - not in this loading (${res.finished.length})`,
+        `<ul class="mlist">${res.finished.map((u) => `<li><span><b>${esc(u.classCode)} - ${esc(u.unitCode)}</b><small>${esc(u.unitName)}</small></span></li>`).join('')}</ul>`));
       replaceBody($('#m-classes'), classesHtml());
       loadStaff();
     } catch (e) { toast(e.message, 'err'); busy(btn, false); }
@@ -466,7 +472,7 @@ const Admin = (() => {
       const res = need(await api('importClassList', { misClass: imp.misClass, streams: imp.streams, students: imp.students, dryRun: !apply, withdraw: imp.withdraw, useNewNames: imp.useNewNames, assign }));
       if (apply) {
         const split = imp.streams.length > 1 ? ' - ' + Object.entries(res.byStream).map(([st, n]) => `${streamLabels(imp.streams)[st]} ${n}`).join(', ') : '';
-        toast(`${imp.misClass}: ${res.added.length} added${res.moved.length ? `, ${res.moved.length} moved` : ''}${imp.withdraw.length ? `, ${imp.withdraw.length} withdrawn` : ''}${split}`, 'ok');
+        toast(`${imp.misClass}: ${res.added.length} added${res.back?.length ? `, ${res.back.length} back for this term` : ''}${res.moved.length ? `, ${res.moved.length} moved` : ''}${imp.withdraw.length ? `, ${imp.withdraw.length} withdrawn` : ''}${split}`, 'ok');
         classImports.splice(Number(card.dataset.i), 1);
         await pullRoster({ silent: true });
         replaceBody($('#m-classes'), classesHtml());
@@ -487,7 +493,8 @@ const Admin = (() => {
       $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} - ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
         <input type="search" id="grpSearch" placeholder="Search name or admission no." aria-label="Search students">
         <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" class="${s.status !== 'active' ? 'gone' : ''}">
-          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status) : ''}${s.email ? '' : ' - no college email yet'}</small></span>
+          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}${s.email ? '' : ' - no college email yet'}</small>
+          ${s.terms?.length ? `<small class="muted">Terms: ${s.terms.map((t) => esc(`${t.term}${t.classCode !== s.classCode ? ' (' + t.classCode + ')' : ''}`)).join(' - ')}</small>` : ''}</span>
           <span class="st-actions"><label class="check small"><input type="checkbox" data-rep="${esc(s.admNo)}"${s.rep ? ' checked' : ''}> Class rep</label><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button></span></li>`).join('')}</ul>`;
       if (hasRole('MIS')) {

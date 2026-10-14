@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.4.0';
-const SCHEMA_VERSION = '16';
+export const VERSION = '7.5.0';
+const SCHEMA_VERSION = '17';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -25,7 +25,7 @@ const STATUS_CODE = { Present: 'P', Absent: 'A', Late: 'L', Excused: 'E' };
 // IAO: Internal Assessment Officer (reads all evidence and registers; panels). EAO: External Assessment Officer (a visitor
 // account with an end date; sees only the verification work given to them).
 const ROLES = ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'];
-const GONE = "('withdrawn','rejected')";
+const GONE = "('withdrawn','rejected','inactive')";
 
 // One statement per line (D1 exec runs them in order).
 const SCHEMA = `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -69,6 +69,7 @@ CREATE INDEX IF NOT EXISTS verifications_panel ON verifications (panel_id);
 CREATE TABLE IF NOT EXISTS approvals (ref TEXT PRIMARY KEY, kind TEXT, subject TEXT, title TEXT, info TEXT, fingerprint TEXT, by_code TEXT, by_name TEXT, by_role TEXT, at TEXT, sig TEXT, status TEXT, replaced_by TEXT);
 CREATE INDEX IF NOT EXISTS approvals_subject ON approvals (kind, subject);
 CREATE TABLE IF NOT EXISTS marksheets (id TEXT PRIMARY KEY, class_code TEXT, unit_code TEXT, unit_name TEXT, status TEXT, prepared_code TEXT, prepared_name TEXT, prepared_at TEXT, received_code TEXT, received_name TEXT, received_at TEXT, approved_code TEXT, approved_name TEXT, approved_at TEXT, comment TEXT, approval_ref TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS enrolments (term_id TEXT, adm_no TEXT COLLATE NOCASE, class_code TEXT, status TEXT, at TEXT, PRIMARY KEY (term_id, adm_no));
 CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT);
 CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
 CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
@@ -137,7 +138,8 @@ export function classParts(code) {
   const prefix = (parts[0].match(/^([A-Z]+)\s/) || [])[1];
   return [code, ...parts.map((x) => (prefix && !/\s/.test(x) ? `${prefix} ${x}` : x))];
 }
-const active = (t) => t && !['withdrawn', 'rejected'].includes(String(t.status || 'active').toLowerCase());
+// "inactive": the term ended and the student is not on a class list for the new term yet (the list's upload brings them back).
+const active = (t) => t && !['withdrawn', 'rejected', 'inactive'].includes(String(t.status || 'active').toLowerCase());
 const JSONH = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
 const reply = (obj) => new Response(JSON.stringify(obj), { headers: JSONH });
 
@@ -512,9 +514,23 @@ function teachingWeeks(term) {
 }
 const weekOf = (term, date) => { const i = teachingWeeks(term).indexOf(mondayOf(date)); return i === -1 ? null : i + 1; };
 
+/** A term ends (closed, or a new term started): who was in which class is kept for that term, and every student is marked
+ *  inactive until the class lists for the next term are uploaded (the upload brings back everyone on them). */
+async function endTerm(env, term, me) {
+  const now = nowIso(), live = `(status IS NULL OR status NOT IN ${GONE})`;
+  const n = (await one(env, `SELECT COUNT(*) AS n FROM trainees WHERE ${live}`))?.n || 0;
+  await many(env,
+    [`INSERT OR IGNORE INTO enrolments (term_id, adm_no, class_code, status, at) SELECT ?, adm_no, class_code, 'active', ? FROM trainees WHERE ${live}`, term.id, now],
+    ["UPDATE enrolments SET status='completed', at=? WHERE term_id=? AND status='active'", now, term.id],
+    [`UPDATE trainees SET status='inactive', updated_by=?, updated_at=? WHERE ${live}`, me.code, now]);
+  await audit(env, me, 'end of term', `${term.id} ${term.name}: ${n} students inactive until the next class lists`);
+  return n;
+}
 async function saveTerm(env, b, me) {
   if (!b.name || !/^\d{4}-\d{2}-\d{2}$/.test(b.startDate || '')) fail('Give the term a name and a start date');
   const id = String(b.termId || '').trim() || 'T' + b.startDate;
+  const before = await activeTerm(env);
+  const ending = before && (before.id !== id || b.close) ? before : null;
   const breaks = (b.breaks || []).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x)).map(mondayOf);
   await run(env, "UPDATE terms SET status='closed' WHERE status='active' AND id<>?", id);
   const cats = catWeeksOf((b.catWeeks || []).join(','));
@@ -523,9 +539,10 @@ async function saveTerm(env, b, me) {
     ON CONFLICT(id) DO UPDATE SET name=excluded.name, duration=excluded.duration, start_date=excluded.start_date, breaks=excluded.breaks, status=excluded.status, updated_at=excluded.updated_at, cat_weeks=excluded.cat_weeks, series=excluded.series, lesson_hours=excluded.lesson_hours`,
   id, b.name, b.duration || '', b.startDate, TERM_WEEKS, breaks.join(', '), b.close ? 'closed' : 'active', nowIso(), cats.join(', '), String(b.series || '').trim().slice(0, 60), hours);
   await audit(env, me, b.close ? 'close term' : 'save term', `${id} ${b.name} from ${b.startDate}${breaks.length ? ' breaks ' + breaks.join(' ') : ''}${cats.length ? ' CAT weeks ' + cats.join(' ') : ''}`);
+  const inactive = ending ? await endTerm(env, ending, me) : 0;
   await bumpRoster(env);
   const term = await activeTerm(env);
-  return { ok: true, term, weeks: teachingWeeks(term) };
+  return { ok: true, term, weeks: teachingWeeks(term), ended: ending ? ending.name : '', inactive };
 }
 
 /* ---------- trainer loading ---------- */
@@ -547,6 +564,12 @@ async function uploadLoading(env, b, me) {
   }
   if (!seen.size) fail('No loading rows found in that file');
   const rows = [...seen.values()];
+  // Units the class had in an earlier term carry on (their marks and evidence stay); the rest are new.
+  const [earlier, lastTerm] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM loading WHERE term_id<>?', term.id],
+    ['SELECT l.class_code, l.unit_code, l.unit_name FROM loading l WHERE l.term_id = (SELECT t.id FROM terms t WHERE t.id<>? AND EXISTS (SELECT 1 FROM loading x WHERE x.term_id=t.id) ORDER BY t.start_date DESC LIMIT 1)', term.id]);
+  const had = new Set(earlier.map((r) => r.class_code + '|' + r.unit_code)), nowKeys = new Set(rows.map((r) => r.classCode + '|' + r.unitCode));
+  const continuing = rows.filter((r) => had.has(r.classCode + '|' + r.unitCode)).length;
+  const finished = lastTerm.filter((r) => !nowKeys.has(r.class_code + '|' + r.unit_code)).map((r) => ({ classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name || r.unit_code }));
   await run(env, 'DELETE FROM loading WHERE term_id=?', term.id);
   await upsertMany(env, 'loading', ['term_id', 'class_code', 'unit_code', 'unit_name', 'trainer_code', 'trainer_name', 'lessons_per_week', 'hours_per_week', 'population', 'updated_at', 'joint'],
     rows.map((r) => ({ term_id: term.id, class_code: r.classCode, unit_code: r.unitCode, unit_name: r.unitName || r.unitCode, trainer_code: r.trainerCode || '',
@@ -579,7 +602,7 @@ async function uploadLoading(env, b, me) {
   await upsertMany(env, 'staff', ['code', 'name', 'roles', 'responsibility', 'active', 'must_change', 'pin_version', 'updated_at'], staffRows, ['code'], ['name', 'roles', 'responsibility', 'updated_at']);
   await audit(env, me, 'upload loading', `${term.id}: ${rows.length} class-units, ${info.size} trainers`);
   await bumpRoster(env);
-  return { ok: true, term: term.id, rows: rows.length, trainers: info.size, newStaff: added, classes: classes.size };
+  return { ok: true, term: term.id, rows: rows.length, trainers: info.size, newStaff: added, classes: classes.size, continuing, newUnits: rows.length - continuing, finished };
 }
 
 
@@ -590,7 +613,9 @@ async function readRoster(env, b, me, pre) {
   const [termRows, loading, unitRows, classRows, reqs, staffRows] = await many(env, [TERM_SQL], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`], ['SELECT * FROM units'],
     ['SELECT * FROM classes'], ["SELECT adm_no, name, class_code, requested_name, reason, status, merged_into FROM requests WHERE status IN ('pending','rejected','merged')"],
     ['SELECT code, name, late_pct, excused_pct FROM staff']);
-  const [termList, unlockRows] = await many(env, ['SELECT * FROM terms ORDER BY start_date DESC'], [`SELECT term_id, class_code, unit_code, until FROM unlocks WHERE ${UNLOCK_LIVE}`]);
+  const [termList, unlockRows, earlierRows] = await many(env, ['SELECT * FROM terms ORDER BY start_date DESC'], [`SELECT term_id, class_code, unit_code, until FROM unlocks WHERE ${UNLOCK_LIVE}`],
+    [`SELECT DISTINCT class_code, unit_code FROM loading WHERE term_id <> COALESCE(${ACTIVE_TERM}, '')`]);
+  const carried = new Set(earlierRows.map((r) => r.class_code + '|' + r.unit_code));
   const term = termOut(termRows[0]);
   // Archived classes are kept but left out of everything a trainer works with day to day.
   const gone = new Set(classRows.filter((r) => r.status === 'archived').map((r) => r.code));
@@ -598,7 +623,8 @@ async function readRoster(env, b, me, pre) {
   loading.splice(0, loading.length, ...loading.filter((r) => keep(r.class_code)));
   const units = loading.length
     ? loading.map((r) => ({ classCode: r.class_code, code: r.unit_code, name: r.unit_name || r.unit_code, trainerCode: r.trainer_code, trainerName: r.trainer_name,
-      lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3, ...(r.joint ? { joint: r.joint.split(/\s*,\s*/) } : {}) }))
+      lessonsPerWeek: Number(r.lessons_per_week) || 2, hoursPerWeek: Number(r.hours_per_week) || 3, ...(r.joint ? { joint: r.joint.split(/\s*,\s*/) } : {}),
+      ...(carried.has(r.class_code + '|' + r.unit_code) ? { continuing: true } : {}) }))
     : unitRows.filter((r) => keep(r.class_code)).map((r) => ({ classCode: r.class_code, code: r.code, name: r.name || r.code, lessonsPerWeek: 2, hoursPerWeek: 3 }));
   // Trainers get only the class lists of the classes they teach; the HOD and MIS Officer get all.
   const mine = new Set();
@@ -719,7 +745,7 @@ async function importClassList(env, b, me) {
   const inStream = Object.fromEntries(streams.map((s) => [s, 0]));
   for (const r of rows) if (inStream[r.class_code] !== undefined && active(r)) inStream[r.class_code]++;
   const firstUpload = streams.every((s) => !inStream[s]);
-  const out = { added: [], unchanged: 0, renamed: [], moved: [], confirmed: [], missing: [], byStream: {}, plan: [] };
+  const out = { added: [], unchanged: 0, renamed: [], moved: [], confirmed: [], missing: [], back: [], byStream: {}, plan: [] };
   // First upload: the whole list is divided into equal parts, in list order. Later: students already in one of
   // these streams stay there, and newcomers go to the smallest stream. The preview lets the MIS Officer move anyone.
   const smallest = () => [...streams].sort((a, c) => inStream[a] - inStream[c] || (a < c ? -1 : 1))[0];
@@ -742,7 +768,7 @@ async function importClassList(env, b, me) {
     let changed = false;
     if (row.name !== s.name) { out.renamed.push({ admNo: row.adm_no, old: row.name, name: s.name }); if (b.useNewNames) { row.name = s.name; changed = true; } }
     if (row.class_code !== to) { out.moved.push({ admNo: row.adm_no, name: row.name, from: row.class_code, to, within: !!here }); row.class_code = to; changed = true; }
-    if (!active(row)) { row.status = 'active'; changed = true; }
+    if (!active(row)) { if (row.status === 'inactive') out.back.push({ admNo: row.adm_no, name: row.name }); row.status = 'active'; changed = true; }
     if (row.mis_class !== mis) { row.mis_class = mis; changed = true; }
     if (changed) writes.push({ ...row, updated_by: me.code, updated_at: now });
     else out.unchanged++;
@@ -762,11 +788,14 @@ async function importClassList(env, b, me) {
   }
   for (const s of streams) out.byStream[s] = inStream[s];
   if (!b.dryRun) {
+    const term = await activeTerm(env);
     await many(env, ...upsertStmts('trainees', TCOLS, writes, ['adm_no']),
+      // This term's record: the student is in this class for this term.
+      ...(term ? upsertStmts('enrolments', ['term_id', 'adm_no', 'class_code', 'status', 'at'], out.plan.map((p) => ({ term_id: term.id, adm_no: p.admNo, class_code: p.to, status: 'active', at: now })), ['term_id', 'adm_no']) : []),
       pend.length && [`UPDATE requests SET status='approved', decided_by=?, decided_at=?, note=? WHERE id IN ${IN}`, me.code, now, 'On the MIS list for ' + mis, JSON.stringify(pend.map((r) => r.id))],
       // Link the streams to this MIS class so the student app groups them and reports show the MIS code.
       ...upsertStmts('classes', ['code', 'name', 'level', 'mis_class'], streams.map((s) => ({ code: s, name: s, level: levelOf(s) || levelOf(mis), mis_class: mis })), ['code'], ['mis_class']));
-    await audit(env, me, 'class list', `${mis} → ${streams.join(', ')}: ${out.added.length} added, ${out.moved.length} moved, ${(b.withdraw || []).length} withdrawn, ${out.confirmed.length} trainer additions confirmed`);
+    await audit(env, me, 'class list', `${mis} → ${streams.join(', ')}: ${out.added.length} added, ${out.back.length} back for the term, ${out.moved.length} moved, ${(b.withdraw || []).length} withdrawn, ${out.confirmed.length} trainer additions confirmed`);
     await bumpRoster(env);
   }
   return { ...out, ok: true, dryRun: !!b.dryRun, misClass: mis, streams, total: students.length };
@@ -776,7 +805,12 @@ async function studentsOf(env, misClass, classCode) {
   const rows = classCode
     ? await all(env, 'SELECT * FROM trainees WHERE class_code=?', classCode)
     : await all(env, 'SELECT t.* FROM trainees t LEFT JOIN classes c ON c.code=t.class_code WHERE t.mis_class=? OR c.mis_class=?', misClass, misClass);
-  return { ok: true, students: rows.map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, status: active(r) ? 'active' : (r.status || 'withdrawn'), note: r.note, rep: !!r.rep, email: !!r.email })) };
+  // The terms each student was on a class list for, newest first.
+  const terms = await all(env, `SELECT e.adm_no, e.class_code, e.status, t.name FROM enrolments e LEFT JOIN terms t ON t.id=e.term_id WHERE e.adm_no IN ${IN} ORDER BY t.start_date DESC`, JSON.stringify(rows.map((r) => r.adm_no)));
+  const byAdm = new Map();
+  for (const e of terms) { const k = lower(e.adm_no); if (!byAdm.has(k)) byAdm.set(k, []); byAdm.get(k).push({ term: e.name || '', classCode: e.class_code, status: e.status }); }
+  return { ok: true, students: rows.map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, status: active(r) ? 'active' : (r.status || 'withdrawn'), note: r.note, rep: !!r.rep, email: !!r.email,
+    terms: byAdm.get(lower(r.adm_no)) || [] })) };
 }
 
 /** MIS: move a student to another stream, withdraw them, or bring them back. */
