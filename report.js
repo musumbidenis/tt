@@ -186,9 +186,10 @@ const TermReport = (() => {
     const pages = [];
     for (let i = 0; i < d.students.length;) { const size = pages.length ? PRINT_ROWS.next : PRINT_ROWS.first; pages.push(d.students.slice(i, i + size)); i += size; }
     if (!pages.length) pages.push([]);
-    // The comments need about four rows' room on the last page: if it is full, its last four students go over with them.
-    const last = pages[pages.length - 1], cap = pages.length === 1 ? PRINT_ROWS.first : PRINT_ROWS.next;
-    if (last.length > cap - 4 && last.length > 4) pages.push(last.splice(last.length - 4));
+    // The comments need about four rows' room on the last page (nine with the approval stamp): if it is full, its last
+    // students go over with them.
+    const last = pages[pages.length - 1], cap = pages.length === 1 ? PRINT_ROWS.first : PRINT_ROWS.next, room = d.approval ? 9 : 4;
+    if (last.length > cap - room && last.length > room) pages.push(last.splice(last.length - room));
     const cellsOf = (s, i, n) => Array.from({ length: WEEKS }, (_, w) => (cats.has(w)
       ? (i ? '' : `<td class="cat e" colspan="3" rowspan="${n}"><span>${esc(cats.get(w).label)}</span></td>`)
       : [0, 1, 2].map((k) => `<td class="c${k === 2 ? ' e' : ''}">${s.cells[w * 3 + k] || ''}</td>`).join(''))).join('');

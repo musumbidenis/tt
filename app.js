@@ -1376,9 +1376,9 @@ function approvalBlock(a) {
   return `<div class="approval">
     <svg class="stamp" viewBox="0 0 220 110" role="img" aria-label="Approved stamp"><g transform="rotate(-5 110 55)">
       <rect x="6" y="8" width="208" height="94" rx="10" fill="none" stroke="currentColor" stroke-width="4"/><rect x="13" y="15" width="194" height="80" rx="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="110" y="45" text-anchor="middle" font-size="26" font-weight="800" letter-spacing="4" fill="currentColor">APPROVED</text>
+      <text x="110" y="45" text-anchor="middle" font-size="26" font-weight="800" textLength="168" lengthAdjust="spacingAndGlyphs" fill="currentColor">APPROVED</text>
       <text x="110" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">${esc(String(a.role || '').toUpperCase())} - ${esc(day)}</text>
-      <text x="110" y="84" text-anchor="middle" font-size="8.5" font-weight="700" letter-spacing=".5" fill="currentColor">DEPARTMENT OF COMPUTING AND INFORMATICS</text></g></svg>
+      <text x="110" y="84" text-anchor="middle" font-size="8.5" font-weight="700" textLength="178" lengthAdjust="spacingAndGlyphs" fill="currentColor">DEPARTMENT OF COMPUTING AND INFORMATICS</text></g></svg>
     <div class="approval-who"><b>Approved by ${esc(a.by)} (${esc(a.role)})</b><span>${esc(d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
       <span>Ref <b>${esc(a.ref)}</b></span><span class="small">Scan the code or open ${esc(new URL('check.html', location.href).href)} to check this document.</span></div>
     ${qr ? `<div class="approval-qr">${qr}</div>` : ''}</div>`;
