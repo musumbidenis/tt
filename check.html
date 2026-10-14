@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check a document - The ARK</title>
+<meta name="description" content="Check that a document approved in The ARK is genuine.">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<style>
+  :root { --bg: #f4f5f2; --card: #fff; --ink: #18211c; --muted: #5d6a62; --line: #dfe3dd; --ok: #10773c; --ok-bg: #e3f3e9; --warn: #a35f00; --warn-bg: #fcefd8; --bad: #c42830; --bad-bg: #fbe4e5; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0f1411; --card: #18201b; --ink: #e8ede9; --muted: #9aa79f; --line: #2c372f; --ok: #5ee08f; --ok-bg: #12301f; --warn: #f5b450; --warn-bg: #33270f; --bad: #ff8a8f; --bad-bg: #3a1618; } }
+  :root[data-theme="dark"] { --bg: #0f1411; --card: #18201b; --ink: #e8ede9; --muted: #9aa79f; --line: #2c372f; --ok: #5ee08f; --ok-bg: #12301f; --warn: #f5b450; --warn-bg: #33270f; --bad: #ff8a8f; --bad-bg: #3a1618; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  header { display: flex; gap: .75rem; align-items: center; margin-bottom: 1.25rem; }
+  header img { width: 44px; height: 44px; }
+  header b { display: block; font-size: 1.05rem; }
+  header span { color: var(--muted); font-size: .875rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; }
+  .verdict { display: flex; gap: .75rem; align-items: center; padding: .9rem 1rem; border-radius: 10px; font-weight: 700; font-size: 1.1rem; margin-bottom: 1rem; }
+  .verdict.ok { background: var(--ok-bg); color: var(--ok); } .verdict.warn { background: var(--warn-bg); color: var(--warn); } .verdict.bad { background: var(--bad-bg); color: var(--bad); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; }
+  form { display: flex; gap: .5rem; margin-top: 1rem; }
+  input { flex: 1; min-width: 0; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; text-transform: uppercase; }
+  button { padding: .6rem 1rem; border: 0; border-radius: 8px; background: #0b5d33; color: #fff; font: 600 1rem system-ui, sans-serif; cursor: pointer; }
+  p.small { color: var(--muted); font-size: .875rem; }
+</style>
+</head>
+<body>
+<main>
+  <header><img src="icons/rvnp-logo.png" alt="RVNP crest"><div><b>Check a document</b><span>Rift Valley National Polytechnic - Department of Computing and Informatics</span></div></header>
+  <div class="card" id="out"><p>Checking…</p></div>
+  <form id="f"><input id="ref" placeholder="ARK-26-XXXXXX" aria-label="Reference on the document" maxlength="20"><button>Check</button></form>
+  <p class="small">The reference and QR code are printed beside the approval stamp. This page shows only what was approved, by whom and when.</p>
+</main>
+<script src="config.js"></script>
+<script>
+  const server = () => (window.ATTENDANCE_CONFIG && window.ATTENDANCE_CONFIG.serverUrl) || '';
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const when = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const VERDICT = {
+    valid: ['ok', 'Genuine', 'This document was approved and has not changed since.'],
+    changed: ['warn', 'Changed since approval', 'It was approved, but has been changed since. Ask for the latest approved copy.'],
+    replaced: ['warn', 'Replaced by a newer approval', 'A newer version was approved. Ask for the latest copy.'],
+    withdrawn: ['bad', 'Approval withdrawn', 'This document was approved, then sent back. It is not approved now.'],
+    tampered: ['bad', 'Not recognised', 'This record does not check out.'],
+  };
+  async function check(ref) {
+    const out = document.getElementById('out');
+    if (!ref) { out.innerHTML = '<p>Enter the reference printed beside the stamp, or scan the QR code on the document.</p>'; return; }
+    out.innerHTML = '<p>Checking…</p>';
+    try {
+      const u = new URL(server()); u.searchParams.set('action', 'check'); u.searchParams.set('ref', ref);
+      const r = await (await fetch(u, { redirect: 'follow' })).json();
+      if (!r.ok) throw new Error(r.error || 'The check did not work');
+      if (!r.found) { out.innerHTML = `<div class="verdict bad">Not recognised</div><p>No approved document has the reference <b>${esc(ref)}</b>. Check that it was typed correctly.</p>`; return; }
+      const [cls, title, text] = VERDICT[r.status] || VERDICT.tampered, d = r.details || {};
+      out.innerHTML = `<div class="verdict ${cls}">${title}</div><p>${text}</p><dl>
+        <dt>Document</dt><dd>${esc(r.title)}</dd>${d.classCode ? `<dt>Class</dt><dd>${esc(d.classCode)}</dd>` : ''}${d.term ? `<dt>Term</dt><dd>${esc(d.term)}</dd>` : ''}
+        ${d.item ? `<dt>Item</dt><dd>${esc(d.item)}${d.version ? ' (version ' + esc(d.version) + ')' : ''}</dd>` : ''}
+        <dt>Approved by</dt><dd>${esc(r.by)} (${esc(r.role)})</dd><dt>On</dt><dd>${esc(when(r.at))}</dd><dt>Reference</dt><dd>${esc(r.ref)}</dd>
+        ${r.replacedBy ? `<dt>Newer approval</dt><dd>${esc(r.replacedBy)}</dd>` : ''}</dl>`;
+    } catch (e) { out.innerHTML = `<div class="verdict bad">Could not check</div><p>${esc(e.message)}. Check your internet connection and try again.</p>`; }
+  }
+  const ref = (new URLSearchParams(location.search).get('r') || '').trim().toUpperCase();
+  document.getElementById('ref').value = ref;
+  document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); const v = document.getElementById('ref').value.trim().toUpperCase(); history.replaceState(null, '', '?r=' + encodeURIComponent(v)); check(v); });
+  check(ref);
+</script>
+</body>
+</html>

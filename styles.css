@@ -1046,3 +1046,19 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .notice-form .chips-wrap { display: flex; flex-wrap: wrap; gap: .35rem; }
 #viewTabs [data-view=msgs] { position: relative; }
 #viewTabs .dot { margin-left: .3rem; }
+
+/* Approvals: the stamp, the approver's name and the QR code */
+.approval { display: flex; flex-wrap: wrap; gap: .75rem 1rem; align-items: center; margin: .6rem 0; color: var(--ink); }
+.approval .stamp { width: 180px; height: auto; color: #0b5d33; flex: none; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .approval .stamp { color: #5ee08f; } }
+.approval-who { display: grid; gap: .1rem; font-size: .875rem; flex: 1 1 14rem; }
+.approval-qr { width: 92px; flex: none; }
+.approval-qr svg { width: 100%; height: auto; display: block; background: #fff; }
+.poe-approval { border: 1px solid var(--line); border-radius: var(--r); padding: .5rem .75rem; margin: .5rem 0; }
+@media print {
+  .approval { color: #000; break-inside: avoid; margin-top: 4mm; }
+  .approval .stamp { width: 55mm; color: #0b5d33; }
+  .approval-who { font: 9pt "Times New Roman", serif; }
+  .approval-qr { width: 24mm; }
+  .slip-print table th { text-align: left; width: 40mm; }
+}

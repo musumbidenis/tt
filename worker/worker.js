@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.1.0';
-const SCHEMA_VERSION = '13';
+export const VERSION = '7.2.0';
+const SCHEMA_VERSION = '14';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -66,6 +66,8 @@ CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);
 CREATE TABLE IF NOT EXISTS panels (id TEXT PRIMARY KEY, term_id TEXT, name TEXT, chair TEXT, members TEXT, status TEXT, note TEXT, created_by TEXT, created_at TEXT, decided_by TEXT, decided_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS verifications (id TEXT PRIMARY KEY, panel_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, verifier TEXT, external TEXT, population INTEGER, risk REAL, size INTEGER, seed TEXT, sample TEXT, reasons TEXT, round INTEGER DEFAULT 1, status TEXT, result TEXT, actions TEXT, response TEXT, responded_at TEXT, submitted_at TEXT, signed_by TEXT, signed_at TEXT, ext_result TEXT, ext_note TEXT, ext_at TEXT, log TEXT, updated_at TEXT);
 CREATE INDEX IF NOT EXISTS verifications_panel ON verifications (panel_id);
+CREATE TABLE IF NOT EXISTS approvals (ref TEXT PRIMARY KEY, kind TEXT, subject TEXT, title TEXT, info TEXT, fingerprint TEXT, by_code TEXT, by_name TEXT, by_role TEXT, at TEXT, sig TEXT, status TEXT, replaced_by TEXT);
+CREATE INDEX IF NOT EXISTS approvals_subject ON approvals (kind, subject);
 CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT);
 CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
 CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
@@ -89,7 +91,9 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // An External Assessment Officer's account stops working after this date.
   'ALTER TABLE staff ADD COLUMN ends_on TEXT',
   // A class representative (in the class reps' email group).
-  'ALTER TABLE trainees ADD COLUMN rep INTEGER'];
+  'ALTER TABLE trainees ADD COLUMN rep INTEGER',
+  // The approval (stamp, name and QR on the outputs) of an approved register or piece of evidence.
+  'ALTER TABLE signoffs ADD COLUMN approval_ref TEXT', 'ALTER TABLE evidence ADD COLUMN approval_ref TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -225,6 +229,7 @@ export default {
       if (request.method === 'GET') {
         const p = Object.fromEntries(new URL(request.url).searchParams);
         if (p.action === 'classes') return reply(await publicClasses(env));
+        if (p.action === 'check') return reply(await checkApproval(env, p.ref));
         if (p.action === 'classlist') return reply(await classList(env, p.class));
         if (p.action === 'units') return reply(await classUnits(env, p.class));
         if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso(), push: !!env.VAPID_PRIVATE_KEY });
@@ -1156,7 +1161,8 @@ async function reportData(env, b, me, pre) {
 
 const signoffId = (term, c, u) => `${term ? term.id : 'no-term'}|${c}|${u}`;
 const signoffOut = (r) => ({ id: r.id, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, trainerCode: r.trainer_code, trainerName: r.trainer_name,
-  lecturerComment: r.lecturer_comment, submittedAt: r.submitted_at, status: r.status, hodName: r.hod_name, hodComment: r.hod_comment, decidedAt: r.decided_at });
+  lecturerComment: r.lecturer_comment, submittedAt: r.submitted_at, status: r.status, hodName: r.hod_name, hodComment: r.hod_comment, decidedAt: r.decided_at,
+  approvalRef: r.status === 'approved' ? r.approval_ref || '' : '' });
 
 async function submitSignoff(env, b, me) {
   const term = await activeTerm(env);
@@ -1177,6 +1183,11 @@ async function decideSignoff(env, b, me) {
   if (b.decision !== 'approved' && b.decision !== 'returned') fail('Choose approve or return');
   if (b.decision === 'returned' && !String(b.comment || '').trim()) fail('Say what needs fixing when returning a register');
   await run(env, 'UPDATE signoffs SET status=?, hod_code=?, hod_name=?, hod_comment=?, decided_at=? WHERE id=?', b.decision, me.code, me.name, String(b.comment || '').slice(0, 1000), nowIso(), b.id);
+  if (b.decision === 'approved') {
+    const ref = await makeApproval(env, me, 'HOD', 'register', old.id, `Term register - ${old.unit_code} ${old.unit_name || ''}`.trim(),
+      { classCode: old.class_code, unitCode: old.unit_code, unitName: old.unit_name, trainer: old.trainer_name, termId: old.term_id }, await registerPrint(env, old));
+    await run(env, 'UPDATE signoffs SET approval_ref=? WHERE id=?', ref, old.id);
+  } else await withdrawApprovals(env, 'register', old.id);
   await audit(env, me, 'sign-off', `${b.id} ${b.decision}`);
   return { ok: true, signoff: signoffOut(await one(env, 'SELECT * FROM signoffs WHERE id=?', b.id)) };
 }
@@ -1781,7 +1792,7 @@ async function classUnits(env, cls) {
   units.sort((a, b) => (b.current - a.current) || a.name.localeCompare(b.name));
   return { ok: true, classCode: cls, units, items: ITEMS, driveReady: !!url[0], pushReady: !!env.VAPID_PRIVATE_KEY };
 }
-const evidenceOut = (r) => ({ id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
+const evidenceOut = (r) => ({ approvalRef: r.status === 'approved' ? r.approval_ref || '' : '', id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
   version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.status,
   decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at,
   source: r.source || 'bridge', ownerEmail: r.owner_email || '', changedAt: r.changed_at || '' });
@@ -2075,6 +2086,11 @@ async function poeDecide(env, b, me, ctx) {
   const now = nowIso();
   // seen_at goes back to empty: a fresh decision is something the student has not been told yet.
   await run(env, 'UPDATE evidence SET status=?, decided_by=?, decided_name=?, decided_at=?, comment=?, updated_at=?, seen_at=NULL WHERE id=?', b.decision, me.code, me.name, now, comment, now, r.id);
+  if (b.decision === 'approved') {
+    const ref = await makeApproval(env, me, me.roles.includes('HOD') && !(await myUnitPairs(env, me)).pairs.has(r.class_code + '|' + r.unit_code) ? 'HOD' : 'Trainer', 'poe', r.id,
+      `POE evidence - ${r.item} - ${r.unit_code} ${r.unit_name || ''}`.trim(), { classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item, version: r.version }, evidencePrint(r));
+    await run(env, 'UPDATE evidence SET approval_ref=? WHERE id=?', ref, r.id);
+  } else await withdrawApprovals(env, 'poe', r.id);
   await audit(env, me, 'evidence', `${r.adm_no} ${r.unit_code} ${r.item} v${r.version} ${b.decision}`);
   pushLater(ctx, env, r.adm_no);
   return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', r.id)) };
@@ -2607,6 +2623,46 @@ async function groupsDone(env, b) {
   }
   if (stmts.length) await many(env, ...stmts);
   return { ok: true };
+}
+/* ---------- approvals: the stamp, name and QR code on approved documents ----------
+ * Approving a term register (the HOD) or a piece of evidence (its trainer or the HOD) makes an approval: a reference, who
+ * approved and when, and a fingerprint of what was approved, signed by the server. The printed copy carries a QR code to
+ * the public check page, which says whether the document is genuine, has changed since, or was replaced or withdrawn. The
+ * check shows no student details. */
+const REF_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newRef = () => { const b = crypto.getRandomValues(new Uint8Array(6)); return `ARK-${todayIso().slice(2, 4)}-${[...b].map((n) => REF_CHARS[n % REF_CHARS.length]).join('')}`; };
+/** What a register's approval covers: every register of that class and unit in that term, as last saved. */
+async function registerPrint(env, so) {
+  const rows = await all(env, 'SELECT id, updated_at FROM sessions WHERE class_code=? AND unit_code=? AND term_id=? ORDER BY id', so.class_code, so.unit_code, so.term_id);
+  return sha256Hex(rows.map((r) => `${r.id}:${r.updated_at}`).join('|'));
+}
+const evidencePrint = (r) => `${r.md5 || r.file_id || ''}|v${r.version}${r.changed_at ? '|changed' : ''}`;
+const approvalSig = async (env, a) => (await hmacHex(`${a.ref}|${a.kind}|${a.subject}|${a.fingerprint}|${a.at}|${a.by_code}`, await authSecret(env))).slice(0, 32);
+async function makeApproval(env, me, role, kind, subject, title, info, fingerprint) {
+  const a = { ref: newRef(), kind, subject, fingerprint, at: nowIso(), by_code: me.code };
+  const sig = await approvalSig(env, a);
+  await many(env, ["UPDATE approvals SET status='replaced', replaced_by=? WHERE kind=? AND subject=? AND status='valid'", a.ref, kind, subject],
+    ["INSERT INTO approvals (ref,kind,subject,title,info,fingerprint,by_code,by_name,by_role,at,sig,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,'valid')",
+      a.ref, kind, subject, title, JSON.stringify(info), fingerprint, me.code, me.name, role, a.at, sig]);
+  return a.ref;
+}
+const withdrawApprovals = (env, kind, subject) => run(env, "UPDATE approvals SET status='withdrawn' WHERE kind=? AND subject=? AND status='valid'", kind, subject);
+/** The public check: genuine, changed since, replaced, withdrawn, or not recognised. */
+async function checkApproval(env, ref) {
+  const r = await one(env, 'SELECT * FROM approvals WHERE ref=?', String(ref || '').trim().toUpperCase());
+  if (!r) return { ok: true, found: false };
+  const info = JSON.parse(r.info || '{}');
+  let status = r.status;
+  if ((await approvalSig(env, r)) !== r.sig) status = 'tampered';
+  else if (status === 'valid') {
+    let now = r.fingerprint;
+    if (r.kind === 'register') { const so = await one(env, 'SELECT * FROM signoffs WHERE id=?', r.subject); now = so ? await registerPrint(env, so) : ''; }
+    if (r.kind === 'poe') { const e = await one(env, 'SELECT * FROM evidence WHERE id=?', r.subject); now = e ? evidencePrint(e) : ''; }
+    if (now !== r.fingerprint) status = 'changed';
+  }
+  const term = info.termId ? await one(env, 'SELECT name, duration FROM terms WHERE id=?', info.termId) : null;
+  return { ok: true, found: true, ref: r.ref, kind: r.kind, title: r.title, status, by: r.by_name, role: r.by_role, at: r.at, replacedBy: r.replaced_by || '',
+    details: { classCode: info.classCode || '', unit: [info.unitCode, info.unitName].filter(Boolean).join(' - '), item: info.item || '', version: info.version || '', term: term ? term.duration || term.name : '' } };
 }
 async function driveStatus(env) {
   const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);

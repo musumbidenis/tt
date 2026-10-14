@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.28.0';
+const APP_VERSION = '4.29.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1365,6 +1365,25 @@ async function decideSignoff(decision) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
+/* ---------- approvals: the stamp, the approver's name and a QR code to the public check page ---------- */
+const checkUrl = (ref) => new URL('check.html?r=' + encodeURIComponent(ref), location.href).href;
+/** The approval block for printed documents. a = { ref, by, role, at }. */
+function approvalBlock(a) {
+  if (!a?.ref) return '';
+  const d = new Date(a.at), day = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+  let qr = '';
+  try { const q = qrcode(0, 'M'); q.addData(checkUrl(a.ref)); q.make(); qr = q.createSvgTag({ cellSize: 3, margin: 1, scalable: true }); } catch { /* no QR library on this page */ }
+  return `<div class="approval">
+    <svg class="stamp" viewBox="0 0 220 110" role="img" aria-label="Approved stamp"><g transform="rotate(-5 110 55)">
+      <rect x="6" y="8" width="208" height="94" rx="10" fill="none" stroke="currentColor" stroke-width="4"/><rect x="13" y="15" width="194" height="80" rx="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="110" y="45" text-anchor="middle" font-size="26" font-weight="800" letter-spacing="4" fill="currentColor">APPROVED</text>
+      <text x="110" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">${esc(String(a.role || '').toUpperCase())} - ${esc(day)}</text>
+      <text x="110" y="84" text-anchor="middle" font-size="8.5" font-weight="700" letter-spacing=".5" fill="currentColor">DEPARTMENT OF COMPUTING AND INFORMATICS</text></g></svg>
+    <div class="approval-who"><b>Approved by ${esc(a.by)} (${esc(a.role)})</b><span>${esc(d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
+      <span>Ref <b>${esc(a.ref)}</b></span><span class="small">Scan the code or open ${esc(new URL('check.html', location.href).href)} to check this document.</span></div>
+    ${qr ? `<div class="approval-qr">${qr}</div>` : ''}</div>`;
+}
+
 function registerExportData() {
   const rep = state.report;
   const { r, unit, cls, classCode, unitCode, signoff, term } = rep;
@@ -1372,13 +1391,14 @@ function registerExportData() {
   const lecturers = rep.streams ? [...new Set(rep.parts.map((p) => p.unit.trainerName).filter(Boolean))].join(' / ') : '';
   const so = signoff;
   const lect = (rep.mine ? $('#soComment')?.value.trim() : '') || so?.lecturerComment || '';
-  const hod = so?.status === 'approved' ? [so.hodComment, `Approved by ${so.hodName}, ${fmtShort(so.decidedAt)}`].filter(Boolean).join(' - ') : (so?.hodComment || '');
+  const hod = so?.status === 'approved' ? [so.hodComment, `APPROVED by ${so.hodName} (HOD), ${fmtShort(so.decidedAt)}`, so.approvalRef && `Ref ${so.approvalRef} - check at ${checkUrl(so.approvalRef)}`].filter(Boolean).join(' - ') : (so?.hodComment || '');
   return TermReport.exportData(r, {
     lecturer: lecturers || unit.trainerName || (rep.mine ? trainerLabel() : ''), duration: term?.duration || '',
     classLabel: rep.streams ? `${cls.misClass ? cls.misClass + ' - ' : ''}${cls.code} streams ${rep.parts.map((p) => p.letter).join(', ')}` : cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
     subject: `${unitCode} - ${unit.name || unitCode}`, misClass: cls.misClass, classCode,
     sheetName: `${cls.code.split(' ').pop()} ${unitCode}`, lecturerComment: lect, hodComment: hod,
     assessments: rep.parts.flatMap((p) => p.src.assessments.map((a) => (rep.streams ? { ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} - ${p.letter}` } : a))),
+    approval: so?.status === 'approved' && so.approvalRef ? { ref: so.approvalRef, by: so.hodName, role: 'HOD', at: so.decidedAt } : null,
   });
 }
 async function exportXlsx() {

@@ -174,6 +174,7 @@ const TermReport = (() => {
       students: students.map((x) => ({ admNo: x.admNo, name: x.name, pending: x.pending, cells: x.cells, possible: x.possible, actual: x.actual })),
       cats: [...catMap(r).values()].map((c) => ({ w: c.w, label: c.label, date: c.dates.map(dshort).join(', ') })),
       catSheet: info.assessments?.length ? catTable(students, info.assessments) : null,
+      approval: info.approval || null,
     };
   }
 
@@ -214,6 +215,7 @@ const TermReport = (() => {
         <h2>GENERAL CLASS REGISTER</h2><p>${esc(d.filter)}</p></div></div>
       ${grids}
       <table class="rp-comments"><tr><th>Lecturer's Comment</th><td>${esc(d.lecturerComment)}</td></tr><tr><th>HOD's Comment</th><td>${esc(d.hodComment)}</td></tr></table>
+      ${d.approval && typeof approvalBlock === 'function' ? approvalBlock(d.approval) : ''}
     </div>${catPage}`;
   }
 

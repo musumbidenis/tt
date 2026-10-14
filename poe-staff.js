@@ -115,8 +115,21 @@ const PoeStaff = (() => {
   }
   /** The by-unit table as plain text, for Excel and the printed copy. */
   function unitSheet(rows) {
-    return { head: ['Student', 'Admission no.', 'Class', 'Unit', 'Item', 'Version', 'Mark', 'Sent', 'Status'],
-      rows: rows.map((e) => [e.name, e.admNo, e.classCode, e.unitName, e.item, e.version, markOf(e.classCode, e.unitCode, e.admNo, e.item), fmtTime(e.submittedAt), statusOf(e)[1]]) };
+    return { head: ['Student', 'Admission no.', 'Class', 'Unit', 'Item', 'Version', 'Mark', 'Sent', 'Status', 'Approval ref'],
+      rows: rows.map((e) => [e.name, e.admNo, e.classCode, e.unitName, e.item, e.version, markOf(e.classCode, e.unitCode, e.admNo, e.item), fmtTime(e.submittedAt), statusOf(e)[1], e.approvalRef || '']) };
+  }
+  /** One page for an approved submission: what it is, and the stamp, name and QR code. The student's file is never changed. */
+  function printSlip(e) {
+    if (!e?.approvalRef) return;
+    $('#printArea').innerHTML = `<div class="tbl-print slip-print"><h1>POE EVIDENCE - APPROVAL</h1><p>Rift Valley National Polytechnic - Department of Computing and Informatics</p>
+      <table><tbody><tr><th>Student</th><td>${esc(e.name)}</td></tr><tr><th>Admission no.</th><td>${esc(e.admNo)}</td></tr><tr><th>Class</th><td>${esc(e.classCode)}</td></tr>
+      <tr><th>Unit</th><td>${esc(e.unitCode)} - ${esc(e.unitName)}</td></tr><tr><th>Item</th><td>${esc(e.item)} (version ${e.version})</td></tr><tr><th>File</th><td>${esc(e.fileName || '')}</td></tr>
+      <tr><th>Sent</th><td>${esc(fmtTime(e.submittedAt))}</td></tr><tr><th>Mark</th><td>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</td></tr></tbody></table>
+      ${approvalBlock({ ref: e.approvalRef, by: e.decidedName, role: 'Trainer', at: e.decidedAt })}</div>`;
+    document.body.classList.add('printing', 'print-table');
+    const done = () => { document.body.classList.remove('printing', 'print-table'); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    setTimeout(() => window.print(), 80);
   }
 
   /* ---------- by student: every unit and item of one student, what is in and what is missing ---------- */
@@ -314,6 +327,8 @@ const PoeStaff = (() => {
           <p class="muted small">${esc(e.admNo)} - ${esc(e.unitName)} v${e.version}</p></div>
         <button type="button" class="btn small ghost" data-act="close">Close</button>
       </div>
+      ${e.status === 'approved' && e.approvalRef ? `<div class="poe-approval">${approvalBlock({ ref: e.approvalRef, by: e.decidedName, role: 'Trainer', at: e.decidedAt })}
+        <button type="button" class="btn small" data-act="slip">Print approval slip</button></div>` : ''}
       ${decided ? `<p class="poe-decided ${e.status}">${e.status === 'approved' ? `Approved by ${esc(e.decidedName)}.` : `Returned by ${esc(e.decidedName)}.`}</p>
         ${e.comment ? `<p class="small"><b>Comment(s):</b> ${esc(e.comment)}</p>` : ''}` : ''}
       <div id="poePages" class="poe-pages-view" aria-live="polite"><p class="muted">Opening ${esc(e.fileName)}…</p></div>
@@ -411,6 +426,7 @@ const PoeStaff = (() => {
       const d = t.closest('[data-decide]'); if (d) { decide(d.dataset.decide, d); return; }
       const a = t.closest('[data-act]');
       if (a?.dataset.act === 'close') $('#poeDialog').close();
+      if (a?.dataset.act === 'slip') printSlip(ps.list.find((x) => x.id === ps.open));
       if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (ok && id) { ps.files.delete(id); openViewer(id); } }); }
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; Verify.reset(); render(); }
       if (a?.dataset.act === 'unit-xlsx' || a?.dataset.act === 'unit-pdf') {
