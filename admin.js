@@ -43,7 +43,8 @@ const Admin = (() => {
       parts.push(section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
-    box().innerHTML = parts.join('');
+    box().innerHTML = groupTabs(parts) + parts.join('');
+    showGroup_();
     const jobs = [];
     if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
     if (hasRole('HOD') || hasRole('IAO')) jobs.push(loadMarksheets());
@@ -52,6 +53,27 @@ const Admin = (() => {
     await Promise.allSettled(jobs);
     refreshBadge();
   }
+
+  /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
+  const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
+    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-classes']], ['people', 'People', ['m-staff', 'm-phones']], ['system', 'Backup and Drive', ['m-backup', 'm-drive']]];
+  let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
+  function groupTabs(parts) {
+    const html = parts.join(''), have = GROUPS.filter(([, , ids]) => ids.some((id) => html.includes(`id="${id}"`)));
+    if (!have.some(([k]) => k === group)) group = have[0]?.[0] || '';
+    return have.length > 1 ? `<div id="manageMode" class="view-tabs manage-mode" role="group" aria-label="Show">${have.map(([k, l]) => `<button type="button" data-mgroup="${k}" aria-pressed="${k === group}">${l}${k === 'approvals' ? ' <span class="mg-n" hidden></span>' : ''}</button>`).join('')}</div>` : '';
+  }
+  function showGroup_() {
+    const ids = GROUPS.find(([k]) => k === group)?.[2] || [];
+    for (const s of box().querySelectorAll('section.msec')) s.hidden = !!$('#manageMode') && !ids.includes(s.id);
+    $$('#manageMode [data-mgroup]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mgroup === group)));
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('#manageMode [data-mgroup]'); if (!b) return;
+    group = b.dataset.mgroup;
+    try { localStorage.setItem('manageGroup', group); } catch { /* private mode */ }
+    showGroup_();
+  });
 
   function fill(id, html) { const el = $('#' + id); if (el) replaceBody(el, html); }
   function replaceBody(el, html) {
@@ -774,6 +796,14 @@ const Admin = (() => {
     if (cache.backup && cache.backup.level !== 'ok') n += 1;       // the backup account's Drive is filling up
     dot.hidden = !n;
     dot.textContent = n > 9 ? '9+' : String(n);
+    // The Approvals group's own count: registers and marksheets waiting, students to decide.
+    const ap = $('#manageMode .mg-n');
+    if (ap) {
+      const w = (hasRole('HOD') ? cache.signoffs.filter((s) => s.status === 'submitted').length : 0)
+        + (cache.marksheets || []).filter((m) => (hasRole('HOD') && m.status === 'received') || (hasRole('IAO') && m.status === 'submitted')).length
+        + (hasRole('MIS') ? (state.meta.pending || []).length : 0);
+      ap.hidden = !w; ap.textContent = w > 99 ? '99+' : String(w);
+    }
   }
 
   /* ---------- events (delegated, the sections are re-rendered often) ---------- */

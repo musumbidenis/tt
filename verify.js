@@ -53,8 +53,9 @@ const Verify = (() => {
     if (external()) parts.push(card('What each panel was given', 'Every class-unit given out this term. Open one to see the panel\'s checks, pick your own sample of students and give your result.',
       d.panels.map((p) => `<h3 class="ver-ph">${esc(p.name)} <span class="muted small">chair ${esc(staffName(p.chair))}</span></h3>${table(d.verifications.filter((v) => v.panelId === p.id))}`).join('') || '<p class="muted small">Nothing given out yet.</p>'));
     if (units.length) parts.push(card('Verification of your units', 'What the panel found in your units, and your response.', table(units)));
-    if (drafts()) parts.push(listCard());
+    // Panels first, then the classes to verify (they are given out to the panels).
     if (office() || (d.panels.length && !external())) parts.push(panelsCard());
+    if (drafts()) parts.push(listCard());
     if (!parts.length) parts.push('<div class="card notice"><h2>Nothing to verify</h2><p class="muted">When a panel gives you a class and unit to verify, or verifies one of your units, it shows here.</p></div>');
     box.innerHTML = head + parts.join('');
   }
@@ -76,11 +77,18 @@ const Verify = (() => {
   }
 
   /* ---------- panels ---------- */
+  const termName = () => state.meta.term?.name || 'this term';
+  /** The numbers free this term (and the panel's own number when changing it). */
+  function panelNumbers(p) {
+    const used = new Set(vs.data.panels.filter((x) => x.termId === vs.data.termId && x.id !== p?.id && x.number).map((x) => x.number));
+    return Array.from({ length: 20 }, (_, i) => i + 1).filter((n) => !used.has(n));
+  }
   function panelsCard() {
     const d = vs.data, people = d.staff.filter((s) => !(s.roles.length && s.roles.every((r) => r === 'EAO')));
     const opts = (sel) => people.map((s) => `<option value="${esc(s.code)}"${lower(s.code) === lower(sel || '') ? ' selected' : ''}>${esc(s.name)} (${esc(s.code)})</option>`).join('');
     const form = (p) => `<form class="panel-form" data-panel="${esc(p?.id || '')}">
-        <label>Panel name<input name="name" required maxlength="80" value="${esc(p?.name || '')}" placeholder="e.g. Term 3 2026 panel A"></label>
+        <label>Panel number<select name="number" required>${panelNumbers(p).map((n) => `<option value="${n}"${(p?.number || panelNumbers(p)[0]) === n ? ' selected' : ''}>Panel ${n}</option>`).join('')}</select>
+          <small class="muted">Named ${esc(termName())} - Panel and the number</small></label>
         <label>Chair<select name="chair" required><option value="">Choose…</option>${opts(p?.chair)}</select></label>
         <fieldset class="members"><legend>Members</legend>${people.map((s) => `<label class="kchip"><input type="checkbox" name="member" value="${esc(s.code)}"${(p?.members || []).some((m) => lower(m) === lower(s.code)) ? ' checked' : ''}><span>${esc(s.name)}</span></label>`).join('')}</fieldset>
         <button class="btn primary">${p ? 'Save the panel' : 'Draft the panel'}</button></form>`;
@@ -96,7 +104,7 @@ const Verify = (() => {
         ${p.status === 'approved' ? table(vers, { hod: hasRole('HOD') }) + (drafts() ? assignForm(p, vers) : '') : ''}
         ${drafts() ? `<details class="mdone"><summary>Change this panel</summary>${form(p)}</details>` : ''}</details>`;
     }).join('');
-    return card('Verification panels', drafts() ? 'Draft a panel: it is approved for the HOD straight away (the HOD can return it). The master list above gives out the class-units; you can also give one by hand below.' : 'Panels drafted by the MIS Officer or the Internal Assessment Officer.',
+    return card('Verification panels', drafts() ? 'Pick the panel number, the chair and the members: the panel is named after the term and its number and approved straight away (the HOD can return it). Then tick the classes to verify above and allocate.' : 'Panels drafted by the MIS Officer or the Internal Assessment Officer.',
       (rows || '<p class="muted small">No panels yet.</p>') + (drafts() ? `<details class="mdone"><summary>Draft a new panel</summary>${form(null)}</details>` : ''));
   }
   function assignForm(p, vers) {
@@ -115,27 +123,30 @@ const Verify = (() => {
 
   /* ---------- the master list: what to verify this term, given out automatically ---------- */
   const ls = { q: '', picked: new Set() };
-  function listCard() {
-    const d = vs.data, on = new Set(d.list.map((r) => r.classCode + '|' + r.unitCode)), q = ls.q.trim().toLowerCase();
-    const free = d.loading.filter((u) => !on.has(u.classCode + '|' + u.unitCode)).filter((u) => !q || [u.classCode, u.unitCode, u.unitName, u.trainerName].some((s) => String(s || '').toLowerCase().includes(q)))
-      .sort((a, b) => (a.classCode + a.unitCode).localeCompare(b.classCode + b.unitCode));
-    const given = d.list.filter((r) => r.verificationId).length;
-    const vOf = (r) => d.verifications.find((v) => v.id === r.verificationId);
-    return card('Master list', `The class-units to verify this term (${d.list.length}, ${given} given out). Allocate gives the rest to the panels - the biggest classes first, balanced by students - and to two members each, picked at random, never anyone who teaches the unit.`,
-      `${d.list.length ? `<div class="table-wrap"><table class="report-table ver-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Students</th><th>Given to</th><th><span class="sr">Remove</span></th></tr></thead><tbody>
-        ${d.list.map((r) => { const v = vOf(r), p = v && d.panels.find((x) => x.id === v.panelId); return `<tr><td>${esc(r.classCode)}</td><td title="${esc(r.unitName)}">${esc(r.unitCode)} <small class="muted">${esc(r.unitName)}</small></td><td>${esc(r.trainerName || r.trainerCode)}</td><td class="num">${r.students}</td>
-          <td>${v ? `${esc(p?.name || '')}<br><small>${esc(both(v))}</small>` : '<span class="muted small">not yet</span>'}</td>
-          <td>${v ? '' : `<button type="button" class="btn small ghost" data-vact="list-remove" data-cu="${esc(r.classCode + '|' + r.unitCode)}">Remove</button>`}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted small">Nothing on the list yet.</p>'}
-      <div class="row-actions"><button type="button" class="btn primary" data-vact="allocate"${d.list.length > given ? '' : ' disabled'}>Allocate ${d.list.length - given} to the panels</button></div>
-      <details class="mdone"${d.list.length ? '' : ' open'}><summary>Add class-units to the list</summary>
-        <input type="search" class="ls-search" placeholder="Filter by class, unit or trainer" value="${esc(ls.q)}" aria-label="Filter class-units">
-        <div class="row-actions"><label class="kchip"><input type="checkbox" data-lsall${free.length && free.every((u) => ls.picked.has(u.classCode + '|' + u.unitCode)) ? ' checked' : ''}><span>All ${free.length} shown</span></label>
-          <button type="button" class="btn small primary" data-vact="list-add"${ls.picked.size ? '' : ' disabled'}>Add ${ls.picked.size || ''} to the list</button></div>
-        <div class="ls-pick">${free.map((u) => { const k = u.classCode + '|' + u.unitCode; return `<label class="kchip"><input type="checkbox" data-lspick="${esc(k)}"${ls.picked.has(k) ? ' checked' : ''}><span>${esc(u.classCode)} - ${esc(u.unitCode)} <small>${esc(u.trainerName || u.trainerCode)}</small></span></label>`; }).join('') || '<span class="muted small">Every class-unit is on the list.</span>'}</div>
-      </details>`);
+  /** This term's classes with their students and units, and how much of each is on the list and given out. */
+  function classRows() {
+    const d = vs.data, m = new Map();
+    for (const u of d.loading) { if (!m.has(u.classCode)) m.set(u.classCode, { code: u.classCode, units: 0, students: d.classStudents?.[u.classCode] || 0 }); m.get(u.classCode).units++; }
+    for (const c of m.values()) { const on = d.list.filter((r) => r.classCode === c.code); c.listed = on.length; c.given = on.filter((r) => r.verificationId).length; }
+    return [...m.values()].sort((a, b) => a.code.localeCompare(b.code));
   }
-  const listFree = () => { const on = new Set(vs.data.list.map((r) => r.classCode + '|' + r.unitCode)), q = ls.q.trim().toLowerCase();
-    return vs.data.loading.filter((u) => !on.has(u.classCode + '|' + u.unitCode) && (!q || [u.classCode, u.unitCode, u.unitName, u.trainerName].some((s) => String(s || '').toLowerCase().includes(q)))); };
+  function listCard() {
+    const d = vs.data, rows = classRows(), free = rows.filter((c) => !c.listed), listed = rows.filter((c) => c.listed);
+    const given = d.list.filter((r) => r.verificationId).length, left = d.list.length - given;
+    const vOf = (r) => d.verifications.find((v) => v.id === r.verificationId);
+    const panelsOf = (cls) => [...new Set(d.list.filter((r) => r.classCode === cls && r.verificationId).map((r) => d.panels.find((p) => p.id === vOf(r)?.panelId)?.name).filter(Boolean))];
+    return card('Classes to verify', `Tick the classes to verify this term; all their units come with them. Allocate gives each class to a panel by its number of students, then each unit to two of that panel's members, never anyone who teaches it.`,
+      `<div class="ls-head"><input type="search" class="ls-search" placeholder="Filter classes" value="${esc(ls.q)}" aria-label="Filter classes">
+        <label class="kchip"><input type="checkbox" data-lsall${free.length && free.every((c) => ls.picked.has(c.code)) ? ' checked' : ''}><span>Select all (${free.length})</span></label>
+        <button type="button" class="btn small primary" data-vact="list-add"${ls.picked.size ? '' : ' disabled'}>Add ${ls.picked.size || ''} class${ls.picked.size === 1 ? '' : 'es'}</button></div>
+      <div class="ls-pick">${free.map((c) => `<label class="kchip"><input type="checkbox" data-lspick="${esc(c.code)}"${ls.picked.has(c.code) ? ' checked' : ''}><span>${esc(c.code)} <small>${c.students} students - ${c.units} unit${c.units === 1 ? '' : 's'}</small></span></label>`).join('') || '<span class="muted small">Every class is on the list.</span>'}</div>
+      ${listed.length ? `<div class="table-wrap"><table class="report-table ver-table"><thead><tr><th>Class</th><th class="num">Students</th><th class="num">Units</th><th>Panel</th><th><span class="sr">Remove</span></th></tr></thead><tbody>
+        ${listed.map((c) => `<tr><td>${esc(c.code)}</td><td class="num">${c.students}</td><td class="num">${c.given ? `${c.given} of ${c.listed} given out` : c.listed}</td>
+          <td>${esc(panelsOf(c.code).join(', ')) || '<span class="muted small">not yet</span>'}</td>
+          <td>${c.given ? '' : `<button type="button" class="btn small ghost" data-vact="list-remove" data-cls="${esc(c.code)}">Remove</button>`}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <div class="row-actions"><button type="button" class="btn primary" data-vact="allocate"${left ? '' : ' disabled'}>${left ? `Allocate ${left} unit${left === 1 ? '' : 's'} to the panels` : 'Everything is given out'}</button></div>`);
+  }
+  const listFree = () => classRows().filter((c) => !c.listed && (!ls.q.trim() || c.code.toLowerCase().includes(ls.q.trim().toLowerCase())));
 
   /* ---------- the external officer's own sample ---------- */
   const ext = { pool: null, for: '' };
@@ -264,11 +275,11 @@ const Verify = (() => {
       if (act === 'draw') { const r = await call('redrawSample', { id: a.dataset.id }, 'Sample drawn'); upsertVer(r.verification); redraw(); }
       if (act === 'allocate') {
         const r = await call('allocateVerification', {});
-        toast(`${r.allocated} class-unit${r.allocated === 1 ? '' : 's'} given out${r.skipped.length ? ` - ${r.skipped.length} could not be: ${r.skipped[0].why}` : ''}`, r.skipped.length ? 'err' : 'ok');
+        toast(`${r.classes.length} class${r.classes.length === 1 ? '' : 'es'} to the panels, ${r.allocated} unit${r.allocated === 1 ? '' : 's'} to two members each${r.skipped.length ? ` - ${r.skipped.length} unit${r.skipped.length === 1 ? '' : 's'} could not be: ${r.skipped[0].why}` : ''}`, r.skipped.length ? 'err' : 'ok');
         vs.data = null; redraw();
       }
-      if (act === 'list-add') { await call('verifyListSave', { items: [...ls.picked].map((k) => { const [classCode, unitCode] = k.split('|'); return { classCode, unitCode }; }) }, 'Added to the list'); ls.picked.clear(); vs.data = null; redraw(); }
-      if (act === 'list-remove') { const [classCode, unitCode] = a.dataset.cu.split('|'); await call('verifyListSave', { remove: [{ classCode, unitCode }] }, 'Removed from the list'); vs.data = null; redraw(); }
+      if (act === 'list-add') { const r = await call('verifyListSave', { classes: [...ls.picked] }); toast(`${ls.picked.size} class${ls.picked.size === 1 ? '' : 'es'} added (${r.added} units)`, 'ok'); ls.picked.clear(); vs.data = null; redraw(); }
+      if (act === 'list-remove') { await call('verifyListSave', { removeClasses: [a.dataset.cls] }, 'Removed from the list'); vs.data = null; redraw(); }
       if (act === 'ext-pick') {
         const admNos = $$('input[name=extpick]:checked').map((i) => i.value);
         const r = await call('externalSample', { id: v.id, admNos }, `Your sample: ${admNos.length} student${admNos.length === 1 ? '' : 's'}`); upsertVer(r.verification); vs.data = null; redraw();
@@ -299,7 +310,8 @@ const Verify = (() => {
     try {
       if (form.matches('.panel-form')) {
         const fd = new FormData(form);
-        await call('savePanel', { id: form.dataset.panel || undefined, name: fd.get('name'), chair: fd.get('chair'), members: fd.getAll('member') }, 'Panel saved and approved');
+        const r = await call('savePanel', { id: form.dataset.panel || undefined, number: Number(fd.get('number')), chair: fd.get('chair'), members: fd.getAll('member') });
+        toast(`${r.panel.name} saved and approved`, 'ok');
         vs.data = null; redraw();
       } else if (form.matches('.assign-form')) {
         const fd = new FormData(form), [classCode, unitCode] = String(fd.get('cu')).split('|');
@@ -335,7 +347,7 @@ const Verify = (() => {
       return true;
     }
     if (t.matches('[data-lspick]')) { if (t.checked) ls.picked.add(t.dataset.lspick); else ls.picked.delete(t.dataset.lspick); redraw(); return true; }
-    if (t.matches('[data-lsall]')) { for (const u of listFree()) { const k = u.classCode + '|' + u.unitCode; if (t.checked) ls.picked.add(k); else ls.picked.delete(k); } redraw(); return true; }
+    if (t.matches('[data-lsall]')) { for (const c of listFree()) { if (t.checked) ls.picked.add(c.code); else ls.picked.delete(c.code); } redraw(); return true; }
     return false;
   }
   // The list filter hides choices in place (no reload while typing).

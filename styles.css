@@ -1135,3 +1135,9 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .default-pin input { height: 32px; width: 8rem; }
 
 #bkGo { min-height: 32px; height: 32px; padding: 0 .8rem; font-size: .8125rem; }
+.ls-head { display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; }
+.ls-head .ls-search { margin: 0; flex: 1 1 14rem; }
+/* Manage: groups of sections, like Reports */
+.manage-mode { grid-auto-columns: minmax(max-content, 1fr); overflow-x: auto; }
+.manage-mode button { white-space: nowrap; padding: .55rem .7rem; font-size: .875rem; }
+.mg-n { display: inline-block; min-width: 1.3em; padding: 0 .35em; margin-left: .25rem; border-radius: 99px; background: var(--a, #c42830); color: #fff; font-size: .72rem; }
