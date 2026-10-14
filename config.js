@@ -15,7 +15,7 @@
 window.ATTENDANCE_CONFIG = {
   serverUrl: 'https://rvnp-attendance.ictpoe.workers.dev/',
   sheetsUrl: 'https://script.google.com/macros/s/AKfycbw3bSI2h4GrfV2BBmZOqDkyioa4tYZz3ND_PL-0JurcQKneg9TNBwbuLMPBh3qqIKOxTA/exec',
-  vapidPublicKey: '',
+  vapidPublicKey: 'BH0KdPaWJ9LQ3o5J1qDfDZsZc3gz3KBZVa0R0sn1vXGMh8pdBSIiHBRLv0xK0vGfPz4cownCGtB7O2uAKeuqtwU',
   googleClientId: '945611933983-grt6lrqgnovsbe52rec7bd9tdmt8j1rp.apps.googleusercontent.com',
   googleDomain: 'rvnp.ac.ke',
 };
