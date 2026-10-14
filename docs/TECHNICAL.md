@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.26.0**, server (Worker) **6.10.0**, database schema **11**, Drive bridge **1.4.5**.
+Describes app **4.27.0**, server (Worker) **7.0.0**, database schema **12**, Drive bridge **1.4.5**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -324,7 +324,10 @@ A second Worker, `rvnp-attendance-demo`, with its own D1 database `rvnp-demo`, r
 | Table | Key | Holds |
 |---|---|---|
 | `meta` | `key` | Settings and markers: `schema`, `auth_secret`, `roster_v` (roster version), `last_change`, `drive_url`, `drive_report`, `drive_nudged_at`, `default_pin` (salted hash), `absence_limit`, `pub_classes` (cached student class list), `fold_at`. |
-| `staff` | `code` | Accounts: name, roles, responsibility, `active`, `pin_hash` + `pin_salt` (SHA-256), `pin_version`, `must_change`, `late_pct`, `excused_pct`, `drive_folder`. |
+| `staff` | `code` | Accounts: name, roles (`TRAINER`, `HOD`, `MIS`, `IAO` Internal Assessment Officer, `EAO` External Assessment Officer), responsibility, `active`, `pin_hash` + `pin_salt` (SHA-256), `pin_version`, `must_change`, `late_pct`, `excused_pct`, `drive_folder`, `ends_on` (an account that stops working after this date). |
+| `panels` | `id` | Verification panels: term, name, `chair`, `members` (JSON staff codes), `status` (`draft`, `approved`, `returned`), HOD note and decision. |
+| `verifications` | `id` | One class-unit given to a panel member: `verifier`, `external`, `population`, `risk`, `size`, `seed`, `sample` (JSON admission numbers, lower case), `reasons`, `round` (1, 2 doubled, 3 everyone), `status` (`open`, `submitted`, `signed`), `result`, `actions`, trainer `response`, signature, external result, `log`. |
+| `verify_checks` | `verification_id, adm_no, who` | The checks per sampled student, `who` = `internal` or `external`: valid, authentic, current, sufficient, `agree`, comment. |
 | `login_fails` | `code` | Wrong-PIN counter and lock-until time. |
 | `terms` | `id` | Name, duration, start date, breaks, `status` (one `active`), `cat_weeks`, `series`, `lesson_hours`. |
 | `classes` | `code` | Streams, `mis_class` (the MIS class list they belong to), `status` (`archived` or empty), `archived_at`, `archived_by`. |
@@ -468,7 +471,14 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `setArchiveEmail` | MIS | The backup account every student file is shared with, and its space in GB (`quotaGb`). |
 | `backupStatus`, `setBackup` | HOD, MIS | Backup plan (`repeat` off/daily/weekly/monthly, `hour`), last report, storage level (`ok`, `warn` from 80%, `full` from 95%), documents waiting, ones given up on; `setBackup` also takes `now` (back up now) and `retry`. |
 | `poeDecide` | Trainer, HOD | Approve or return (sends a notification). |
-| `poeReceive` | MIS | Mark approved evidence received. |
+| `poeReceive` | MIS | Kept for older devices; the app no longer has a received step (4.27). |
+| `verifyData` | Any | Panels, verifications and checks this person may see (the office sees all; members their panels; verifiers, trainers and external officers their own), with the staff and loading to choose from. |
+| `savePanel`, `decidePanel` | MIS, IAO / HOD | Draft or change a panel (back to the HOD); approve or return it with a note. |
+| `assignVerification`, `setExternal` | MIS, IAO | Give a class-unit to a member (not its trainer) and draw the sample; choose the external officer. |
+| `redrawSample` | HOD | Draw an open sample again (reason logged; panel checks cleared). |
+| `moreSample` | EAO, IAO | Add up to 10 more students to a sample. |
+| `saveCheck`, `submitVerification` | verifier (internal) or external officer | One student's checks; the result (doubles the sample, then takes everyone, after too many disagreements). |
+| `respondVerification`, `signVerification`, `externalVerdict` | trainer / chair or HOD / EAO | The trainer's response, the signature, the external result. |
 | `poeClass` | MIS, HOD | Students, units and unit marks (`marks`, as in `poeList`) of one class for the By student view. |
 | `driveStatus` | MIS, HOD | The bridge's last report. |
 | `marksPull`, `marksPush` | Any reads; Trainer, HOD write | The lifetime marksheet; `locked` cells and `lockedTerms` per row; `held` counts edits refused by the lock. |
@@ -568,6 +578,13 @@ There is no Shared Drive, so the archive lives in the **backup account's own Dri
 - **Space**: with pooled Workspace storage, Drive's `about.storageQuota` gives the whole organisation's usage and limit, so the bridge reports the account's own `DriveApp.getStorageUsed()` and the limit is `meta.backup_quota_gb` (Space (GB) in Manage → Google Drive, default 50), sent back with each job. The Worker marks the level `warn` from 80% (a banner and a Manage badge for the HOD and MIS Officer) and stops handing out work at 95%; the bridge also stops before a copy would cross 95%.
 - **Changing account**: copies are made by the bridge, so a new backup account means deploying the bridge as that account (4.3) and setting the Backup account to it. If the two differ, the Worker refuses to hand out work and Manage says so.
 - `meta.backup_report` keeps the last start and finish, the counts, storage and any error. Per document: `archived_at`, `archive_id`, `archive_tries`, `archive_error`.
+
+### 9.6d Internal verification (from 4.27, server 7.0.0, schema 12)
+
+- **Who reads what.** `seesAll(me)` is HOD, MIS or IAO (evidence lists, registers, marks, class lists); the IAO cannot approve, return or write. `visitorOnly(me)` (EAO and no other role) gets no class lists; its `poeList` holds only the sampled students' approved evidence of the class-units given to it, once submitted. A verifier's `poeList` adds the approved evidence of their class-units. `poeView` sends a bridge ticket instead of a Drive file ID when the file is not shared with the person (the backup account the bridge runs as can read every student file).
+- **Sampling** (`samplingFacts`, `drawSample`, `sampleSize`): population = students with an approved submission in the class-unit. `size = N ≤ 10 ? N : min(N, max(10, ⌈√N × risk⌉))`. Risk 1.5 if the trainer has no loading for the unit in another term or no submission there was ever returned; 2 if the trainer's last submitted verification was `not_verified`. Must-includes in order (while room): same item returned then approved; approved files with `changed_at`; one random student from each third of the unit-mark average. The rest: Fisher–Yates with a mulberry32 generator seeded from `seed` (saved, so the draw can be repeated).
+- **Escalation** on submit: with 2 or more disagreements, or more than 20% of the sample, round 1 doubles the sample and round 2 takes in everyone (new students drawn from the seed with `:r2` / `:r3`); round 3 accepts a result.
+- **Accounts with an end date**: `login` and every request refuse a staff row whose `ends_on` is before today (East Africa Time).
 
 ### 9.6c CAT weeks in the term register (from 4.25, server 6.9.0, bridge 1.4.4)
 

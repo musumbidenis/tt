@@ -77,7 +77,9 @@ Installing matters: the browser then keeps the app's data permanently, and on iP
 |---|---|
 | **Trainer** | Mark registers for the classes and units in their loading (also offline). Add a student who is not on the list. Show a lesson QR code and scan students' QR IDs. Enter marks. See, export and submit their units' term registers. Review the POE evidence students send for their units. |
 | **HOD** | Everything a trainer can do for their own units, plus: approve or return term registers, see every class's register, the department overview and the Absences list, move a student a trainer found in the wrong stream, and unlock a register or marks from a term that has ended. |
-| **MIS Officer** | Set up the term, upload the trainer loading and class lists, approve students added by trainers, manage staff, PINs and roles, receive approved POE evidence, see the Absences list, unlock ended terms, connect Google Drive, and archive or delete classes. |
+| **MIS Officer** | Set up the term, upload the trainer loading and class lists, approve students added by trainers, manage staff, PINs and roles, draft verification panels and give out class-units to verify, see the Absences list, unlock ended terms, connect Google Drive, and archive or delete classes. |
+| **Internal Assessment Officer** | See every class's POE evidence, term registers, CAT registers and marks (read only: approving and returning evidence stays with the trainer and the HOD). Draft verification panels, give out class-units to verify, follow every verification, and add students to a sample. |
+| **External Assessment Officer** | A visitor account with an end date, made by the MIS Officer. Sees only the class-units given to them for external verification, and only the students in their sample, once the panel has finished. Records their own checks and result, and can ask for more students. The account stops working after its end date. |
 
 One person can hold several roles, for example an HOD who also teaches.
 
@@ -99,7 +101,7 @@ There is a separate **demo copy** of both apps for training sessions. It works e
 |---|---|---|
 | **ATT** | Trainers and HODs | Choose a lesson on the weekly timetable and mark the register. |
 | **Report(s)** | Everyone | Term registers (Attendance) and marksheets (Marks). |
-| **POE** | Everyone | Students' evidence: review, approve, return, receive. |
+| **POE** | Everyone | Students' evidence: review, approve or return (By unit, By student), and the panels' **Verification**. |
 | **Tools** | Trainers and HODs | Professional tools: learning plans, session plans and assessment tools. **Coming soon.** |
 | **Absences** | HOD and MIS Officer | Students who have missed more lessons than the limit you set. |
 | **Manage** | HOD and MIS Officer | Approvals, the department overview, term, loading, class lists, staff and Google Drive. |
@@ -386,11 +388,34 @@ Previews open faster the second time: files you have opened are kept on the devi
 
 You also see evidence for units you taught in earlier terms, read-only. Only the unit's current trainer (or, if it is not taught this term, the trainer who had it last) and the HOD can approve or return.
 
-### 7.2 MIS Officer: receive approved evidence
+### 7.2 Verification (internal and external)
 
-Under **POE → To receive**, tick the approved submissions you have filed and tap **Mark as received**. They move to **Received**.
+Open **POE → Verification**. A panel checks a sample of the evidence each trainer approved, class by class and unit by unit.
 
-### 7.3 By student (HOD and MIS Officer)
+**1. Draft a panel** (MIS Officer or Internal Assessment Officer). Under **Verification panels**, open **Draft a new panel**: give it a name, choose the **chair** and tick the **members** (at least two people with the chair). It shows *Waiting for the HOD*.
+
+**2. The HOD approves it.** The HOD opens the panel and taps **Approve the panel**, or writes a note and taps **Return**. Changing an approved panel sends it back to the HOD. Nothing is given out until the panel is approved.
+
+**3. Give each class and unit to a member.** Under the approved panel, choose the **class and unit** and the **verifier**, then **Give it and draw the sample**. A trainer is never given their own unit. The app draws the sample at once:
+
+| Students with approved evidence (N) | Students checked |
+|---|---|
+| 10 or fewer | all of them |
+| more than 10 | the larger of 10 and √N × risk, rounded up |
+
+The **risk** is 1, or **1.5** when the trainer is new to the unit or nothing in the class-unit was returned, or **2** when the trainer's last verification was *Not verified*. For example, 40 students give 10 (or 10 at 1.5), and 120 give 11 (17 at 1.5).
+
+Students who were **returned and then approved**, files **changed after sending**, and one student from the **top, middle and bottom third of the marks** are put in first; the rest are drawn at random from a saved number, so nobody can choose them. Only the HOD can **Draw again** (the reason is kept in the history).
+
+**4. The verifier checks each student** (POE → Verification → *Class-units given to you* → **Open**). For each student in the sample: open their approved files (the item buttons), tick **Valid**, **Authentic**, **Current** and **Sufficient**, choose **Agree** or **Do not agree** with the trainer's decision (a comment is needed to disagree), and **Save**.
+
+**5. Give the result**: **Verified**, **Verified with actions** or **Not verified**, with the actions for the trainer (needed unless verified), then **Submit the result**. If you disagreed with the trainer on **2 or more** students, or on more than **20%** of the sample, the sample is first **doubled**, and then, if that happens again, **every student** is taken in; check the new students and submit again.
+
+**6. The trainer responds** under *Verification of your units*, and the **panel chair or the HOD** taps **Sign the report**. **Print the report** gives it with the verifier's, chair's and HOD's signature lines; **Export Excel** gives the checks as a table.
+
+**External verification.** The MIS Officer or Internal Assessment Officer chooses an **External Assessment Officer** for a class-unit under the panel. Once the panel has submitted its result, the officer signs in, sees that class-unit's sample (and the panel's checks), records their own checks, can **Ask for 5 more students**, and saves their **external result**.
+
+### 7.3 By student (HOD, MIS Officer and Internal Assessment Officer)
 
 Tap **By student** to see one class at a time as a table:
 
@@ -560,9 +585,9 @@ Tap **Show the staff** to open the list. Each row shows the staff code and name,
 |---|---|
 | **First-time PIN** | In the box at the top, enter 4 to 8 digits and tap **Set** (or **Change**). Anyone without a PIN of their own signs in with it and must then choose their own. Give it to staff privately; **Remove** stops it working. |
 | **Reset a PIN** | Tap **Reset PIN** on the person's row. With a first-time PIN set, you can send them back to it (they choose a new PIN at their next sign-in), or issue a one-off PIN instead. A one-off PIN is shown **once**: give it to them privately. Only the MIS Officer can reset PINs. |
-| **Roles** | Tick **Trainer**, **HOD** or **MIS Officer**. You cannot remove your own MIS role. |
+| **Roles** | Tick **Trainer**, **HOD**, **MIS Officer**, **Internal Assessment Officer** or **External Assessment Officer**. You cannot remove your own MIS role. An External Assessment Officer's row has **Account ends**: after that date the account stops working (it shows *Ended*). |
 | **Switch an account off** | **Switch off** signs them out on every device. **Switch on** restores the account. |
-| **Add a staff member** | **Add a staff member**: staff code and name, then **Add and issue PIN**. |
+| **Add a staff member** | **Add a staff member**: staff code, name and role (Trainer, Internal Assessment Officer, or External Assessment Officer with the date the account ends), then **Add and issue PIN**. |
 
 
 <p align="center">
