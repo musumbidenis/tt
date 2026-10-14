@@ -31,6 +31,7 @@ const Admin = (() => {
     if (hasRole('HOD')) parts.push(section('m-signoffs', 'Registers to approve', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD') || hasRole('IAO')) parts.push(section('m-marksheets', hasRole('HOD') ? 'Marksheets' : 'Marksheets to receive', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD')) parts.push(section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
+    if (window.Candidates?.allowed()) parts.push(section('m-candidates', 'Summative assessment candidates', Candidates.html()));
     if (hasRole('MIS')) {
       parts.push(section('m-requests', 'Students added by trainers', '<p class="muted">Loading…</p>'));
       parts.push(section('m-term', 'Term', termHtml()));
@@ -931,6 +932,6 @@ const Admin = (() => {
     }
   });
 
-  return { render, refreshBadge };
+  return { render, refreshBadge, redrawCandidates: () => fill('m-candidates', Candidates.html()) };
 })();
 window.Admin = Admin;

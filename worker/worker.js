@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.5.0';
+export const VERSION = '7.6.0';
 const SCHEMA_VERSION = '17';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -359,6 +359,7 @@ const ACTIONS = {
   marksPull: { fn: (env, b, me) => marksPull(env, b, me) },
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   msList: { fn: (env, b, me) => msList(env, b, me) },
+  candidates: { role: ['IAO', 'HOD', 'MIS'], fn: (env, b, me) => candidates(env, b, me) },
   msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
   msReceive: { role: ['IAO', 'HOD'], fn: (env, b, me) => msReceive(env, b, me) },
   msDecide: { role: ['HOD'], fn: (env, b, me) => msDecide(env, b, me) },
@@ -2855,6 +2856,68 @@ async function msDecide(env, b, me) {
   const out = [], failed = [];
   for (const id of ids) { try { out.push(await msDecideOne(env, id, b.decision, comment, me)); } catch (e) { if (ids.length === 1) throw e; failed.push({ id, error: e.message }); } }
   return { ok: true, marksheets: out, marksheet: out[0], failed };
+}
+
+/* ---------- candidates for the summative assessment ----------
+ * The Assessment Officers (and the HOD and MIS Officer) list who may sit a unit's summative assessment, by rules they set:
+ * the least attendance this term, which POE items must be in (all of them or at least one), and which marks must be in. */
+const POE_ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
+async function candidates(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  if (!cls || !unit) fail('Choose the class and unit');
+  const term = await activeTerm(env);
+  if (!term) fail('Set up the term first');
+  const parts = classParts(cls).length ? classParts(cls) : [cls], P = JSON.stringify(parts);
+  const [lo, sess, cks, trs, reqs, ev, mk, staffPct] = await many(env,
+    ['SELECT * FROM loading WHERE term_id=? AND class_code=? AND unit_code=?', term.id, cls, unit],
+    ['SELECT id, data FROM sessions WHERE class_code=? AND unit_code=?', cls, unit],
+    ["SELECT session_id, adm_no, name, scanned_at FROM checkins WHERE status='accepted' AND session_id IN (SELECT id FROM sessions WHERE class_code=? AND unit_code=?)", cls, unit],
+    [`SELECT adm_no, name, class_code, status, reg_code FROM trainees WHERE class_code IN ${IN}`, P],
+    ["SELECT adm_no, name, status, merged_into FROM requests WHERE class_code=? AND status IN ('pending','rejected','merged')", cls],
+    [`SELECT adm_no, item, status, version FROM evidence WHERE unit_code=? AND class_code IN ${IN}`, unit, P],
+    [`SELECT * FROM unit_marks WHERE unit_code=? AND class_code IN ${IN}`, unit, P],
+    ['SELECT code, late_pct, excused_pct FROM staff']);
+  const u = lo[0] || { class_code: cls, unit_code: unit, unit_name: unit, trainer_code: '', trainer_name: '', hours_per_week: 3, lessons_per_week: 2 };
+  // Attendance as the term register works it out.
+  const weeks = teachingWeeks(term), accepted = acceptedOf(cks);
+  const from = weeks[0], to = (() => { const e = new Date(weeks[weeks.length - 1] + 'T00:00:00Z'); e.setUTCDate(e.getUTCDate() + 6); return e.toISOString().slice(0, 10); })();
+  const lessons = sess.map((r) => {
+    const s = JSON.parse(r.data), marks = {}, names = {};
+    for (const m of finalMarks(s, accepted[r.id])) { const k = STATUS_CODE[m.status]; if (k) { marks[m.admNo] = k; names[m.admNo] = m.name; } }
+    return { id: r.id, date: s.date, period: s.period, slots: s.slots, kind: s.kind || 'lesson', marks, names };
+  }).filter((l) => l.kind === 'lesson' && l.date >= from && l.date <= to);
+  const roster = trs.filter(active).map((t) => ({ admNo: t.adm_no, name: t.name }));
+  const rejected = new Set(reqs.filter((r) => r.status === 'rejected').map((r) => r.adm_no));
+  const alias = Object.fromEntries(reqs.filter((r) => r.status === 'merged' && r.merged_into).map((r) => [r.adm_no, r.merged_into]));
+  const pct = staffPct.find((s) => lower(s.code) === lower(u.trainer_code)) || {};
+  const h = term.lessonHours || (Number(u.hours_per_week) || 3) / (Number(u.lessons_per_week) || 2);
+  const reg = new Map(buildRegister({ weeks, lessons, roster, alias, rejected, h, latePct: pct.late_pct ?? 50, excPct: pct.excused_pct ?? 100 }).map((r) => [lower(r.admNo), r]));
+  // The rules.
+  const rules = b.rules || {}, minAtt = Math.max(0, Math.min(100, Number(rules.minAtt) || 0));
+  const poeItems = (rules.poe?.items || []).map((i) => String(i).toUpperCase()).filter((i) => POE_ITEMS.includes(i));
+  const markItems = (rules.marks?.items || []).map((i) => lower(i)).filter((i) => MARK_COLS.includes(i));
+  const poeAll = rules.poe?.need !== 'any', marksAll = rules.marks?.need !== 'any', approvedOnly = !!rules.poe?.approvedOnly;
+  const latest = new Map();
+  for (const e of ev) { const k = lower(e.adm_no) + '|' + e.item, had = latest.get(k); if (!had || e.version > had.version) latest.set(k, e); }
+  const marks = new Map(mk.map((m) => [lower(m.adm_no), m]));
+  const label = (i) => i.replace(/^(CAT|PRAC)(\d)$/i, (m, a, n) => `${a.toUpperCase()} ${n}`);
+  const students = [...roster].sort((a, c) => String(a.admNo).localeCompare(String(c.admNo), undefined, { numeric: true })).map((t) => {
+    const r = reg.get(lower(t.admNo)), att = r && r.pct !== null ? Math.round(r.pct * 1000) / 10 : null;
+    const poe = Object.fromEntries(POE_ITEMS.map((i) => [i, latest.get(lower(t.admNo) + '|' + i)?.status || '']));
+    const m = marks.get(lower(t.admNo)) || {};
+    const got = Object.fromEntries(MARK_COLS.map((c) => [c, m[c] ?? null]));
+    const poeIn = (i) => (approvedOnly ? poe[i] === 'approved' : ['approved', 'submitted'].includes(poe[i]));
+    const reasons = [];
+    if (minAtt && (att === null || att < minAtt)) reasons.push(`Attendance ${att === null ? 'none recorded' : att + '%'} (needs ${minAtt}%)`);
+    const poeMiss = poeItems.filter((i) => !poeIn(i));
+    if (poeItems.length && (poeAll ? poeMiss.length : poeMiss.length === poeItems.length)) reasons.push(`POE ${poeAll ? 'missing' : 'none of'}: ${poeMiss.map(label).join(', ')}`);
+    const markMiss = markItems.filter((c) => got[c] === null);
+    if (markItems.length && (marksAll ? markMiss.length : markMiss.length === markItems.length)) reasons.push(`Marks ${marksAll ? 'missing' : 'none of'}: ${markMiss.map((c) => label(c.toUpperCase())).join(', ')}`);
+    return { admNo: t.admNo, name: t.name, regCode: trs.find((x) => lower(x.adm_no) === lower(t.admNo))?.reg_code || '', att, poe, marks: got, eligible: !reasons.length, reasons };
+  });
+  await audit(env, me, 'summative candidates', `${cls} ${unit}: ${students.filter((s) => s.eligible).length} of ${students.length}`);
+  return { ok: true, term: { id: term.id, name: term.name, duration: term.duration || '', series: term.series || '' }, classCode: cls, unitCode: unit, unitName: u.unit_name || unit,
+    trainer: u.trainer_name || '', lessonsHeld: lessons.length, rules: { minAtt, poe: { items: poeItems, need: poeAll ? 'all' : 'any', approvedOnly }, marks: { items: markItems, need: marksAll ? 'all' : 'any' } }, students };
 }
 
 async function driveStatus(env) {

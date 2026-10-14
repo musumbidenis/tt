@@ -1079,3 +1079,12 @@ td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriti
 .ms-step + .ms-step { border-top: 1px dashed var(--line); }
 .ms-step p { margin: .2rem 0; display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
 .marks-table td.avg { font-size: .85rem; }
+
+/* Summative assessment candidates */
+.cand-form { display: grid; gap: .6rem; }
+.cd-att { max-width: 18rem; }
+.cd-rule { border: 1px solid var(--line); border-radius: var(--r-sm); padding: .4rem .6rem .6rem; display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; }
+.cd-rule legend { font-weight: 600; padding: 0 .3rem; }
+.cand-res { margin-top: .75rem; }
+.cand-table tr.below td { background: color-mix(in srgb, var(--a-soft, #fbe4e5) 45%, var(--surface)); }
+@media print { .cand-print .rp-title h2 { margin: .5mm 0; } .cand-print > table:not(.sign-lines) { margin-top: 3mm; } }
