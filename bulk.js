@@ -37,7 +37,7 @@ const Bulk = (() => {
         <label class="check small"><input type="checkbox" id="bkPdf" checked> PDF</label>
         <label class="check small"><input type="checkbox" id="bkDrive" checked> Save in Google Drive too</label>
       </div>
-      <div class="row-actions"><button type="button" class="btn primary" id="bkGo"${n && !bs.busy ? '' : ' disabled'}>Make ${n} class unit${n === 1 ? '' : 's'}' reports</button></div>
+      <div class="row-actions"><button type="button" class="btn small primary" id="bkGo"${n && !bs.busy ? '' : ' disabled'}>Make ${n} class unit${n === 1 ? '' : 's'}' reports</button></div>
       <div id="bkOut" aria-live="polite">${bs.last || ''}</div>`;
   }
   const redraw = () => { const s = $('#m-bulk'); if (s) { [...s.children].slice(1).forEach((c) => c.remove()); s.insertAdjacentHTML('beforeend', html()); } };
