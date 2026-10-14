@@ -6,7 +6,7 @@
 
 const Admin = (() => {
   const box = () => $('#manage');
-  const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
+  const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer' };
   let cache = { signoffs: [], requests: [], overview: null, staff: [], phones: [], backup: null };
   let loadingPreview = null;
   let ovSort = { key: 'classCode', dir: 1 };
@@ -572,7 +572,7 @@ const Admin = (() => {
   }
   const STAFF_SORT = {
     name: (a, b) => (b.active - a.active) || a.name.localeCompare(b.name), code: (a, b) => (b.active - a.active) || a.code.localeCompare(b.code, undefined, { numeric: true }),
-    role: (a, b) => (b.active - a.active) || ['MIS', 'HOD', 'TRAINER'].findIndex((r) => a.roles.includes(r)) - ['MIS', 'HOD', 'TRAINER'].findIndex((r) => b.roles.includes(r)) || a.name.localeCompare(b.name),
+    role: (a, b) => (b.active - a.active) || ['MIS', 'HOD', 'IAO', 'EAO', 'TRAINER'].findIndex((r) => a.roles.includes(r)) - ['MIS', 'HOD', 'IAO', 'EAO', 'TRAINER'].findIndex((r) => b.roles.includes(r)) || a.name.localeCompare(b.name),
     pin: (a, b) => (b.active - a.active) || Number(a.hasPin) - Number(b.hasPin) || a.name.localeCompare(b.name) };
   function drawStaff() {
     try {
@@ -589,11 +589,14 @@ const Admin = (() => {
         <ul class="mlist staff">${cache.staff.map((s, i) => `<li data-code="${esc(s.code)}" data-q="${esc((s.name + ' ' + s.code).toLowerCase())}" class="${s.active ? '' : 'gone'}">
           <span class="sn st-code">${esc(s.code)}</span>
           <span><b>${esc(s.name)}</b></span>
-          <span class="roles">${['TRAINER', 'HOD', 'MIS'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}</span>
+          <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
+            ${s.roles.includes('EAO') ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
           <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button></span></li>`).join('')}</ul>`)}
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
+          <label>Role<select id="nsRole"><option value="TRAINER">Trainer</option><option value="IAO">Internal Assessment Officer</option><option value="EAO">External Assessment Officer (a visitor)</option></select></label>
+          <label id="nsEndsBox" hidden>Account ends<input type="date" id="nsEnds"></label>
           <button class="btn primary">Add and issue PIN</button></form></details>`);
       $('#staffSort').value = staffSort;
       if (q) { const s = $('#staffSearch'); s.value = q; s.dispatchEvent(new Event('input', { bubbles: true })); }
@@ -775,6 +778,8 @@ const Admin = (() => {
     if (t.matches('[data-drivelink]') && t.value.trim()) setDriveFolder(t);
     if (t.matches('.students .moveTo')) updateStudent(t.closest('li'), { classCode: t.value });
     if (t.matches('.staff .rolechip input')) { const li = t.closest('li'); staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved'); }
+    if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
+    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = t.value !== 'EAO'; $('#nsEnds').required = t.value === 'EAO'; }
   });
   document.addEventListener('input', (e) => {
     const t = e.target;
@@ -829,7 +834,8 @@ const Admin = (() => {
     if (e.target.id === 'termForm') saveTerm(e);
     if (e.target.id === 'addStaff') {
       e.preventDefault();
-      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: ['TRAINER'], resetPin: true });
+      const role = $('#nsRole').value;
+      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: [role], resetPin: true, ...(role === 'EAO' ? { endsOn: $('#nsEnds').value } : {}) });
     }
   });
 

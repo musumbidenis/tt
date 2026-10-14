@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.26.0';
+const APP_VERSION = '4.27.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -180,7 +180,7 @@ function markableUnits() {
 }
 const markClasses = () => { const set = new Set(markableUnits().map((u) => u.classCode)); return state.classes.filter((c) => set.has(c.code)); };
 /** Units whose reports this person may open: their own, or all for the HOD and MIS Officer. */
-function reportUnits() { return hasRole('HOD') || hasRole('MIS') ? state.units : markableUnits(); }
+function reportUnits() { return hasRole('HOD') || hasRole('MIS') || hasRole('IAO') ? state.units : markableUnits(); }
 /** The units the Reports choices offer: this term's, or (looking back) the chosen earlier term's. */
 const reportUnitList = () => (state.reportTerm ? state.pastUnits || [] : reportUnits());
 /** Earlier terms, newest first; the running one is the first choice. */
@@ -2010,6 +2010,7 @@ async function savePin(e) {
 }
 function homeTab() {
   if (markableUnits().length) return 'mark';
+  if ((hasRole('EAO') || hasRole('IAO')) && !hasRole('MIS') && !hasRole('HOD')) return 'poe';
   if (hasRole('MIS')) return 'manage';
   if (hasRole('HOD')) return 'manage';
   return hasRole('TRAINER') ? 'mark' : 'me';
@@ -2094,8 +2095,10 @@ function applyRoles() {
   $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs button[data-tab="alerts"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
+  // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
+  $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
-  if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : 'reports');
+  if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : $('.tabs button[data-tab="reports"]').hidden ? 'poe' : 'reports');
   renderIdentity();
   renderClassSelects();
   window.Admin?.refreshBadge?.();
@@ -2110,8 +2113,8 @@ function updateNet() {
   b.className = 'badge ' + (on ? 'online' : 'offline');
 }
 
-const ROLE_NAMES = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer' };
-const ROLE_ORDER = ['HOD', 'MIS', 'TRAINER'];
+const ROLE_NAMES = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer' };
+const ROLE_ORDER = ['HOD', 'MIS', 'IAO', 'EAO', 'TRAINER'];
 /** "HOD, MIS Officer, Trainer": the biggest responsibility first, whatever order the server lists them in. */
 const roleText = (s) => ROLE_ORDER.filter((r) => s.roles.includes(r)).map((r) => ROLE_NAMES[r]).join(', ');
 function renderIdentity() {

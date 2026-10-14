@@ -1014,3 +1014,21 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .stu-table .acts { display: flex; flex-wrap: wrap; gap: .1rem .75rem; margin-top: .2rem; }
 .stu-table .sub { display: block; font-size: .85em; color: var(--muted, #667); }
 .poe-doc-head { gap: .5rem; }
+
+/* POE → Verification */
+.ver-table td, .ver-sample td { vertical-align: top; }
+.ver-sample td { white-space: normal; }
+.vcheck { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; min-width: 18rem; }
+.vcheck select, .vcheck input[name=comment] { min-height: 34px; font-size: .875rem; }
+.vcheck input[name=comment] { flex: 1 1 10rem; }
+.panel-form, .assign-form { display: grid; gap: .6rem; margin: .6rem 0; }
+@media (min-width: 760px) { .assign-form { grid-template-columns: 2fr 1fr auto; align-items: end; } }
+.panel-form .members { display: flex; flex-wrap: wrap; gap: .35rem; border: 1px solid var(--line); border-radius: var(--r); padding: .5rem; }
+.panel summary { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.ext-assign { display: grid; gap: .35rem; margin: .5rem 0; }
+.ver-submit, .ver-respond, .ver-ext { display: grid; gap: .5rem; margin-top: .8rem; max-width: 40rem; }
+.staff .ends { display: inline-flex; gap: .35rem; align-items: center; margin-left: .35rem; }
+.staff .ends input { min-height: 30px; }
+.ver-print .sign-lines { margin-top: 8mm; }
+.ver-print .sign-lines th { text-align: left; }
+.ver-print .sign-lines td { min-width: 30mm; border-bottom: .2mm solid #000; }
