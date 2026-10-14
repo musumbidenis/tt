@@ -523,3 +523,9 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 - **Shorter week choice**: *Week 6 - 12 Oct*, or *Week 6 - CAT* in a CAT week.
 - **One separator everywhere**: pieces of information are separated by " - " (not "·" or "—") on every screen, export, printout and notification, and on the landing page. The rule is written down in TECHNICAL 11.5.
 - **Department of Computing and Informatics** replaces *ICT Department* on the marksheet (Excel template title block and the Drive copy).
+
+## Changes in 4.26 (server 6.10.0)
+
+- **POE by unit is a table**: one row per submission with the student, admission number, unit, item, the item's **mark** from the unit's marksheet, when it was sent, its status and a **Review** / **Preview** button to approve or return. Status chips, class and unit lists and a name or admission search filter it; headings sort it; long lists come in pages; Excel and PDF export. The preview's Previous / Next and the next one after a decision follow the table's order.
+- **POE by student** shows the mark under each item in a student's units, and each row has **Review** / **Preview**, which opens their first waiting submission and goes through their files unit by unit.
+- **Printed register**: *GENERAL CLASS REGISTER* and *FILTERED BY* are centred; the grid is one table per page, so the CAT column's label is centred on every page, with spaced letters.

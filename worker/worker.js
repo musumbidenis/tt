@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '6.9.0';
+export const VERSION = '6.10.0';
 const SCHEMA_VERSION = '11';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -1944,7 +1944,7 @@ async function poeList(env, b, me) {
   // Links into Drive: the trainer's own attendance sheet; the evidence index for the HOD and MIS Officer.
   const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
   const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(me.code))?.[1] || '';
-  return { ok: true, evidence: list.map(evidenceOut), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
+  return { ok: true, evidence: list.map(evidenceOut), marks: await marksFor(env, list), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
 }
 async function evidenceFor(env, id, me, decide) {
   const r = await one(env, 'SELECT * FROM evidence WHERE id=?', String(id || ''));
@@ -2090,6 +2090,19 @@ async function importRegCodes(env, b, me) {
 }
 
 /** POE by student: the classes taught this term, and for one class its students and units. */
+/** The marks (the unit's whole-life marksheet) of the students in these evidence rows: [{ c, u, a, cat1 … prac3 }]. */
+const MARK_COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
+const markOut = (r) => Object.fromEntries([['c', r.class_code], ['u', r.unit_code], ['a', r.adm_no], ...MARK_COLS.filter((k) => r[k] !== null && r[k] !== undefined).map((k) => [k, r[k]])]);
+async function marksFor(env, rows) {
+  const keys = [...new Set(rows.map((r) => r.class_code + '|' + r.unit_code))].map((k) => k.split('|')), want = new Set(rows.map((r) => lower(r.adm_no)));
+  const out = [];
+  for (let i = 0; i < keys.length; i += 40) {
+    const part = keys.slice(i, i + 40);
+    const got = await all(env, `SELECT class_code, unit_code, adm_no, ${MARK_COLS.join(', ')} FROM unit_marks WHERE ${part.map(() => '(class_code=? AND unit_code=?)').join(' OR ')}`, ...part.flat());
+    for (const r of got) if (want.has(lower(r.adm_no))) out.push(markOut(r));
+  }
+  return out;
+}
 async function poeClass(env, b) {
   const loading = await all(env, `SELECT class_code, unit_code, unit_name FROM loading WHERE term_id=${ACTIVE_TERM}`);
   const classes = [...new Set(loading.flatMap((u) => classParts(u.class_code)))].sort();
@@ -2099,7 +2112,8 @@ async function poeClass(env, b) {
   for (const u of unitsForClass(loading, cls)) if (!seen.has(u.unit_code)) { seen.add(u.unit_code); units.push({ code: u.unit_code, name: u.unit_name || u.unit_code }); }
   const students = (await all(env, `SELECT adm_no, name FROM trainees WHERE class_code=? AND COALESCE(status,'') NOT IN ${GONE} ORDER BY name`, cls))
     .map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no }));
-  return { ok: true, classes, classCode: cls, units, students };
+  const marks = (await all(env, `SELECT class_code, unit_code, adm_no, ${MARK_COLS.join(', ')} FROM unit_marks WHERE class_code=?`, cls)).map(markOut);
+  return { ok: true, classes, classCode: cls, units, students, marks };
 }
 async function driveStatus(env) {
   const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);

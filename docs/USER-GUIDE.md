@@ -365,10 +365,13 @@ Students send scanned CATs and practicals from their app. New documents are save
 ### 7.1 Trainers: review evidence
 
 1. Open the **POE** tab. The dot shows how many submissions are waiting for you.
-2. Use the chips (**To review**, **Approved**, **Returned**, **All**) and the class, unit and search filters.
-3. Tap a submission to open it. The preview shows the student's name and the item (for example *CAT1*), their admission number, the unit and the version, and every page.
+2. **By unit** is a table with one row per submission: **Student**, **Admission no.**, **Unit**, **Item** (for example *CAT1*, with its version), **Mark** (the mark for that item in the unit's marksheet, *–* if none), **Sent**, **Status**, and a **Review** (or **Preview**) button.
+   - Filter with the chips (**To review**, **Approved**, **Returned**, **All**), the **class** and **unit** lists and the **name or admission number** search.
+   - Tap a heading to sort by it (tap again to reverse). Long lists come in pages, with **‹ Previous**, **Next ›** and rows per page under the table.
+   - **Export Excel** and **Save as PDF** under the table give the filtered list.
+3. Tap **Review** to open a submission. The preview shows the student's name and the item, their admission number, the unit and the version, and every page.
 4. Choose **Approve**, or write a note and choose **Return to student** (a note is needed when returning).
-5. After each decision the next waiting submission opens. **‹ Previous** and **Next ›** move through the list; **Open in Drive** opens the original file.
+5. After each decision the next waiting submission opens, in the table's order. **‹ Previous** and **Next ›** move through the table; **Open in Drive** opens the original file.
 
 **Changed after sending.** The app remembers each document's fingerprint when it is sent. If the student changes the file in their Drive afterwards, the preview shows **This file was changed in the student's Drive after it was sent**, and the list marks it *changed after sending*. Check it carefully before deciding.
 
@@ -393,7 +396,9 @@ Tap **By student** to see one class at a time as a table:
 
 - The class line reads, for example, *ICT DICT-25S-RS2 (20 students, 5 units)*.
 - Each row shows how many items the student has **sent**, **approved**, **with trainer** and **returned**. Filter with the chips (Everyone, With trainer, Returned, Has approved, Nothing sent) and the search box.
-- Tap a student to open their units and items: **✓** approved, **•** with the trainer, **↺** returned, **–** not sent. Tap a mark to open that file.
+- Tap a student to open their units and items: **✓** approved, **•** with the trainer, **↺** returned, **–** not sent, with the item's **mark** from the unit's marksheet under each. Tap a symbol to open that file.
+- **Review** (or **Preview**) on a row opens that student's first submission waiting for review, then **Next ›** goes through their other files unit by unit, to approve or return each one.
+- Tap a heading to sort by it; long classes come in pages.
 - **Export Excel** and **Save as PDF** under the table give the whole filtered list.
 
 <p align="center">

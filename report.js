@@ -177,10 +177,18 @@ const TermReport = (() => {
     };
   }
 
-  /** Printable copy of the register (Save as PDF from the print dialog), same layout as the Excel file. */
+  /** Printable copy of the register (Save as PDF from the print dialog), same layout as the Excel file. The grid is one table
+   * per printed page (headings repeated), so each page's CAT column is its own cell with "CAT 1" in the middle of it. */
+  const PRINT_ROWS = { first: 24, next: 31 };
   function printHtml(d, esc) {
-    const cats = new Map((d.cats || []).map((c) => [c.w, c])), n = d.students.length;
-    const cellsOf = (s, i) => Array.from({ length: WEEKS }, (_, w) => (cats.has(w)
+    const cats = new Map((d.cats || []).map((c) => [c.w, c]));
+    const pages = [];
+    for (let i = 0; i < d.students.length;) { const size = pages.length ? PRINT_ROWS.next : PRINT_ROWS.first; pages.push(d.students.slice(i, i + size)); i += size; }
+    if (!pages.length) pages.push([]);
+    // The comments need about four rows' room on the last page: if it is full, its last four students go over with them.
+    const last = pages[pages.length - 1], cap = pages.length === 1 ? PRINT_ROWS.first : PRINT_ROWS.next;
+    if (last.length > cap - 4 && last.length > 4) pages.push(last.splice(last.length - 4));
+    const cellsOf = (s, i, n) => Array.from({ length: WEEKS }, (_, w) => (cats.has(w)
       ? (i ? '' : `<td class="cat e" colspan="3" rowspan="${n}"><span>${esc(cats.get(w).label)}</span></td>`)
       : [0, 1, 2].map((k) => `<td class="c${k === 2 ? ' e' : ''}">${s.cells[w * 3 + k] || ''}</td>`).join(''))).join('');
     const cs = d.catSheet;
@@ -188,9 +196,15 @@ const TermReport = (() => {
       <table class="rp-grid rp-cat"><thead><tr><th>#</th><th>ADMISSION NO</th><th>NAMES</th>${cs.cols.map((c) => `<th>${esc(c.label)}<br><small>${esc(c.date)}</small></th>`).join('')}</tr></thead>
       <tbody>${cs.rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${esc(r.admNo)}</td><td class="l">${esc(r.name)}</td>${r.vals.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}
       ${cs.totals.map((t) => `<tr class="tot"><td colspan="3" class="l">${esc(t.label)}</td>${t.vals.map((v) => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '';
-    const rows = d.students.map((s, i) => `<tr><td>${i + 1}</td><td class="l">${esc(s.admNo)}</td><td class="l">${esc(s.name)}${s.pending ? ' (pending)' : ''}</td>
-      ${cellsOf(s, i)}
+    const rowsOf = (list, from) => list.map((s, i) => `<tr><td>${from + i + 1}</td><td class="l">${esc(s.admNo)}</td><td class="l">${esc(s.name)}${s.pending ? ' (pending)' : ''}</td>
+      ${cellsOf(s, i, list.length)}
       <td>${s.possible || ''}</td><td>${s.actual || ''}</td><td>${Number(s.possible) ? (Math.round((s.actual / s.possible) * 1000) / 10) + '%' : '-'}</td></tr>`).join('');
+    const head = `<thead><tr><th rowspan="2">#</th><th rowspan="2">ADMISSION NO</th><th rowspan="2">NAMES</th>
+        ${d.weekLabels.map((w) => `<th colspan="3" class="e">${esc(w)}</th>`).join('')}<th rowspan="2">Possible Hrs</th><th rowspan="2">Actual Hrs</th><th rowspan="2">Actual Attendance %</th></tr>
+        <tr>${Array.from({ length: WEEKS }, (_, w) => (cats.has(w) ? `<th colspan="3" class="e catd">${esc(cats.get(w).date)}</th>`
+          : [0, 1, 2].map((k) => `<th class="c${k === 2 ? ' e' : ''}"></th>`).join(''))).join('')}</tr></thead>`;
+    let from = 0;
+    const grids = pages.map((list, p) => { const html = `<table class="rp-grid${p ? ' rp-more' : ''}">${head}<tbody>${rowsOf(list, from)}</tbody></table>`; from += list.length; return html; }).join('');
     return `<div class="reg-print">
       <div class="rp-head"><img src="icons/rvnp-logo.png" alt=""><div class="rp-title">
         <h1>RIFT VALLEY NATIONAL POLYTECHNIC</h1>
@@ -198,11 +212,7 @@ const TermReport = (() => {
         <tr><th>CLASS</th><td>${esc(d.classLabel)}</td><th>LEVEL</th><td>${esc(d.level)}</td></tr>
         <tr><th>SUBJECT</th><td colspan="3">${esc(d.subject)}</td></tr></table>
         <h2>GENERAL CLASS REGISTER</h2><p>${esc(d.filter)}</p></div></div>
-      <table class="rp-grid"><thead><tr><th rowspan="2">#</th><th rowspan="2">ADMISSION NO</th><th rowspan="2">NAMES</th>
-        ${d.weekLabels.map((w) => `<th colspan="3" class="e">${esc(w)}</th>`).join('')}<th rowspan="2">Possible Hrs</th><th rowspan="2">Actual Hrs</th><th rowspan="2">Actual Attendance %</th></tr>
-        <tr>${Array.from({ length: WEEKS }, (_, w) => (cats.has(w) ? `<th colspan="3" class="e catd">${esc(cats.get(w).date)}</th>`
-          : [0, 1, 2].map((k) => `<th class="c${k === 2 ? ' e' : ''}"></th>`).join(''))).join('')}</tr></thead>
-        <tbody>${rows}</tbody></table>
+      ${grids}
       <table class="rp-comments"><tr><th>Lecturer's Comment</th><td>${esc(d.lecturerComment)}</td></tr><tr><th>HOD's Comment</th><td>${esc(d.hodComment)}</td></tr></table>
     </div>${catPage}`;
   }

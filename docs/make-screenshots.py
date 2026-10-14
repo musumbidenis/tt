@@ -217,7 +217,7 @@ def staff(pw, browser, pdf64):
     shot(pg, 'marks.png')
     pg.click('#reportMode [data-rmode=attendance]')
     # POE
-    pg.click('.tabs button[data-tab=poe]'); pg.wait_for_selector('#poe .poe-row', timeout=15000)
+    pg.click('.tabs button[data-tab=poe]'); pg.wait_for_selector('#poe .poe-unit-table tbody tr', timeout=15000)
     pg.click('#poe [data-status=""]'); pg.wait_for_timeout(500)
     shot(pg, 'poe-list.png')
     pg.locator('#poe [data-open]').first.click(); pg.wait_for_selector('#poePages canvas', timeout=20000)

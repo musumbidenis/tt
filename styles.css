@@ -612,8 +612,8 @@ fieldset .more[open] summary { flex-basis: 100%; }
   .rp-head img { width: 26mm; height: auto; }
   .rp-title { flex: 1; }
   .rp-title h1 { font: bold 13pt "Times New Roman", serif; text-align: center; margin: 0 0 2mm; }
-  .rp-title h2 { font: bold 10pt "Times New Roman", serif; margin: 2mm 0 0; padding-left: 30mm; }
-  .rp-title p { font: bold italic 9pt "Times New Roman", serif; margin: 1mm 0 2mm; padding-left: 30mm; }
+  .rp-title h2 { font: bold 10pt "Times New Roman", serif; margin: 2mm 0 0; text-align: center; }
+  .rp-title p { font: bold italic 9pt "Times New Roman", serif; margin: 1mm 0 2mm; text-align: center; }
   .rp-fields { width: 100%; border-collapse: collapse; }
   .rp-fields th { text-align: left; font-weight: bold; width: 28mm; padding: 1mm 0; }
   .rp-fields td { border-bottom: .3mm solid #000; padding: 1mm 2mm; }
@@ -624,9 +624,9 @@ fieldset .more[open] summary { flex-basis: 100%; }
   .rp-grid .e { border-right-width: .5mm; }
   .rp-grid thead { display: table-header-group; }
   .rp-grid tr { break-inside: avoid; }
-  .rp-grid tbody tr:first-child { break-inside: auto; }   /* it holds the CAT columns, which run down every row: let the grid break across pages */
-  .rp-grid td.cat { vertical-align: top; padding: 14mm 0 0; }
-  .rp-grid td.cat span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; letter-spacing: .15em; }
+  .rp-grid.rp-more { break-before: page; }               /* one table per printed page (report.js PRINT_ROWS) */
+  .rp-grid td.cat { vertical-align: middle; text-align: center; padding: 1mm 0; }
+  .rp-grid td.cat span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; font-size: 10pt; letter-spacing: .4em; }
   .rp-grid th.catd { font-size: 6.5pt; font-weight: 400; }
   .rp-cats { break-before: page; }
   .rp-cats h2 { font-size: 12pt; margin: 0 0 1mm; text-align: center; }
@@ -823,6 +823,11 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .table-card .pager { padding: .6rem 1rem; border-top: 1px solid var(--line); }
 .table-actions { padding: .75rem 1rem; border-top: 1px solid var(--line); }
 .poe-table td.num, .poe-table th.num { text-align: center; }
+.poe-unit-table td.unit-cell { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
+.poe-unit-table .pick { width: 2.5rem; text-align: center; }
+.pm-mark { display: block; margin-top: .15rem; font: 600 .75rem var(--display); color: var(--ink-2); }
+.pm-key { margin: .4rem 1rem .2rem; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .poe-table tr.stu-row { cursor: pointer; }
 .poe-table tr.stu-row:hover td { background: var(--sunk); }
 .poe-table tr.stu-row td:first-child::before { content: "›"; display: inline-block; width: 1rem; color: var(--muted); transition: transform .15s; }

@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.25.2**, server (Worker) **6.9.0**, database schema **11**, Drive bridge **1.4.5**.
+Describes app **4.26.0**, server (Worker) **6.10.0**, database schema **11**, Drive bridge **1.4.5**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -462,14 +462,14 @@ Checked against the device's registration (`deviceId` + `admNo`).
 | `setDefaultPin` | MIS | Set or remove the first-time PIN. |
 | `importRegCodes` | MIS | CDACC registration codes by admission number. |
 | `archiveClasses`, `classExport`, `deleteClasses` | MIS | Archive or restore classes; everything about them as JSON; delete archived classes (needs the typed name). |
-| `poeList`, `poeView` | Any | Evidence lists; for a preview, a signed ticket for the bridge, or for a file in a student's Drive its file ID and md5 (the trainer's device opens it with their own Google sign-in). |
+| `poeList`, `poeView` | Any | Evidence lists (with `marks`: the unit marksheet rows of those students, `{ c, u, a, cat1 … prac3 }`, from `unit_marks`); for a preview, a signed ticket for the bridge, or for a file in a student's Drive its file ID and md5 (the trainer's device opens it with their own Google sign-in). |
 | `poeChanged` | Any who may view | The device found a different md5 in the student's Drive: sets `changed_at` and audits it. |
 | `setGoogle` | Any | Connect (checked with Google's userinfo, college domain only) or clear the staff member's Google address. |
 | `setArchiveEmail` | MIS | The backup account every student file is shared with, and its space in GB (`quotaGb`). |
 | `backupStatus`, `setBackup` | HOD, MIS | Backup plan (`repeat` off/daily/weekly/monthly, `hour`), last report, storage level (`ok`, `warn` from 80%, `full` from 95%), documents waiting, ones given up on; `setBackup` also takes `now` (back up now) and `retry`. |
 | `poeDecide` | Trainer, HOD | Approve or return (sends a notification). |
 | `poeReceive` | MIS | Mark approved evidence received. |
-| `poeClass` | MIS, HOD | Students and units of one class for the By student view. |
+| `poeClass` | MIS, HOD | Students, units and unit marks (`marks`, as in `poeList`) of one class for the By student view. |
 | `driveStatus` | MIS, HOD | The bridge's last report. |
 | `marksPull`, `marksPush` | Any reads; Trainer, HOD write | The lifetime marksheet; `locked` cells and `lockedTerms` per row; `held` counts edits refused by the lock. |
 
@@ -572,7 +572,8 @@ There is no Shared Drive, so the archive lives in the **backup account's own Dri
 ### 9.6c CAT weeks in the term register (from 4.25, server 6.9.0, bridge 1.4.4)
 
 - `TermReport.build` takes the term's `catWeeks` and the CAT and extra registers, and returns `cats: [{ w, label: 'CAT n', dates, merge }]`. `merge` is false when lessons were marked in that week anyway (they are shown instead). With all streams together, a week is merged only if it is in every stream.
-- Sheet view and print draw a merged week as one cell (`colspan 3`, `rowspan` = students) with the label in `writing-mode: vertical-rl` turned 180°, and the CAT date in the second heading row. The list view's strip shows one striped bar.
+- Sheet view and print draw a merged week as one cell (`colspan 3`, `rowspan` = students) with the label in `writing-mode: vertical-rl` turned 180°, centred, and the CAT date in the second heading row. The list view's strip shows one striped bar.
+- Print (from 4.26) is one grid table per A4 page, `report.js` `PRINT_ROWS` (24 rows on the first page, 31 after), each with its headings and its own CAT cells, so "CAT 1" sits in the middle of every page. When the last page has no room for the comment boxes, its last four students move to a new page with them.
 - The Excel export merges `<col>9:<col+2><last>` for each CAT week, adds a cell format with `textRotation="90"` to `styles.xml`, and puts the date under the week label. `TermReport.catTable()` adds the **CATs** sheet (`sheet2.xml`, with its workbook, relationship, content type and `app.xml` entries).
 - An extra CAT attendance makes up the CAT its title names (`CAT 1`), else the latest CAT on or before its date. A student absent (A) from a CAT and present or late at its make-up reads `Ab (Supplementary CAT - Sat 19 Mar)`.
 - The Drive copy: `bridgeFeed` sends `catCols` and `catTable` per class-unit (worker `catColumns()`, `catTable()`), and the bridge merges and rotates the CAT weeks and writes the CAT tab with totals.
