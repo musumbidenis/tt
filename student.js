@@ -137,7 +137,7 @@ async function openSetup(message = '') {
     const res = await api('GET', { action: 'classes' });
     if (!res.ok) throw new Error(res.error || 'Could not load classes');
     sel.innerHTML = '<option value="">Choose your class</option>'
-      + res.classes.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} — ${esc(c.name)}</option>`).join('');
+      + res.classes.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} - ${esc(c.name)}</option>`).join('');
   } catch (e) {
     sel.innerHTML = '<option value="">Could not load classes</option>';
     msg.textContent = e.message;
@@ -176,7 +176,7 @@ async function register() {
     if (!res.ok) throw new Error(res.error || 'Registration failed');
     await saveProfile({ admNo: res.admNo, name: res.name, classCode: res.classCode, className: res.className, registeredAt: nowISO() });
     $('#setupCard').hidden = true;
-    showResult('ok', 'Device registered', `${res.name} — ${res.classCode}`, 'You can now scan your trainer\'s lesson QR, even without internet.');
+    showResult('ok', 'Device registered', `${res.name} - ${res.classCode}`, 'You can now scan your trainer\'s lesson QR, even without internet.');
     const l = st.pendingLesson;
     st.pendingLesson = null;
     if (l) await handleLesson(l);
@@ -208,7 +208,7 @@ async function handleLesson(l) {
   const id = 'checkin:' + l.s;
   try {
     const existing = await sdb.get(id);
-    showResult('ok', 'Already recorded', `${l.un || ''} · ${l.p || ''}`, `Recorded ${fmtTime(existing.scannedAt)}`);
+    showResult('ok', 'Already recorded', `${l.un || ''} - ${l.p || ''}`, `Recorded ${fmtTime(existing.scannedAt)}`);
     return;
   } catch (e) { if (e.status !== 404) throw e; }
   const doc = {
@@ -220,7 +220,7 @@ async function handleLesson(l) {
   st.retries = 0;
   st.lastScan = id;
   await mirrorUnsent();
-  showResult('ok', 'Attendance recorded', `${doc.unitName} · ${doc.period}${doc.trainer ? ' · ' + doc.trainer : ''}`,
+  showResult('ok', 'Attendance recorded', `${doc.unitName} - ${doc.period}${doc.trainer ? ' - ' + doc.trainer : ''}`,
     navigator.onLine ? 'Sending…' : 'Saved safely on this device — it is sent automatically when you next have internet.');
   await render();
   sync();
@@ -256,7 +256,7 @@ async function renderAttendance() {
   const count = (st) => lessonsOnly.filter((l) => l.status === st).reduce((n, l) => n + (l.slots || 1), 0);
   const held = lessonsOnly.reduce((n, l) => n + (l.slots || 1), 0), came = count('Present') + count('Late');
   $('#attendSum').textContent = `${held} lesson(s) marked: ${count('Present')} present, ${count('Late')} late, ${count('Absent')} absent, ${count('Excused')} excused`
-    + (held ? ` · ${Math.round((came / Math.max(1, held - count('Excused'))) * 100)}% attended` : '') + (d.at ? ` · updated ${fmtTime(d.at)}` : '');
+    + (held ? ` - ${Math.round((came / Math.max(1, held - count('Excused'))) * 100)}% attended` : '') + (d.at ? ` - updated ${fmtTime(d.at)}` : '');
   // The table: searchable, filtered by unit and mark, sorted by tapping a heading.
   const unitSel = $('#attUnit'), units = [...new Set(lessons.map((l) => l.unitName))].sort();
   const keep = unitSel.value;
@@ -270,7 +270,7 @@ async function renderAttendance() {
   const PILL = { Present: 'synced', Late: 'pending', Absent: 'rejected', Excused: 'locked' };
   $('#attendList').innerHTML = !shown.length ? '<p class="muted small">Nothing matches.</p>'
     : `<div class="table-wrap"><table class="report-table stu-table"><thead><tr><th class="num">S/N</th>${Tables.th('attMine', 'date', 'Date')}${Tables.th('attMine', 'unit', 'Unit')}${Tables.th('attMine', 'mark', 'Mark')}</tr></thead>
-      <tbody>${page.map((l, i) => `<tr><td class="num">${first + i + 1}</td><td>${esc(new Date(l.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }))}<span class="sub">${esc(String(l.period).replace(/ · .*$/, ''))}${l.kind !== 'lesson' ? ` (${l.kind === 'cat' ? 'CAT' : 'extra'})` : ''}</span></td>
+      <tbody>${page.map((l, i) => `<tr><td class="num">${first + i + 1}</td><td>${esc(new Date(l.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }))}<span class="sub">${esc(String(l.period).replace(/ - .*$/, ''))}${l.kind !== 'lesson' ? ` (${l.kind === 'cat' ? 'CAT' : 'extra'})` : ''}</span></td>
         <td>${esc(l.unitName)}</td><td><span class="pill ${PILL[l.status] || 'locked'}">${esc(l.status || '–')}</span></td></tr>`).join('')}</tbody></table></div>${Tables.bar('attMine', shown)}`;
 }
 
@@ -389,7 +389,7 @@ async function render() {
       : d.status === 'pending' ? ['pending', 'Sent — waiting for trainer to sync']
       : d.status === 'rejected' ? ['rejected', REASONS[d.reason] || 'Not accepted']
       : ['pending', 'Saved on device'];
-    return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} · ${esc(d.period)} · ${esc(fmtTime(d.scannedAt))}</span>
+    return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} - ${esc(d.period)} - ${esc(fmtTime(d.scannedAt))}</span>
 </div>
       <span class="pill ${label[0]}">${esc(label[1])}</span></li>`;
   }).join('');

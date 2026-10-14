@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.25.1';
+const APP_VERSION = '4.25.2';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -63,17 +63,17 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
   : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
 const periodLabel = (code) => (PERIODS.find((p) => p.code === code) || { label: code }).label;
 const slotNo = (period) => { const m = /^L(\d)$/.exec(period || ''); return m ? Number(m[1]) : 0; };
-/** "Lesson 2 · 9.00–10.30", or for a double "Lessons 1–2 · 7.30–10.30". */
+/** "Lesson 2 - 9.00–10.30", or for a double "Lessons 1–2 - 7.30–10.30". */
 function slotLabel(period, slots = 1) {
   const n = slotNo(period);
-  if (n === LUNCH_SLOT) return `Lunch · ${LUNCH_TIME[0]}–${LUNCH_TIME[1]}`;
+  if (n === LUNCH_SLOT) return `Lunch - ${LUNCH_TIME[0]}–${LUNCH_TIME[1]}`;
   if (!n || !SLOTS[n - 1]) return periodLabel(period);
   const end = SLOTS[Math.min(SLOTS.length, n + (slots === 2 ? 1 : 0)) - 1][1];
-  return (slots === 2 ? `Lessons ${n}–${n + 1}` : `Lesson ${n}`) + ` · ${SLOTS[n - 1][0]}–${end}`;
+  return (slots === 2 ? `Lessons ${n}–${n + 1}` : `Lesson ${n}`) + ` - ${SLOTS[n - 1][0]}–${end}`;
 }
 const kindOf = (s) => (s && ['cat', 'extra'].includes(s.kind) ? s.kind : 'lesson');
-/** What a register is: "Lesson 2 · 9.00–10.30" or "CAT 1 · Lesson 3 · 10.30–12.00". */
-const sessionLabel = (s) => (kindOf(s) === 'lesson' ? '' : `${s.title || KIND_LABEL[kindOf(s)]} · `) + slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1);
+/** What a register is: "Lesson 2 - 9.00–10.30" or "CAT 1 - Lesson 3 - 10.30–12.00". */
+const sessionLabel = (s) => (kindOf(s) === 'lesson' ? '' : `${s.title || KIND_LABEL[kindOf(s)]} - `) + slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1);
 const fmtDate = (iso) => { if (!iso) return ''; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtShort = (iso) => { if (!iso) return ''; const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso); return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -258,7 +258,7 @@ function renderStreamSelect() {
   const prev = sel.value, { acc, all, every, open } = streamChoices(), unit = $('#rUnit').value;
   // Streams taught by someone else are shown but locked; a stream that doesn't take this unit can't be chosen.
   sel.innerHTML = (all ? `<option value="">${every ? 'All streams' : `Streams ${open.map((c) => esc(streamLetter(c))).join(' + ')} (yours)`}</option>` : '')
-    + acc.map((a) => `<option value="${esc(a.c)}"${a.ok ? '' : ' disabled'}>Stream ${esc(streamLetter(a.c))}${a.ok ? '' : a.none ? ` · no ${esc(unit)}` : ` · locked${a.who ? ` (${esc(a.who)})` : ''}`}</option>`).join('');
+    + acc.map((a) => `<option value="${esc(a.c)}"${a.ok ? '' : ' disabled'}>Stream ${esc(streamLetter(a.c))}${a.ok ? '' : a.none ? ` - no ${esc(unit)}` : ` - locked${a.who ? ` (${esc(a.who)})` : ''}`}</option>`).join('');
   // All streams unless a stream was picked by hand (and can still be seen).
   const keep = sel.dataset.picked && acc.some((a) => a.ok && a.c === prev);
   sel.value = keep ? prev : all ? '' : (acc.find((a) => a.ok)?.c || '');
@@ -361,7 +361,7 @@ function fillSelect(sel, options, value, placeholder) {
     + options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
   if (options.some((o) => o.value === prev)) sel.value = prev;
 }
-const classLabel = (c) => c.misClass && c.misClass !== c.code ? `${c.code} (${c.misClass})` : (c.name && c.name !== c.code ? `${c.code} — ${c.name}` : c.code);
+const classLabel = (c) => c.misClass && c.misClass !== c.code ? `${c.code} (${c.misClass})` : (c.name && c.name !== c.code ? `${c.code} - ${c.name}` : c.code);
 
 function renderClassSelects() {
   const mark = markClasses().map((c) => ({ value: c.code, label: classLabel(c) }));
@@ -393,7 +393,7 @@ function openReport(classCode, unitCode) {
   if (!applyWantedReport()) $('#reportSummary').innerHTML = '<p class="empty">Loading the class lists…</p>';
 }
 function renderUnitSelect() {
-  const opts = unitsFor($('#fClass').value).map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
+  const opts = unitsFor($('#fClass').value).map((u) => ({ value: u.code, label: u.code + ' - ' + u.name }));
   fillSelect($('#fUnit'), opts, undefined, opts.length ? null : 'No units for this class');
   renderStreamChoice();
   renderTimetable();
@@ -404,10 +404,10 @@ const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDa
 /** Weeks to choose from: the term's 12 teaching weeks, or (no term yet) the last few weeks. */
 function weekOptions() {
   const weeks = state.meta.weeks || [], cats = state.meta.term?.catWeeks || [];
-  const range = (m) => `${fmtShort(m)} - ${fmtShort(addDays(m, 4))}`;
-  if (weeks.length) return weeks.map((m, i) => ({ value: m, label: `Week ${i + 1} (${range(m)})${cats.includes(i + 1) ? ' · CAT week' : ''}` }));
+  // Short: "Week 6 - 12 Oct", or "Week 6 - CAT" (the timetable below shows each day's date).
+  if (weeks.length) return weeks.map((m, i) => ({ value: m, label: `Week ${i + 1} - ${cats.includes(i + 1) ? 'CAT' : fmtShort(m)}` }));
   const now = TermReport.mondayOf(todayISO());
-  return [0, 1, 2, 3, 4, 5].map((k) => addDays(now, -7 * k)).map((m) => ({ value: m, label: `Week of (${range(m)})` }));
+  return [0, 1, 2, 3, 4, 5].map((k) => addDays(now, -7 * k)).map((m) => ({ value: m, label: `Week of ${fmtShort(m)}` }));
 }
 /** The current teaching week, or the nearest one before it (break weeks), or week 1 before the term starts. */
 function currentWeek() {
@@ -786,7 +786,7 @@ function renderRegister() {
   $('#register').hidden = false;
   const g = s._parts && streamGroup(s._parts[0].classCode);
   const allStreams = g && s._parts.every((p) => g.codes.includes(p.classCode));
-  $('#regTitle').textContent = s._parts ? (allStreams ? `${g.base} · streams ${s._parts.map((p) => streamLetter(p.classCode)).join(' + ')}` : s._parts.map((p) => p.classCode).join(' + ')) : s.classCode;
+  $('#regTitle').textContent = s._parts ? (allStreams ? `${g.base} - streams ${s._parts.map((p) => streamLetter(p.classCode)).join(' + ')}` : s._parts.map((p) => p.classCode).join(' + ')) : s.classCode;
   // On a combined lesson each student shows their stream.
   const streamTag = s._parts ? (() => {
     const of = new Map();
@@ -795,7 +795,7 @@ function renderRegister() {
   })() : () => '';
   const wk = s.week ? `Week ${s.week} ` : '';
   const day = fmtDate(s.date).replace(/, (?=[0-9]{4}$)/, ' ');
-  $('#regSub').textContent = `${s.unitName} — ${wk}(${day})${termLocked(s) ? ' · term ended, locked' : isLocked(s) ? ' · locked' : ''}`;
+  $('#regSub').textContent = `${s.unitName} - ${wk}(${day})${termLocked(s) ? ' - term ended, locked' : isLocked(s) ? ' - locked' : ''}`;
   $('#register').dataset.kind = kindOf(s);
   const q = $('#regSearch').value.trim().toLowerCase();
   const order = { P: 0, L: 1, E: 2, A: 3 };
@@ -966,7 +966,7 @@ function fillAddStudent() {
   if (swap) {
     const prev = $('#asPick').value;
     $('#asPick').innerHTML = '<option value="">Choose the student</option>'
-      + mates.map((t) => `<option value="${esc(t.admNo)}">${esc(t.admNo)} · ${esc(t.name)} (stream ${esc(streamLetter(t.classCode) || t.classCode)})</option>`).join('');
+      + mates.map((t) => `<option value="${esc(t.admNo)}">${esc(t.admNo)} - ${esc(t.name)} (stream ${esc(streamLetter(t.classCode) || t.classCode)})</option>`).join('');
     $('#asPick').value = mates.some((t) => t.admNo === prev) ? prev : '';
     $('#asName').value = mates.find((t) => t.admNo === $('#asPick').value)?.name || '';
   } else if (was) { $('#asAdm').value = ''; $('#asName').value = ''; }
@@ -1087,7 +1087,7 @@ async function handleScan(raw) {
   }
   const status = $('#scanAs').value;
   if (!(await setMark(t.admNo, status))) return;
-  out.textContent = `${t.name} — ${STATUSES[status]}`;
+  out.textContent = `${t.name} - ${STATUSES[status]}`;
   out.className = 'scan-result ok';
   navigator.vibrate?.(80);
   const row = $(`.trow[data-adm="${CSS.escape(t.admNo)}"]`);
@@ -1121,7 +1121,7 @@ function renderReportUnitSelect() {
   // For a class with streams: every unit this person may see in any of its streams.
   const units = g ? reportUnitList().filter((u) => g.codes.includes(u.classCode) && !seen.has(u.code) && seen.add(u.code)).sort((a, b) => a.code.localeCompare(b.code))
     : unitsFor($('#rClass').value, reportUnitList());
-  const opts = units.map((u) => ({ value: u.code, label: u.code + ' — ' + u.name }));
+  const opts = units.map((u) => ({ value: u.code, label: u.code + ' - ' + u.name }));
   fillSelect($('#rUnit'), opts, undefined, opts.length ? null : 'No units');
   renderStreamSelect();
 }
@@ -1182,9 +1182,9 @@ async function renderReport() {
   const localCount = parts.reduce((a, p) => a + p.src.localCount, 0), servers = parts.map((p) => p.src.server);
   $('#reportSource').textContent = (servers.every(Boolean)
     ? (servers.some((s) => s.cached) ? `From the server as of ${fmtTime(servers.find((s) => s.cached).cached)}` : 'Up to date with the server')
-      + (localCount ? ` · includes this device's ${localCount} register(s)` : '')
+      + (localCount ? ` - includes this device's ${localCount} register(s)` : '')
     : localCount ? 'From the registers on this device (connect to include other devices)' : (p0.mine ? 'No lessons marked yet for this unit this term.' : 'Connect to the internet to load this report.'))
-    + (one ? '' : ' · Choose one stream to submit or approve its register.');
+    + (one ? '' : ' - Choose one stream to submit or approve its register.');
   if (!r.list.length) {
     $('#reportSummary').innerHTML = `<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the register shows up here.</span></div>`;
     $('#reportControls').hidden = true; $('#reportLegend').hidden = true; $('#signoffCard').hidden = true; $('#catCard').hidden = true;
@@ -1208,7 +1208,7 @@ async function renderReport() {
   $('#reportLegend').hidden = false;
   drawReportBody();
   if (one) renderSignoff();
-  renderCats(parts.flatMap((p) => (one ? p.src.assessments : p.src.assessments.map((a) => ({ ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} · stream ${p.letter}` })))),
+  renderCats(parts.flatMap((p) => (one ? p.src.assessments : p.src.assessments.map((a) => ({ ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} - stream ${p.letter}` })))),
     parts.flatMap((p) => rosterFor(p.classCode)));
 }
 /** One class's term register for the report. */
@@ -1276,8 +1276,8 @@ function renderCats(list, roster) {
     const v = Object.values(l.marks || {});
     const sat = v.filter((x) => x === 'P' || x === 'L').length;
     return `<li><button type="button" class="mrow" ${l.local ? `data-session="${esc(l.id)}"` : 'disabled'}>
-      <span><b>${esc(l.title || KIND_LABEL[kindOf(l)])}</b><small>${esc(fmtDate(l.date))} · ${esc(String(l.period).replace(/^.*?· (?=Lesson)/, ''))}${l.local ? '' : ' · marked on another device'}</small></span>
-      <span class="pill ${kindOf(l)}">${sat} sat · ${v.filter((x) => x === 'A').length} absent</span></button></li>`;
+      <span><b>${esc(l.title || KIND_LABEL[kindOf(l)])}</b><small>${esc(fmtDate(l.date))} - ${esc(String(l.period).replace(/^.*?\s[·-]\s(?=Lesson)/, ''))}${l.local ? '' : ' - marked on another device'}</small></span>
+      <span class="pill ${kindOf(l)}">${sat} sat - ${v.filter((x) => x === 'A').length} absent</span></button></li>`;
   }).join('');
   card.hidden = false;
   card.innerHTML = `<h2>CATs and extra attendance</h2><p class="muted small">Recorded separately: these do not count in the term register's hours. ${roster.length} on the class list.</p><ul class="mlist">${rows}</ul>`;
@@ -1372,13 +1372,13 @@ function registerExportData() {
   const lecturers = rep.streams ? [...new Set(rep.parts.map((p) => p.unit.trainerName).filter(Boolean))].join(' / ') : '';
   const so = signoff;
   const lect = (rep.mine ? $('#soComment')?.value.trim() : '') || so?.lecturerComment || '';
-  const hod = so?.status === 'approved' ? [so.hodComment, `Approved by ${so.hodName}, ${fmtShort(so.decidedAt)}`].filter(Boolean).join(' — ') : (so?.hodComment || '');
+  const hod = so?.status === 'approved' ? [so.hodComment, `Approved by ${so.hodName}, ${fmtShort(so.decidedAt)}`].filter(Boolean).join(' - ') : (so?.hodComment || '');
   return TermReport.exportData(r, {
     lecturer: lecturers || unit.trainerName || (rep.mine ? trainerLabel() : ''), duration: term?.duration || '',
-    classLabel: rep.streams ? `${cls.misClass ? cls.misClass + ' · ' : ''}${cls.code} streams ${rep.parts.map((p) => p.letter).join(', ')}` : cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
+    classLabel: rep.streams ? `${cls.misClass ? cls.misClass + ' - ' : ''}${cls.code} streams ${rep.parts.map((p) => p.letter).join(', ')}` : cls.misClass ? `${cls.misClass} (${classCode})` : classCode, level: cls.level || '',
     subject: `${unitCode} - ${unit.name || unitCode}`, misClass: cls.misClass, classCode,
     sheetName: `${cls.code.split(' ').pop()} ${unitCode}`, lecturerComment: lect, hodComment: hod,
-    assessments: rep.parts.flatMap((p) => p.src.assessments.map((a) => (rep.streams ? { ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} · ${p.letter}` } : a))),
+    assessments: rep.parts.flatMap((p) => p.src.assessments.map((a) => (rep.streams ? { ...a, title: `${a.title || KIND_LABEL[kindOf(a)]} - ${p.letter}` } : a))),
   });
 }
 async function exportXlsx() {
@@ -1659,7 +1659,7 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
       if (fromOthers) parts.push(`${fromOthers} register(s) brought in from your other devices`);
       if (reqs) parts.push(`${reqs} added student(s) sent to the MIS Officer`);
       if (qrUpdated) parts.push(`QR check-ins added to ${qrUpdated} register(s)`);
-      toast(parts.join(' · ') || 'Everything is already sent', 'ok');
+      toast(parts.join(' - ') || 'Everything is already sent', 'ok');
     }
   } catch (e) {
     showSyncStatus(`Sync stopped${sent ? ` after ${sent} register(s)` : ''}: ${e.message}`);
@@ -1820,8 +1820,8 @@ async function openLessonQR() {
   // Upload straight away, so the server can confirm students' scans from the first second.
   saveCurrent().then(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false, force: true }); });
   renderQrLive();
-  $('#lessonQrTitle').textContent = `${$('#regTitle').textContent} · ${s.unitCode} — ${sessionLabel(s)}`;
-  $('#lessonQrSub').textContent = `${s.unitName} · ${fmtDate(s.date)}`;
+  $('#lessonQrTitle').textContent = `${$('#regTitle').textContent} - ${s.unitCode} - ${sessionLabel(s)}`;
+  $('#lessonQrSub').textContent = `${s.unitName} - ${fmtDate(s.date)}`;
   $('#lessonQrDialog').showModal();
   goLive();
   let shown = null;
@@ -1835,7 +1835,7 @@ async function openLessonQR() {
       const t = await qrToken(s.qr.secret, s._id, w);
       // A combined lesson: each other stream's code too, so every student checks in to their own stream's register.
       const xs = s._parts ? Object.fromEntries(await Promise.all(s._parts.slice(1).map(async (p) => [p.classCode, await qrToken(s.qr.secret, p._id, w)]))) : null;
-      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: (kindOf(s) === 'lesson' ? '' : (s.title || 'CAT') + ' · ') + s.unitName, p: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1), n: s.trainerName, u: serverUrl(), w, t, ...(xs ? { x: xs } : {}) });
+      const url = studentPageUrl() + '#l=' + b64url({ v: 1, s: s._id, c: s.classCode, un: (kindOf(s) === 'lesson' ? '' : (s.title || 'CAT') + ' - ') + s.unitName, p: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1), n: s.trainerName, u: serverUrl(), w, t, ...(xs ? { x: xs } : {}) });
       const box = $('#lessonQrCode');
       box.innerHTML = qrSvg(url, 6);
       box.dataset.url = url;
@@ -2069,7 +2069,7 @@ async function renderDbInfo() {
   const el = $('#dbInfo');
   if (!el) return;
   const info = await db.info();
-  el.textContent = `Device ${state.deviceId} · ${info.doc_count} records stored · storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} · app v${APP_VERSION}`;
+  el.textContent = `Device ${state.deviceId} - ${info.doc_count} records stored - storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} - app v${APP_VERSION}`;
 }
 
 /* ---------------- tabs, roles, network, wiring ---------------- */
@@ -2149,7 +2149,7 @@ function renderMe() {
   $('#meName').textContent = s?.name || 'Not signed in';
   $('#meRoles').textContent = s ? roleText(s) || 'No role yet' : '';
   const meta = $('#meMeta');
-  if (meta) meta.textContent = s ? `Staff code ${s.code} · ${roleText(s) || 'No role yet — ask the MIS Officer'}` : '';
+  if (meta) meta.textContent = s ? `Staff code ${s.code} - ${roleText(s) || 'No role yet — ask the MIS Officer'}` : '';
 }
 
 function fillSettingsForms() {

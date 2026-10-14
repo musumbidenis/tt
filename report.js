@@ -184,7 +184,7 @@ const TermReport = (() => {
       ? (i ? '' : `<td class="cat e" colspan="3" rowspan="${n}"><span>${esc(cats.get(w).label)}</span></td>`)
       : [0, 1, 2].map((k) => `<td class="c${k === 2 ? ' e' : ''}">${s.cells[w * 3 + k] || ''}</td>`).join(''))).join('');
     const cs = d.catSheet;
-    const catPage = cs ? `<div class="rp-cats"><h2>CAT ATTENDANCE · ${esc(d.subject)}</h2><p>${esc(d.classLabel)}</p>
+    const catPage = cs ? `<div class="rp-cats"><h2>CAT ATTENDANCE - ${esc(d.subject)}</h2><p>${esc(d.classLabel)}</p>
       <table class="rp-grid rp-cat"><thead><tr><th>#</th><th>ADMISSION NO</th><th>NAMES</th>${cs.cols.map((c) => `<th>${esc(c.label)}<br><small>${esc(c.date)}</small></th>`).join('')}</tr></thead>
       <tbody>${cs.rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${esc(r.admNo)}</td><td class="l">${esc(r.name)}</td>${r.vals.map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}
       ${cs.totals.map((t) => `<tr class="tot"><td colspan="3" class="l">${esc(t.label)}</td>${t.vals.map((v) => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '';

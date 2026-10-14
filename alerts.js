@@ -62,7 +62,7 @@ const Alerts = (() => {
           <select id="alertClass" aria-label="Class"><option value="">All classes</option>${classes.map((c) => `<option${c === al.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <input type="search" id="alertSearch" placeholder="Name, admission no., unit or trainer" value="${esc(al.q)}" aria-label="Search">
         </div>
-        <p class="muted small">${students} student${students === 1 ? '' : 's'} over the limit${al.cls ? ' in ' + esc(al.cls) : ''}${al.term ? ` · ${esc(al.term.duration || al.term.name)}` : ''}. A double lesson counts as two.</p>
+        <p class="muted small">${students} student${students === 1 ? '' : 's'} over the limit${al.cls ? ' in ' + esc(al.cls) : ''}${al.term ? ` - ${esc(al.term.duration || al.term.name)}` : ''}. A double lesson counts as two.</p>
       </div>
       ${list.length ? `<div class="card table-card"><div class="table-wrap"><table class="report-table alerts-table">
         <thead><tr><th class="num">S/N</th>${th('name', 'Student')}${th('adm', 'Admission no.')}${th('cls', 'Class')}${th('unit', 'Unit')}${th('trainer', 'Trainer')}${th('missed', 'Missed', 'num')}${th('pct', 'Attendance', 'num')}</tr></thead>
@@ -90,7 +90,7 @@ const Alerts = (() => {
         const { head, rows } = sheet();
         const title = `Absences over ${al.limit} lessons${al.cls ? ' ' + al.cls : ''}`;
         if (a.dataset.act === 'alerts-xlsx') Tables.exportXlsx(title, head, rows);
-        else Tables.print(title, `${al.term ? (al.term.duration || al.term.name) + ' · ' : ''}${new Set(rows.map((r) => r[1])).size} student(s) · printed ${new Date().toLocaleDateString()}`, head, rows);
+        else Tables.print(title, `${al.term ? (al.term.duration || al.term.name) + ' - ' : ''}${new Set(rows.map((r) => r[1])).size} student(s) - printed ${new Date().toLocaleDateString()}`, head, rows);
       }
     });
     document.addEventListener('submit', async (e) => {

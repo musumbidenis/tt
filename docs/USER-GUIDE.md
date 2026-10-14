@@ -97,7 +97,7 @@ There is a separate **demo copy** of both apps for training sessions. It works e
 
 | Tab | Who sees it | What it is for |
 |---|---|---|
-| **Att Register(s)** | Trainers and HODs | Choose a lesson on the weekly timetable and mark the register. |
+| **ATT** | Trainers and HODs | Choose a lesson on the weekly timetable and mark the register. |
 | **Report(s)** | Everyone | Term registers (Attendance) and marksheets (Marks). |
 | **POE** | Everyone | Students' evidence: review, approve, return, receive. |
 | **Tools** | Trainers and HODs | Professional tools: learning plans, session plans and assessment tools. **Coming soon.** |
@@ -139,10 +139,10 @@ All long tables behave the same way:
 
 ### 3.1 Choose the lesson
 
-Open **Att Register(s)**.
+Open **ATT**.
 
 1. **Class** and **Unit**: only the ones in your loading are offered.
-2. **Week**: starts on the current teaching week, written like *Week 5 (Oct 5 - Oct 9)*. A CAT week says *· CAT week*.
+2. **Week**: starts on the current teaching week, written like *Week 5 - Oct 5* (the Monday). A CAT week says *Week 6 - CAT*.
 3. **Register for**: **Lesson**, **CAT** or **Extra CAT attendance**.
    - **CAT** is only possible in the CAT weeks the MIS Officer set. In a CAT week, **Lesson** is switched off.
    - **Extra CAT attendance** can be taken in any week. Give it a title, for example *CAT 1 make-up*.

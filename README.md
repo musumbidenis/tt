@@ -516,3 +516,10 @@ This is for the people building the app. [`design-notes.js`](design-notes.js) is
 
 - **High-quality scans.** The black-and-white pages of 4.25.0 were too harsh on real phone photos. Pages are now saved like a scanner's colour document setting: white paper with shadows taken out, ink in its own colour (red marking stays red), faint pencil darkened, strokes lightly sharpened, at up to 2400 px and JPEG quality 0.9 (about 400–600 KB a page). The camera asks for a larger picture (3264×2448) and pages are compressed less while they wait on the device.
 - **CAT column label** in the term register's sheet view: centred down and across the column, with more space between the letters.
+
+## Changes in 4.25.2 (bridge 1.4.5)
+
+- **ATT**: the register tab is now called ATT.
+- **Shorter week choice**: *Week 6 - 12 Oct*, or *Week 6 - CAT* in a CAT week.
+- **One separator everywhere**: pieces of information are separated by " - " (not "·" or "—") on every screen, export, printout and notification, and on the landing page. The rule is written down in TECHNICAL 11.5.
+- **Department of Computing and Informatics** replaces *ICT Department* on the marksheet (Excel template title block and the Drive copy).

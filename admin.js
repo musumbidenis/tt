@@ -76,7 +76,7 @@ const Admin = (() => {
     const waiting = cache.signoffs.filter((s) => s.status === 'submitted' && hit(s)).sort(SO_SORT[soSort]);
     const done = cache.signoffs.filter((s) => s.status !== 'submitted' && hit(s)).sort(SO_SORT[soSort]);
     const item = (s) => `<li><button type="button" class="mrow" data-open="${esc(s.classCode)}|${esc(s.unitCode)}">
-      <span><b>${esc(s.classCode)} · ${esc(s.unitCode)}</b><small>${esc(s.unitName)} - ${esc(s.trainerName)}</small></span>
+      <span><b>${esc(s.classCode)} - ${esc(s.unitCode)}</b><small>${esc(s.unitName)} - ${esc(s.trainerName)}</small></span>
       <span class="pill ${s.status === 'approved' ? 'synced' : s.status === 'returned' ? 'rejected' : 'pending'}">${s.status === 'submitted' ? 'Submitted ' + fmtShort(s.submittedAt) : s.status === 'approved' ? 'Approved' : 'Returned'}</span></button></li>`;
     const none = q ? '<p class="muted">Nothing matches that search.</p>' : '<p class="muted">Nothing is waiting. Trainers submit their term registers from Reports.</p>';
     box.innerHTML = (waiting.length ? `<ul class="mlist">${Tables.slice('signoffs', waiting).map(item).join('')}</ul>${Tables.bar('signoffs', waiting)}` : none)
@@ -128,9 +128,9 @@ const Admin = (() => {
       const can = hasRole('MIS'), canMove = (r) => can || (hasRole('HOD') && isStreamMove(r.admNo, r.classCode, r.existing?.classCode));
       const item = (r) => `<li class="req" data-id="${esc(r.id)}">
         <div><b>${esc(r.name)}</b> <span class="tadm">${esc(r.admNo)}</span>
-          <small>${esc(r.classCode)} · added by ${esc(r.requestedBy)} ${r.requestedAt ? fmtShort(r.requestedAt) : ''}${r.reason ? ' · ' + esc(r.reason) : ''}</small>
+          <small>${esc(r.classCode)} - added by ${esc(r.requestedBy)} ${r.requestedAt ? fmtShort(r.requestedAt) : ''}${r.reason ? ' - ' + esc(r.reason) : ''}</small>
           ${r.existing ? `<small class="warn-text">Already on the list of ${esc(r.existing.classCode)} as ${esc(r.existing.name)}${r.existing.active ? '' : ' (withdrawn)'}</small>` : ''}
-          ${r.status !== 'pending' ? `<small>${esc(r.status)}${r.mergedInto ? ' into ' + esc(r.mergedInto) : ''}${r.note ? ' · ' + esc(r.note) : ''}</small>` : ''}</div>
+          ${r.status !== 'pending' ? `<small>${esc(r.status)}${r.mergedInto ? ' into ' + esc(r.mergedInto) : ''}${r.note ? ' - ' + esc(r.note) : ''}</small>` : ''}</div>
         ${canMove(r) && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small primary" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
           ${can ? '<button type="button" class="btn small" data-decide="merge">Same as…</button>' : ''}<button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
       fill('m-requests', (pending.length ? `<ul class="mlist reqs">${pending.map(item).join('')}</ul>` : '<p class="muted">No students are waiting. When a trainer adds a student while marking, they appear here.</p>')
@@ -144,7 +144,7 @@ const Admin = (() => {
       const others = state.trainees.filter((t) => t.classCode === r.classCode && t.active !== false);
       dialog(`<div class="scan-head"><strong>Same student as…</strong><button type="button" class="btn small ghost" data-close>Cancel</button></div>
         <p class="muted small">Use this when ${esc(r.name)} (${esc(r.admNo)}) was a typo or duplicate. Their marks move to the student you choose.</p>
-        <label>Student on the ${esc(r.classCode)} list<select id="mergeInto">${others.map((t) => `<option value="${esc(t.admNo)}">${esc(t.name)} — ${esc(t.admNo)}</option>`).join('')}</select></label>
+        <label>Student on the ${esc(r.classCode)} list<select id="mergeInto">${others.map((t) => `<option value="${esc(t.admNo)}">${esc(t.name)} - ${esc(t.admNo)}</option>`).join('')}</select></label>
         <button type="button" class="btn primary big" id="mergeGo" data-id="${esc(id)}">Merge</button>`);
       return;
     }
@@ -194,7 +194,7 @@ const Admin = (() => {
       const catWeeks = $$('.catweeks input:checked').map((i) => Number(i.value));
       const res = need(await api('saveTerm', { name: $('#tName').value.trim(), termId: $('#tId').value.trim(), duration: $('#tDur').value.trim(), startDate: $('#tStart').value, breaks, catWeeks, lessonHours: Number($('#tHours').value) || null, series: $('#tSeries').value.trim() }));
       const last = res.weeks.length;
-      toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week ${last} starts ${fmtShort(res.weeks[last - 1])}${res.term.catWeeks?.length ? ` · CAT weeks ${res.term.catWeeks.join(', ')}` : ''}`, 'ok');
+      toast(`${res.term.name} saved: week 1 starts ${fmtShort(res.weeks[0])}, week ${last} starts ${fmtShort(res.weeks[last - 1])}${res.term.catWeeks?.length ? ` - CAT weeks ${res.term.catWeeks.join(', ')}` : ''}`, 'ok');
       await pullRoster({ silent: true });
       $('#m-term') && replaceBody($('#m-term'), termHtml());
     } catch (err) { toast(err.message, 'err'); }
@@ -223,11 +223,11 @@ const Admin = (() => {
       const t = state.meta.term;
       const termNote = L.meta.term && t && !new RegExp(`\\b${L.meta.term}\\b`).test(t.name) ? `<p class="warn-text">This workbook says Term ${esc(L.meta.term)} ${esc(L.meta.year)}, but the active term is ${esc(t.name)}.</p>` : '';
       out.innerHTML = `<div class="preview">
-        <p><b>${esc(L.fileName)}</b>${L.meta.department ? ` · ${esc(L.meta.department)} department` : ''}${L.meta.term ? ` · Term ${esc(L.meta.term)} ${esc(L.meta.year)}` : ''}</p>
+        <p><b>${esc(L.fileName)}</b>${L.meta.department ? ` - ${esc(L.meta.department)} department` : ''}${L.meta.term ? ` - Term ${esc(L.meta.term)} ${esc(L.meta.year)}` : ''}</p>
         ${termNote}
         ${others.length ? `<fieldset class="catweeks" id="loadingDepts"><legend>This workbook also has classes from other departments. Tick the ones to load as well (${esc(L.home)} classes always load):</legend>
           ${others.map((d) => { const n = new Set(L.rows.filter((r) => deptOf(r.classCode) === d).map((r) => r.classCode)).size;
-            return `<label class="kchip"><input type="checkbox" value="${esc(d)}"><span>${esc(d)} · ${n} class${n === 1 ? '' : 'es'}</span></label>`; }).join('')}</fieldset>` : ''}
+            return `<label class="kchip"><input type="checkbox" value="${esc(d)}"><span>${esc(d)} - ${n} class${n === 1 ? '' : 'es'}</span></label>`; }).join('')}</fieldset>` : ''}
         <div id="loadingSummary"></div>
         <button type="button" class="btn primary" id="uploadLoading" ${t ? '' : 'disabled'}>${t ? `Upload loading for ${esc(t.name)}` : 'Set up the term first'}</button></div>`;
       drawLoadingSummary();
@@ -243,11 +243,11 @@ const Admin = (() => {
     const L = loadingPreview, rows = loadingRows(), box = $('#loadingSummary');
     if (!L || !box) return;
     const classes = new Set(rows.map((r) => r.classCode)), trainers = new Set(rows.map((r) => r.trainerCode)), left = L.rows.length - rows.length;
-    box.innerHTML = `<p>${rows.length} class units · ${classes.size} classes · ${trainers.size} trainers teaching · ${L.trainers.length} on the trainers list · ${rows.reduce((a, r) => a + r.hoursPerWeek, 0)} hours a week${left ? ` <span class="muted">(${left} class unit${left === 1 ? '' : 's'} of other departments left out)</span>` : ''}</p>
+    box.innerHTML = `<p>${rows.length} class units - ${classes.size} classes - ${trainers.size} trainers teaching - ${L.trainers.length} on the trainers list - ${rows.reduce((a, r) => a + r.hoursPerWeek, 0)} hours a week${left ? ` <span class="muted">(${left} class unit${left === 1 ? '' : 's'} of other departments left out)</span>` : ''}</p>
         ${(() => { const j = rows.filter((r) => r.classCode.includes(',')), s = new Set(rows.filter((r) => r.classCode.includes('/') && !r.classCode.includes(',')).map((r) => r.classCode));
           return j.length || s.size ? `<p class="muted small">${j.length ? `${j.length} unit${j.length === 1 ? ' is' : 's are'} taught to classes together (a comma, e.g. <i>${esc(j[0].classCode)}</i>): each class gets the unit and its trainer marks them as one lesson. ` : ''}${s.size ? `${s.size} class${s.size === 1 ? '' : 'es'} with a slash (e.g. <i>${esc([...s][0])}</i>) ${s.size === 1 ? 'is' : 'are'} one class for every unit.` : ''}</p>` : ''; })()}
         <div class="table-wrap"><table class="report-table"><thead><tr><th>Class</th><th>Unit</th><th>Trainer</th><th class="num">Lessons/wk</th><th class="num">Hrs/wk</th></tr></thead>
-        <tbody>${rows.slice(0, 6).map((r) => `<tr><td>${esc(r.classCode)}</td><td>${esc(r.unitCode)} — ${esc(r.unitName)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessonsPerWeek}</td><td class="num">${r.hoursPerWeek}</td></tr>`).join('')}
+        <tbody>${rows.slice(0, 6).map((r) => `<tr><td>${esc(r.classCode)}</td><td>${esc(r.unitCode)} - ${esc(r.unitName)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessonsPerWeek}</td><td class="num">${r.hoursPerWeek}</td></tr>`).join('')}
         ${rows.length > 6 ? `<tr><td colspan="5" class="muted">…and ${rows.length - 6} more</td></tr>` : ''}</tbody></table></div>`;
   }
   async function uploadLoading(btn) {
@@ -290,18 +290,18 @@ const Admin = (() => {
         const page = Tables.slice('classes', all);
         return fold('classes', `Show the classes (${all.length})`, `<div class="table-wrap"><table class="report-table class-table"><thead><tr>${Tables.th('classes', 'g', 'Class')}${Tables.th('classes', 'streams', 'Streams')}${Tables.th('classes', 'n', 'Students', 'num')}</tr></thead>
           <tbody>${page.map(({ g, codes, n }) => `<tr data-group="${esc(g)}" tabindex="0" role="button"><td><b>${esc(g)}</b></td>
-            <td class="muted small">${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' · ')}</td><td class="num">${n}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('classes', all)}`);
+            <td class="muted small">${codes.map((c) => `${esc(c.split(' ').pop())} ${count(c)}`).join(' - ')}</td><td class="num">${n}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('classes', all)}`);
       })() : ''}
       ${(() => {
         const arch = archivedGroups();
         return arch.length ? fold('archived', `Archived classes (${arch.length})`, `<ul class="mlist archived-list">${arch.map((g) => `<li><span><b>${esc(g.label)}</b>
-          <small>${g.students} student(s) · archived ${esc(fmtShort(g.at))}${g.by ? ' by ' + esc(g.by) : ''}</small></span>
+          <small>${g.students} student(s) - archived ${esc(fmtShort(g.at))}${g.by ? ' by ' + esc(g.by) : ''}</small></span>
           <span class="st-actions"><button type="button" class="btn small" data-restore="${esc(g.label)}">Bring back</button>
           <button type="button" class="btn small danger" data-delete="${esc(g.label)}">Delete…</button></span></li>`).join('')}</ul>`) : '';
       })()}
       ${(() => {
         const empty = state.classes.filter((c) => state.units.some((u) => u.classCode === c.code) && !/[,/]/.test(c.code) && !count(c.code)).map((c) => c.code).sort();
-        return empty.length ? `<details class="mdone"><summary>${empty.length} classes in the loading have no students yet</summary><p class="small">${empty.map(esc).join(' · ')}</p>
+        return empty.length ? `<details class="mdone"><summary>${empty.length} classes in the loading have no students yet</summary><p class="small">${empty.map(esc).join(' - ')}</p>
           <p class="muted small">Trainers see an empty register for these. Upload their class registers above and tick the matching stream(s).</p></details>` : '';
       })()}`;
   }
@@ -316,7 +316,7 @@ const Admin = (() => {
         : '<p class="muted small">Upload the loading first so the class can be linked to its streams.</p>'}</fieldset>`;
     let diff = '';
     if (d) {
-      const split = Object.entries(d.byStream).map(([s, n]) => `${esc(s.split(' ').pop())}: ${n}`).join(' · ');
+      const split = Object.entries(d.byStream).map(([s, n]) => `${esc(s.split(' ').pop())}: ${n}`).join(' - ');
       diff = `<div class="diff">
         <p class="d-add"><b>${d.added.length}</b> new student(s)${d.added.length ? ' → ' + Object.entries(d.added.reduce((m, a) => { m[a.classCode] = (m[a.classCode] || 0) + 1; return m; }, {})).map(([s, n]) => `${esc(s.split(' ').pop())} ${n}`).join(', ') : ''}</p>
         <p><b>${d.unchanged}</b> already on the list</p>
@@ -324,14 +324,14 @@ const Admin = (() => {
         ${d.moved.length ? `<p class="warn-text"><b>${d.moved.length}</b> moving from another class: ${d.moved.slice(0, 3).map((m) => `${esc(m.name)} (${esc(m.from)})`).join(', ')}${d.moved.length > 3 ? '…' : ''}</p>` : ''}
         ${d.renamed.length ? `<label class="check"><input type="checkbox" class="useNew" ${imp.useNewNames ? 'checked' : ''}>Use this list's spelling for ${d.renamed.length} name(s): ${d.renamed.slice(0, 2).map((r) => `${esc(r.old)} → ${esc(r.name)}`).join('; ')}${d.renamed.length > 2 ? '…' : ''}</label>` : ''}
         ${d.missing.length ? `<fieldset class="missing"><legend>${d.missing.length} on the app's list but not in this file. Tick anyone who has left:</legend>
-          ${d.missing.map((m) => `<label class="check"><input type="checkbox" class="wd" value="${esc(m.admNo)}" ${imp.withdraw.includes(m.admNo) ? 'checked' : ''}>${esc(m.name)} <span class="tadm">${esc(m.admNo)} · ${esc(m.classCode)}</span></label>`).join('')}</fieldset>` : ''}
+          ${d.missing.map((m) => `<label class="check"><input type="checkbox" class="wd" value="${esc(m.admNo)}" ${imp.withdraw.includes(m.admNo) ? 'checked' : ''}>${esc(m.name)} <span class="tadm">${esc(m.admNo)} - ${esc(m.classCode)}</span></label>`).join('')}</fieldset>` : ''}
         ${placementHtml(imp)}
         <p class="muted small">After saving: ${split}</p></div>`;
     }
     return `<div class="card import" data-i="${i}">
       <div class="import-head"><b>${esc(imp.fileName)}</b><button type="button" class="btn small ghost" data-remove>Remove</button></div>
       <div class="grid2"><label>Class code (MIS)<input class="misCode" value="${esc(imp.misClass)}"></label><label>Duration<input value="${esc(imp.duration)}" disabled></label></div>
-      <p class="muted small">${imp.students.length} students read · first: ${esc(imp.students[0].name)} (${esc(imp.students[0].admNo)})</p>
+      <p class="muted small">${imp.students.length} students read - first: ${esc(imp.students[0].name)} (${esc(imp.students[0].admNo)})</p>
       ${streamsBox}${diff}
       <div class="row-actions">${d ? `<button type="button" class="btn primary" data-apply>Save class list</button>` : ''}<button type="button" class="btn${d ? '' : ' primary'}" data-preview>${d ? 'Check again' : 'Check changes'}</button></div>
     </div>`;
@@ -355,7 +355,7 @@ const Admin = (() => {
       <p class="muted small">Students already in a stream stay there; new students are shared out. Tap a letter to move a student, then save.</p>
       <input type="search" class="plSearch" placeholder="Search name or admission number" aria-label="Search students">
       <ol class="pl-list">${d.plan.map((p, k) => `<li data-k="${k}" data-q="${esc((p.name + ' ' + p.admNo).toLowerCase())}">
-        <span class="pl-who"><b>${esc(p.name)}</b><small>${esc(p.admNo)}${p.isNew ? ' · new' : p.from && !imp.streams.includes(p.from) ? ` · now in ${esc(p.from)}` : ''}</small></span>
+        <span class="pl-who"><b>${esc(p.name)}</b><small>${esc(p.admNo)}${p.isNew ? ' - new' : p.from && !imp.streams.includes(p.from) ? ` - now in ${esc(p.from)}` : ''}</small></span>
         <span class="seg">${imp.streams.map((st) => `<button type="button" data-to="${esc(st)}" aria-pressed="${p.to === st}" title="${esc(st)}">${esc(lab[st])}</button>`).join('')}</span></li>`).join('')}</ol></div>`;
   }
   function refreshCounts(card, imp) {
@@ -395,7 +395,7 @@ const Admin = (() => {
       const assign = imp.diff && imp.diff.plan ? Object.fromEntries(imp.diff.plan.map((p) => [p.admNo, p.to])) : undefined;
       const res = need(await api('importClassList', { misClass: imp.misClass, streams: imp.streams, students: imp.students, dryRun: !apply, withdraw: imp.withdraw, useNewNames: imp.useNewNames, assign }));
       if (apply) {
-        const split = imp.streams.length > 1 ? ' — ' + Object.entries(res.byStream).map(([st, n]) => `${streamLabels(imp.streams)[st]} ${n}`).join(', ') : '';
+        const split = imp.streams.length > 1 ? ' - ' + Object.entries(res.byStream).map(([st, n]) => `${streamLabels(imp.streams)[st]} ${n}`).join(', ') : '';
         toast(`${imp.misClass}: ${res.added.length} added${res.moved.length ? `, ${res.moved.length} moved` : ''}${imp.withdraw.length ? `, ${imp.withdraw.length} withdrawn` : ''}${split}`, 'ok');
         classImports.splice(Number(card.dataset.i), 1);
         await pullRoster({ silent: true });
@@ -414,10 +414,10 @@ const Admin = (() => {
       const res = need(await api('students', { misClass: group }));
       const streams = classGroups().get(group) || [];
       const list = res.students.sort((a, b) => a.name.localeCompare(b.name));
-      $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} · ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
+      $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} - ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
         <input type="search" id="grpSearch" placeholder="Search name or admission no." aria-label="Search students">
         <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" class="${s.status !== 'active' ? 'gone' : ''}">
-          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' · ' + esc(s.status) : ''}</small></span>
+          <span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status) : ''}</small></span>
           <span class="st-actions"><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button></span></li>`).join('')}</ul>`;
       if (hasRole('MIS')) {
@@ -532,7 +532,7 @@ const Admin = (() => {
     const banner = b.level === 'full' ? `<div class="backup-alert full"><b>The backup account's Drive is ${pct}% full, so backups have stopped.</b> ${advice}</div>`
       : b.level === 'warn' ? `<div class="backup-alert"><b>The backup account's Drive is ${pct}% full.</b> Backups stop at ${Math.round(b.stopAt * 100)}%. ${advice}</div>` : '';
     const gauge = r.limit ? `<div class="gauge ${b.level}" role="img" aria-label="${pct}% used"><span style="width:${Math.min(100, pct)}%"></span></div>
-      <p class="small">${esc(who)}: <b>${gb(r.used)}</b> of ${gb(r.limit)} used (${pct}%)${r.checkedAt ? ` <span class="muted">· checked ${esc(fmtTime(r.checkedAt))}</span>` : ''}</p>`
+      <p class="small">${esc(who)}: <b>${gb(r.used)}</b> of ${gb(r.limit)} used (${pct}%)${r.checkedAt ? ` <span class="muted">- checked ${esc(fmtTime(r.checkedAt))}</span>` : ''}</p>`
       : '<p class="muted small">The Drive bridge has not reported the backup account\'s storage yet. It does on its next hourly run.</p>';
     const last = r.running ? `<p><b>Backing up now…</b> ${r.copied || 0} copied so far.</p>`
       : r.finishedAt ? `<p>Last backup ${esc(fmtTime(r.finishedAt))}: <b>${r.copied || 0}</b> copied${r.changed ? `, ${r.changed} changed after sending` : ''}${r.failed ? `, <span class="err-text">${r.failed} could not be copied</span>` : ''}.</p>`
@@ -545,7 +545,7 @@ const Admin = (() => {
       ${r.lastError && !r.wrongAccount ? `<p class="err-text small">${esc(r.lastError)}</p>` : ''}
       ${last}
       <p class="small">${b.waiting ? `<b>${b.waiting}</b> approved document(s) waiting for the next backup.` : 'Every approved document is backed up.'}</p>
-      ${b.gaveUp.length ? fold('backupFailed', `${b.gaveUp.length} could not be copied`, `<ul class="mlist">${b.gaveUp.map((g) => `<li><span><b>${esc(g.name)}</b><small>${esc(g.admNo)} · ${esc(g.what)} · ${esc(g.error)}</small></span></li>`).join('')}</ul>
+      ${b.gaveUp.length ? fold('backupFailed', `${b.gaveUp.length} could not be copied`, `<ul class="mlist">${b.gaveUp.map((g) => `<li><span><b>${esc(g.name)}</b><small>${esc(g.admNo)} - ${esc(g.what)} - ${esc(g.error)}</small></span></li>`).join('')}</ul>
         <p class="muted small">Usually the student deleted the file or stopped sharing it.</p><button type="button" class="btn small" data-act="backupRetry">Try these again</button>`) : ''}
       <form id="backupForm" class="inline-form">
         <label class="grow">Repeat<select id="backupRepeat">${Object.entries(REPEAT).map(([k, v]) => `<option value="${k}"${k === b.plan.repeat ? ' selected' : ''}>${v}</option>`).join('')}</select></label>

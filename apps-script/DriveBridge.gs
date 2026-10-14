@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.4.4';
+var BRIDGE_VERSION = '1.4.5';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -403,7 +403,7 @@ function writeRegister_(ss, u) {
   v[2][2] = 'CLASS'; v[2][3] = u.misClass + (u.misClass !== u.classCode ? ' (' + u.classCode + ')' : ''); v[2][21] = 'LEVEL'; v[2][27] = u.level;
   v[3][2] = 'SUBJECT'; v[3][3] = u.unitCode + ' - ' + u.unitName;
   v[4][0] = 'GENERAL CLASS REGISTER';
-  v[5][0] = 'FILTERED BY: {Class: ' + u.misClass + '}   ·   ' + u.termName + '   ·   updated ' + Utilities.formatDate(new Date(), 'Africa/Nairobi', 'd MMM yyyy HH:mm');
+  v[5][0] = 'FILTERED BY: {Class: ' + u.misClass + '}   -   ' + u.termName + '   -   updated ' + Utilities.formatDate(new Date(), 'Africa/Nairobi', 'd MMM yyyy HH:mm');
   v[6][0] = '#'; v[6][1] = 'ADMISSION NO'; v[6][2] = 'NAMES';
   // A CAT week (server 6.9.0): its three columns are one cell down the register, reading "CAT 1" upwards.
   var cats = (u.catCols || []).filter(function (c) { return c.merge && u.rows.length; });
@@ -463,7 +463,7 @@ function writeCats_(ss, u) {
   var t = u.catTable || { cols: u.cats.map(function (c) { return { label: c.title, date: c.date }; }),
     vals: u.rows.map(function (r) { return u.cats.map(function (c) { return c.marks[r.admNo] || ''; }); }), totals: [] };
   var head = ['#', 'ADMISSION NO', 'NAMES'].concat(t.cols.map(function (c) { return c.label + '\n' + c.date; }));
-  var v = [[u.unitCode + ' - ' + u.unitName + ' · ' + u.misClass + ' · CAT attendance (not counted in the class register hours)'].concat(head.slice(1).map(function () { return ''; })), head];
+  var v = [[u.unitCode + ' - ' + u.unitName + ' - ' + u.misClass + ' - CAT attendance (not counted in the class register hours)'].concat(head.slice(1).map(function () { return ''; })), head];
   u.rows.forEach(function (r, i) { v.push([i + 1, r.admNo, r.name].concat(t.vals[i] || [])); });
   t.totals.forEach(function (x) { v.push([x[0], '', ''].concat(x[1])); });
   sh.clear();
@@ -482,7 +482,7 @@ function writeMarksheet_(ss, u) {
   var W = 12, n = Math.max(1, m.rows.length), first = 11, last = first + n - 1, foot = last + 2, end = foot + 4;
   var v = [];
   for (var i = 0; i < end; i++) { var r = []; for (var j = 0; j < W; j++) r.push(''); v.push(r); }
-  v[0][0] = 'THE RIFT VALLEY NATIONAL POLYTECHNIC'; v[1][0] = 'ICT DEPARTMENT'; v[2][0] = 'CONTINUOUS ASSESSMENT MARKS SHEET PER UNIT OF COMPETENCY';
+  v[0][0] = 'THE RIFT VALLEY NATIONAL POLYTECHNIC'; v[1][0] = 'DEPARTMENT OF COMPUTING AND INFORMATICS'; v[2][0] = 'CONTINUOUS ASSESSMENT MARKS SHEET PER UNIT OF COMPETENCY';
   v[4][0] = 'Course Code:'; v[4][2] = m.courseCode; v[4][4] = 'Course Name:'; v[4][6] = m.courseName;
   v[5][0] = 'Unit Code:'; v[5][2] = u.unitCode; v[5][4] = 'Unit Title:'; v[5][6] = u.unitName;
   v[6][0] = 'Assessment Series:'; v[6][2] = m.series;

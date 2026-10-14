@@ -178,7 +178,7 @@ const Marks = (() => {
     };
     return `<tr data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">
       <td class="mt-sn">${i + 1}</td>
-      <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}${t.stream ? ` <span class="stag" title="Stream">${esc(t.stream)}</span>` : ''}</b><small>${esc(t.admNo)}${t.regCode ? ' · ' + esc(t.regCode) : ''}${t.pending ? ' · pending' : ''}${t.gone ? ' · not on the list' : ''}</small></div></th>
+      <th scope="row" class="mt-name"><div class="mt-in"><b>${esc(t.name)}${t.stream ? ` <span class="stag" title="Stream">${esc(t.stream)}</span>` : ''}</b><small>${esc(t.admNo)}${t.regCode ? ' - ' + esc(t.regCode) : ''}${t.pending ? ' - pending' : ''}${t.gone ? ' - not on the list' : ''}</small></div></th>
       ${['cat1', 'cat2', 'cat3'].map(cell).join('')}<td class="avg" data-avg="cat">${show(avg(r, ['cat1', 'cat2', 'cat3']))}</td>
       ${['prac1', 'prac2', 'prac3'].map(cell).join('')}<td class="avg" data-avg="prac">${show(avg(r, ['prac1', 'prac2', 'prac3']))}</td></tr>`;
   }

@@ -1,6 +1,6 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.25.1';
+const CACHE = 'rvnp-attendance-v4.25.2';
 /* What this worker needs in order to answer a notification: the server address, this phone's ID and
  * the student's admission number. The student app writes it here when notifications are switched on,
  * because a service worker woken by a notification cannot read the app's own database. */
@@ -100,7 +100,7 @@ function noticeText(list) {
   if (list.length > 1) {
     const yes = list.filter((n) => n.status === 'approved').length, no = list.length - yes;
     return { title: `${list.length} updates on your evidence`,
-      body: [yes ? `${yes} approved` : '', no ? `${no} sent back to fix` : ''].filter(Boolean).join(' · ') };
+      body: [yes ? `${yes} approved` : '', no ? `${no} sent back to fix` : ''].filter(Boolean).join(' - ') };
   }
   const n = list[0], what = `${n.unitName} — ${n.item}`;
   if (n.status === 'approved') return { title: 'Your evidence was approved', body: `${what} is approved.${n.decidedName ? ' Checked by ' + n.decidedName + '.' : ''}` };

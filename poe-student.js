@@ -41,7 +41,7 @@ const POE = (() => {
     card.hidden = false;
     renderGoogle();
     const sel = $('#poeUnit');
-    sel.innerHTML = ps.units.length ? ps.units.map((u) => `<option value="${esc(u.code)}">${esc(u.code)} — ${esc(u.name)}${u.current === false ? ' (earlier term)' : ''}</option>`).join('')
+    sel.innerHTML = ps.units.length ? ps.units.map((u) => `<option value="${esc(u.code)}">${esc(u.code)} - ${esc(u.name)}${u.current === false ? ' (earlier term)' : ''}</option>`).join('')
       : '<option value="">Connect once to load your units</option>';
     if (!ps.unit || !ps.units.some((u) => u.code === ps.unit)) ps.unit = ps.units[0]?.code || '';
     sel.value = ps.unit;
@@ -273,7 +273,7 @@ const POE = (() => {
     ps.target = item;
     if (!camOk() || ps.useCameraApp) return openCamera(item);   // still inside the tap, so the camera app can open
     const d = ps.drafts[item], n = (d?.pdfOnly ? 0 : (d?.pages || []).length) + 1;
-    $('#docCamTitle').textContent = `${item} · page ${n}`;
+    $('#docCamTitle').textContent = `${item} - page ${n}`;
     try {
       camStream = await navigator.mediaDevices.getUserMedia({ audio: false,
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 3264 }, height: { ideal: 2448 } } });

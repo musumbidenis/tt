@@ -1,7 +1,7 @@
 # The ARK — Technical Documentation
 
 The ARK (Academic Records Keeper) is the RVNP ICT Department's attendance, marks and POE system. This document is for whoever sets it up, runs it and maintains it.
-Describes app **4.25.1**, server (Worker) **6.9.0**, database schema **11**, Drive bridge **1.4.4**.
+Describes app **4.25.2**, server (Worker) **6.9.0**, database schema **11**, Drive bridge **1.4.5**.
 For day-to-day use of the apps, see the [User Guide](USER-GUIDE.md).
 
 ---
@@ -644,6 +644,18 @@ Serve the repository root (for example `python -m http.server 8080`) and open `h
 ### 11.4 Browser tests
 
 The Playwright suites, mocks (Drive bridge, Apps Script, push service) and fixture generator live in `../dev-tests`, **outside this repository**. `bash runw.sh <test>.py …` runs them against the local Worker; `all2.sh` runs the lot. They need Node, Python with `playwright`, `openpyxl` and `reportlab`, and Chromium. They have not been updated for every change since app 4.8.
+
+### 11.5 Screen wording and style
+
+Keep to these on every screen, export and printout:
+
+- **Plain, friendly words** in sentence case; no jargon ("VAPID", "webhook").
+- **Little at a time.** A label says only what is needed to choose: *Week 6 - 12 Oct*, *Week 6 - CAT*, not every date of the week.
+- **A hyphen with spaces ( - ) separates pieces of information**: *FOP - Fundamentals of Programming*, *Lesson 2 - 9.00–10.30*, *CAT 1 - stream A*, *12 sat - 3 absent*. Not "·" and not "—". An en dash stays only inside a range (*9.00–10.30*); a dash inside a sentence is punctuation, not a separator.
+- **Short tab names**: ATT, Report(s), POE, Tools, Absences, Manage, Profile.
+- **The department** is written *Department of Computing and Informatics* on documents (the marksheet's title block, in `templates/marksheet.xlsx` and the Drive copy).
+
+Registers saved before 4.25.2 keep "·" in their stored lesson label (for example *CAT 1 · Lesson 3 · 10.30–12.00*); code that reads a label accepts either.
 
 ---
 
