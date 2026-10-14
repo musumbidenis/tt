@@ -2091,7 +2091,6 @@ async function importRegCodes(env, b, me) {
 
 /** POE by student: the classes taught this term, and for one class its students and units. */
 /** The marks (the unit's whole-life marksheet) of the students in these evidence rows: [{ c, u, a, cat1 … prac3 }]. */
-const MARK_COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const markOut = (r) => Object.fromEntries([['c', r.class_code], ['u', r.unit_code], ['a', r.adm_no], ...MARK_COLS.filter((k) => r[k] !== null && r[k] !== undefined).map((k) => [k, r[k]])]);
 async function marksFor(env, rows) {
   const keys = [...new Set(rows.map((r) => r.class_code + '|' + r.unit_code))].map((k) => k.split('|')), want = new Set(rows.map((r) => lower(r.adm_no)));
