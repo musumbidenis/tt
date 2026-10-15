@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.46.0';
+const APP_VERSION = '4.47.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };

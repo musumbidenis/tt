@@ -181,6 +181,7 @@ const POE = (() => {
     Scanner.release($('#cropCanvas'));
   }
   async function openCrop(file, item) {
+    $('#cropNext').textContent = ps.fromCam ? 'Keep and take the next page' : 'Keep page';
     ps.cropSeq = (ps.cropSeq || 0) + 1;
     if (ps.crop) { Scanner.release(ps.crop.canvas); ps.crop = null; }
     let canvas;
@@ -220,8 +221,8 @@ const POE = (() => {
     if (!ps.crop || ps.keeping) return false;
     const { canvas, quad, item } = ps.crop;
     ps.keeping = true;
-    for (const b of [$('#cropKeep'), $('#cropNext')]) b.disabled = true;
-    $('#cropKeep').textContent = 'Straightening…';
+    const btn = $('#cropNext'), label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Straightening…';
     await new Promise((r) => setTimeout(r, 30));
     let flat = null, small = null;
     try {
@@ -239,8 +240,7 @@ const POE = (() => {
     finally {
       Scanner.release(flat); Scanner.release(small);
       ps.keeping = false;
-      for (const b of [$('#cropKeep'), $('#cropNext')]) b.disabled = false;
-      $('#cropKeep').textContent = 'Keep page';
+      btn.disabled = false; btn.textContent = label;
     }
   }
   /** The phone's own camera app (only when the camera inside the app cannot be used). */
@@ -495,14 +495,14 @@ const POE = (() => {
     // From the camera inside the app, Cancel is "Retake": back to the live camera for the same page.
     $('#cropCancel').addEventListener('click', () => { const item = ps.crop?.item; const again = ps.fromCam && item; closeCrop(); if (again) openDocCam(item); });
     $('#cropDialog').addEventListener('close', () => { if (!ps.keeping && ps.crop) { Scanner.release(ps.crop.canvas); ps.crop = null; } });
-    $('#cropRotate').addEventListener('click', () => { ps.crop.canvas = Scanner.rotate(ps.crop.canvas); ps.crop.quad = Scanner.findCorners(ps.crop.canvas); drawCrop(); });
-    $('#cropWhole').addEventListener('click', () => { const c = ps.crop.canvas; ps.crop.quad = [[0, 0], [c.width, 0], [c.width, c.height], [0, c.height]]; drawCrop(); });
-    $('#cropKeep').addEventListener('click', keepPage);
     // Keep this page, and only then open the camera for the next one: opening it while the page is still being
     // straightened is when a phone, short of memory, closes the browser (and the app reloads).
+    // One button: from the camera it keeps the page and goes straight to the next one (Done on the camera finishes);
+    // for photos picked from the gallery it just keeps the page.
     $('#cropNext').addEventListener('click', async () => {
-      const item = ps.crop?.item, started = Date.now();
+      const item = ps.crop?.item, started = Date.now(), fromCam = ps.fromCam;
       if (!item || !(await keepPage())) return;
+      if (!fromCam) return;
       // The camera inside the app opens again at once. The phone's camera app can only be opened for a few
       // seconds after a tap, so with that one the student may need to tap "Add another page".
       if (camOk() && !ps.useCameraApp) openDocCam(item);
