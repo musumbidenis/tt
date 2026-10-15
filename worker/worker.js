@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.19.1';
+export const VERSION = '7.19.2';
 const SCHEMA_VERSION = '20';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -281,7 +281,8 @@ export default {
       // After a change the Drive bridge cares about, poke it (never from the bridge's own requests: no loops).
       const nudge = () => { if (ctx?.waitUntil && NUDGE_ACTIONS.has(b.action)) ctx.waitUntil(nudgeDrive(env).catch((e) => console.error('nudge', e))); };
       // Student phones (checked against their registration) and the Drive bridge (signed with BRIDGE_SECRET).
-      if (STUDENT_ACTIONS[b.action]) { const out = await STUDENT_ACTIONS[b.action](env, b, ctx); nudge(); return reply(out); }
+      // A request with a staff sign-in is always a staff one (googleConnect / googleToken exist for both apps).
+      if (STUDENT_ACTIONS[b.action] && !b.auth) { const out = await STUDENT_ACTIONS[b.action](env, b, ctx); nudge(); return reply(out); }
       if (BRIDGE_ACTIONS[b.action]) return reply(await BRIDGE_ACTIONS[b.action](env, b));
       const h = ACTIONS[b.action];
       // The sign-in check and the action's first reads go to the database together, in one trip.
