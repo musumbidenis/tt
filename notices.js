@@ -46,33 +46,41 @@ const Notices = (() => {
     } catch (e) { draw(`<p class="err-text">${esc(e.message)}</p>`); }
   }
   const draw = (inner) => {
-    $('#noticeBody').innerHTML = `<div class="scan-head"><strong>Messages</strong><button type="button" class="btn small ghost" data-nclose>Close</button></div>
+    $('#noticeBody').innerHTML = `<div class="nt-top"><div class="scan-head"><strong>Messages</strong><button type="button" class="btn small ghost" data-nclose>Close</button></div>
       <div class="view-tabs" role="group" aria-label="Show"><button type="button" data-ntab="inbox" aria-pressed="${ns.tab === 'inbox'}">Inbox${ns.unread ? ` (${ns.unread})` : ''}</button>
-      ${canSend() ? `<button type="button" data-ntab="sent" aria-pressed="${ns.tab === 'sent'}">Sent</button><button type="button" data-ntab="new" aria-pressed="${ns.tab === 'new'}">New message</button>` : ''}</div>${inner}`;
+      ${canSend() ? `<button type="button" data-ntab="sent" aria-pressed="${ns.tab === 'sent'}">Sent</button><button type="button" data-ntab="new" aria-pressed="${ns.tab === 'new'}">New message</button>` : ''}</div></div>
+      <div class="nt-scroll">${inner}</div>`;
   };
+  const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const card = (n, who, pills = '') => `<li class="${n.read === false ? 'unread' : ''}"><div class="msg-card" role="button" tabindex="0" aria-expanded="false">
+      <div class="msg-meta"><span class="who">${who}</span><time>${esc(fmtTime(n.at))}</time></div>
+      <div class="msg-title">${esc(n.title)}</div><p class="msg-body">${esc(n.body)}</p>${pills}</div></li>`;
   function body() {
     if (ns.tab === 'sent') {
-      return ns.sent.length ? `<ul class="mlist notice-list">${ns.sent.map((n) => `<li><div><b>${esc(n.title)}</b><small>To ${esc(n.to)} - ${esc(fmtTime(n.at))}</small>
-        <p class="small">${esc(n.body)}</p><small class="muted">${[n.counts.students ? `${n.counts.students} student${n.counts.students === 1 ? '' : 's'}` : '', n.counts.staff ? `${n.counts.staff} staff` : '',
-          n.email ? `email ${n.email.status === 'sent' ? 'sent' : n.email.status === 'failed' ? 'not sent: ' + n.email.error : 'waiting to go'}` : ''].filter(Boolean).join(' - ')}</small></div></li>`).join('')}</ul>`
-        : '<p class="muted">You have not sent any messages yet.</p>';
+      return ns.sent.length ? `<ul class="msg-list notice-list">${ns.sent.map((n) => {
+        const c = n.counts || {}, em = n.email;
+        const pills = [c.students ? plural(c.students, 'student') : '', c.staff ? `${c.staff} staff` : '', c.groups ? plural(c.groups, 'group') : ''].filter(Boolean).map((t) => `<span>${esc(t)}</span>`);
+        if (em) pills.push(`<span class="${em.status === 'failed' ? 'bad' : ''}">${esc(em.status === 'sent' ? 'Email sent' : em.status === 'failed' ? 'Email not sent: ' + em.error : 'Email waiting to go')}</span>`);
+        return card(n, `To ${esc(n.to)}`, pills.length ? `<div class="msg-pills">${pills.join('')}</div>` : '');
+      }).join('')}</ul>` : '<p class="msg-empty">Nothing sent yet. Write your first message in New message.</p>';
     }
     if (ns.tab === 'new') return composer();
-    return ns.inbox.length ? `<ul class="mlist notice-list">${ns.inbox.map((n) => `<li class="${n.read ? '' : 'unread'}"><div><b>${esc(n.title)}</b><small>From ${esc(n.from)} - to ${esc(n.to)} - ${esc(fmtTime(n.at))}</small>
-      <p class="small">${esc(n.body)}</p></div></li>`).join('')}</ul>` : '<p class="muted">No messages yet.</p>';
+    return ns.inbox.length ? `<ul class="msg-list notice-list">${ns.inbox.map((n) => card(n, `${esc(n.from)} <span class="muted">- to ${esc(n.to)}</span>`)).join('')}</ul>`
+      : '<p class="msg-empty">No messages yet. When someone writes to you, it shows here.</p>';
   }
   function composer() {
     const o = ns.opts;
     if (!o) { loadOpts(); return '<p class="muted">Loading who you can write to…</p>'; }
     const chip = (val, label, sub = '') => `<label class="kchip"><input type="checkbox" name="to" value="${esc(val)}"><span>${esc(label)}${sub ? ` <small class="muted">${esc(sub)}</small>` : ''}</span></label>`;
+    const staffChips = `${o.trainers ? chip('trainers', 'All trainers') : ''}${o.reps ? chip('reps', 'Class reps') : ''}${o.coordinators ? chip('coordinators', 'Class coordinators') : ''}`;
     return `<form id="noticeForm" class="notice-form">
       <label>Ready message<select id="nTemplate">${TEMPLATES.map(([t], i) => `<option value="${i}">${esc(t || 'Write my own')}</option>`).join('')}</select></label>
       <label>Title<input name="title" maxlength="120" required></label>
-      <label>Message<textarea name="body" rows="5" maxlength="4000" required></textarea></label>
-      <fieldset class="to-box"><legend>To</legend>
-        ${o.classes.length ? `<p class="small muted">Classes (students)</p><div class="chips-wrap">${o.classes.map((c) => chip('class:' + c.code, c.code, `${c.students}`)).join('')}</div>` : ''}
-        <div class="chips-wrap">${o.trainers ? chip('trainers', 'All trainers') : ''}${o.reps ? chip('reps', 'Class reps') : ''}${o.coordinators ? chip('coordinators', 'Class coordinators') : ''}
-        ${o.panels.map((p) => chip('panel:' + p.id, p.name)).join('')}</div>
+      <label>Message<textarea name="body" rows="5" maxlength="4000" required></textarea><span class="hint" id="nCount">0 / 4000</span></label>
+      <fieldset class="to-box"><legend>Who is it for?</legend>
+        ${o.classes.length ? `<div class="to-group"><h4>Classes (students)</h4><div class="chips-wrap">${o.classes.map((c) => chip('class:' + c.code, c.code, `${c.students}`)).join('')}</div></div>` : ''}
+        ${staffChips ? `<div class="to-group"><h4>Staff</h4><div class="chips-wrap">${staffChips}</div></div>` : ''}
+        ${o.panels.length ? `<div class="to-group"><h4>Panels</h4><div class="chips-wrap">${o.panels.map((p) => chip('panel:' + p.id, p.name)).join('')}</div></div>` : ''}
       </fieldset>
       <fieldset class="to-box"><legend>Send by</legend><div class="chips-wrap">
         <label class="kchip"><input type="checkbox" checked disabled><span>In the app</span></label>
@@ -80,7 +88,7 @@ const Notices = (() => {
         <label class="kchip"><input type="checkbox" name="email" ${o.email ? 'checked' : 'disabled'}><span>Email${o.email ? '' : ' (not set up)'}</span></label></div>
         ${o.email ? `<p class="muted tiny">Email goes to the class and staff groups, which hold everyone who has connected their college Google account. Replies come to you.</p>` : ''}
       </fieldset>
-      <button class="btn primary">Send</button></form>`;
+      <div class="send-row"><button class="btn primary">Send</button></div></form>`;
   }
   async function loadOpts() {
     try { const r = await api('noticeOptions', {}); if (!r.ok) throw new Error(r.error); ns.opts = r; if (ns.tab === 'new') draw(body()); }
@@ -104,12 +112,20 @@ const Notices = (() => {
     document.addEventListener('click', (e) => {
       if (!e.target.closest('#noticeDialog')) return;
       if (e.target.closest('[data-nclose]')) { $('#noticeDialog').close(); return; }
-      const t = e.target.closest('[data-ntab]'); if (t) { ns.tab = t.dataset.ntab; draw(body()); }
+      const t = e.target.closest('[data-ntab]'); if (t) { ns.tab = t.dataset.ntab; draw(body()); return; }
+      const c = e.target.closest('.msg-card'); if (c) c.setAttribute('aria-expanded', String(c.getAttribute('aria-expanded') !== 'true'));
+    });
+    document.addEventListener('keydown', (e) => {
+      const c = e.target.closest?.('#noticeDialog .msg-card');
+      if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); c.click(); }
+    });
+    document.addEventListener('input', (e) => {
+      if (e.target.name === 'body' && e.target.closest('#noticeForm')) { const h = $('#nCount'); if (h) h.textContent = `${e.target.value.length} / 4000`; }
     });
     document.addEventListener('change', (e) => {
       if (e.target.id !== 'nTemplate') return;
       const [title, text] = TEMPLATES[Number(e.target.value)] || ['', ''];
-      const f = $('#noticeForm'); if (title) { f.title.value = title; f.body.value = text; }
+      const f = $('#noticeForm'); if (title) { f.title.value = title; f.body.value = text; f.body.dispatchEvent(new Event('input', { bubbles: true })); }
     });
     document.addEventListener('submit', (e) => { if (e.target.id === 'noticeForm') { e.preventDefault(); send(e.target); } });
   }

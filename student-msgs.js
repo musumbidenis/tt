@@ -9,8 +9,11 @@
   const saved = () => { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; } };
   function draw(list) {
     const box = $('#msgList'); if (!box) return;
-    box.innerHTML = list.length ? `<ul class="mlist notice-list">${list.map((m) => `<li class="${m.read ? '' : 'unread'}"><div><b>${esc(m.title)}</b>
-      <small>From ${esc(m.from)} - ${esc(fmt(m.at))}</small><p class="small">${esc(m.body)}</p></div></li>`).join('')}</ul>` : '<p class="muted">No messages yet.</p>';
+    const sorted = [...list].sort((x, y) => String(y.at).localeCompare(String(x.at)));
+    box.innerHTML = sorted.length ? `<ul class="msg-list notice-list">${sorted.map((m) => `<li class="${m.read ? '' : 'unread'}"><div class="msg-card" role="button" tabindex="0" aria-expanded="false">
+      <div class="msg-meta"><span class="who">${esc(m.from)}</span><time>${esc(fmt(m.at))}</time></div>
+      <div class="msg-title">${esc(m.title)}</div><p class="msg-body">${esc(m.body)}</p></div></li>`).join('')}</ul>`
+      : '<p class="msg-empty">No messages yet. When your trainers write to you, they show here.</p>';
   }
   function count(list) { const n = list.filter((m) => !m.read).length, dot = $('#msgCount'); if (dot) { dot.hidden = !n; dot.textContent = String(n); } }
   async function load(markRead) {
@@ -27,6 +30,8 @@
       if (markRead && r.messages.some((m) => !m.read)) api('POST', {}, { action: 'messages', deviceId: st.deviceId, admNo: p.admNo, read: r.messages.filter((m) => !m.read).map((m) => m.id) }).catch(() => {});
     } catch { const l = saved(); draw(l); count(l); }
   }
+  document.addEventListener('click', (e) => { const c = e.target.closest('#msgList .msg-card'); if (c) c.setAttribute('aria-expanded', String(c.getAttribute('aria-expanded') !== 'true')); });
+  document.addEventListener('keydown', (e) => { const c = e.target.closest?.('#msgList .msg-card'); if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); c.click(); } });
   document.addEventListener('click', (e) => { const b = e.target.closest('#viewTabs [data-view=msgs]'); if (b) load(true); });
   window.addEventListener('online', () => load(document.body.dataset.view === 'msgs'));
   // A notification for a message brings the student here; otherwise just keep the count fresh.
