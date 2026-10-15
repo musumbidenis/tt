@@ -148,7 +148,7 @@
     <button type="button" class="btn small ghost" id="docCamDone">Done</button>
   </div>
   <div class="video-wrap doc-video"><video id="docCamVideo" playsinline muted></video><div class="page-frame"></div></div>
-  <p class="muted small center">Hold the page flat inside the frame, in good light, then tap the button.</p>
+  <p class="muted small center" id="docCamHint">Hold the page flat inside the frame, in good light, then tap the button.</p>
   <div class="cam-actions"><button type="button" class="shutter" id="docCamShot" aria-label="Take this page"></button></div>
 </dialog>
 
@@ -158,6 +158,7 @@
     <button type="button" class="btn small ghost" id="cropCancel">Cancel</button>
   </div>
   <div id="cropStage" class="crop-stage"><canvas id="cropCanvas"></canvas><div id="cropHandles"></div></div>
+  <p id="cropInfo" class="muted small center crop-info"></p>
   <div class="crop-actions">
     <button type="button" class="btn primary" id="cropNext">Keep and take the next page</button>
   </div>

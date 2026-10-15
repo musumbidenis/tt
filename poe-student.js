@@ -201,6 +201,8 @@ const POE = (() => {
     quad.forEach(([x, y], i) => (i ? g.lineTo(x * k, y * k) : g.moveTo(x * k, y * k))); g.closePath(); g.fill('evenodd');
     g.strokeStyle = '#4fcd84'; g.lineWidth = 2; g.beginPath(); quad.forEach(([x, y], i) => (i ? g.lineTo(x * k, y * k) : g.moveTo(x * k, y * k))); g.closePath(); g.stroke();
     ps.crop.k = k;
+    const o = Scanner.outSize(quad);
+    $('#cropInfo').textContent = `Photo ${canvas.width} x ${canvas.height} - page will be about ${o.w} x ${o.h}`;
     Object.assign($('#cropHandles').style, { left: view.offsetLeft + 'px', top: view.offsetTop + 'px', width: view.width + 'px', height: view.height + 'px' });
     $('#cropHandles').innerHTML = quad.map(([x, y], i) => `<span class="handle" data-h="${i}" style="left:${x * k}px;top:${y * k}px" aria-label="Corner ${i + 1}"></span>`).join('');
   }
@@ -261,7 +263,7 @@ const POE = (() => {
     $('#docCamTitle').textContent = `${item} - page ${n}`;
     try {
       camStream = await navigator.mediaDevices.getUserMedia({ audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 3264 }, height: { ideal: 2448 } } });
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 3072 } } });
     } catch (e) {
       if (e && e.name === 'NotAllowedError') { toast('Allow the camera for this app (browser settings), or use "From gallery or PDF".', 'err'); return; }
       ps.useCameraApp = true;     // from now on this device uses the phone's camera app
@@ -272,6 +274,23 @@ const POE = (() => {
     video.srcObject = camStream;
     if (!$('#docCamDialog').open) $('#docCamDialog').showModal();
     await video.play().catch(() => {});
+    await sharpenStream(camStream.getVideoTracks()[0]);
+  }
+  /** Asks the camera for its largest picture, and for continuous focus and exposure, where it supports them. */
+  async function sharpenStream(track) {
+    try {
+      const caps = track.getCapabilities?.() || {};
+      if (caps.width?.max && caps.height?.max) {
+        try { await track.applyConstraints({ width: { ideal: caps.width.max }, height: { ideal: caps.height.max } }); } catch { /* keeps what it has */ }
+      }
+      const adv = {};
+      const has = (list, v) => Array.isArray(list) && list.includes(v);
+      if (has(caps.focusMode, 'continuous')) adv.focusMode = 'continuous'; else if (has(caps.focusMode, 'auto')) adv.focusMode = 'auto';
+      if (has(caps.exposureMode, 'continuous')) adv.exposureMode = 'continuous';
+      if (Object.keys(adv).length) { try { await track.applyConstraints({ advanced: [adv] }); } catch { /* not supported */ } }
+    } catch { /* the camera stays as it opened */ }
+    const video = $('#docCamVideo');
+    for (let i = 0; i < 10 && video.videoWidth < 1600; i++) await new Promise((r) => setTimeout(r, 100));   // the higher size takes a moment
   }
   function stopDocCam() {
     camStream?.getTracks().forEach((t) => t.stop());
@@ -281,19 +300,37 @@ const POE = (() => {
   }
   /** Takes the page: a full photo from the camera when the browser can (sharper), else the frame on screen. */
   async function shootPage() {
-    const video = $('#docCamVideo'), btn = $('#docCamShot'), track = camStream?.getVideoTracks()[0];
+    const video = $('#docCamVideo'), btn = $('#docCamShot'), hint = $('#docCamHint'), track = camStream?.getVideoTracks()[0];
     if (!track || btn.disabled) return;
     btn.disabled = true;
+    const hintText = hint.textContent;
+    hint.textContent = 'Focusing…';
     let blob = null;
     try {
-      if (window.ImageCapture) { try { blob = await new ImageCapture(track).takePhoto(); } catch { blob = null; } }
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      let caps = {};
+      try { caps = track.getCapabilities?.() || {}; } catch { caps = {}; }
+      let focused = false;
+      if (Array.isArray(caps.focusMode) && caps.focusMode.includes('single-shot')) {
+        try { await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); focused = true; await wait(450); } catch { focused = false; }
+      }
+      if (!focused) await wait(250);
+      if (window.ImageCapture) {
+        try {
+          const ic = new ImageCapture(track);
+          let opts;
+          try { const pc = await ic.getPhotoCapabilities(); if (pc?.imageWidth?.max && pc?.imageHeight?.max) opts = { imageWidth: pc.imageWidth.max, imageHeight: pc.imageHeight.max }; } catch { opts = undefined; }
+          try { blob = opts ? await ic.takePhoto(opts) : await ic.takePhoto(); } catch { blob = null; }
+          if (!blob && opts) { try { blob = await ic.takePhoto(); } catch { blob = null; } }
+        } catch { blob = null; }
+      }
       if (!blob && video.videoWidth) {
         const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
-        c.getContext('2d').drawImage(video, 0, 0);
-        blob = await Scanner.toJpeg(c, 0.9);
+        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+        blob = await Scanner.toJpeg(c, 0.94);
         Scanner.release(c);
       }
-    } finally { btn.disabled = false; }
+    } finally { btn.disabled = false; hint.textContent = hintText; }
     if (!blob) { toast('That page could not be taken. Try again.', 'err'); return; }
     const item = ps.target;
     stopDocCam();                  // the camera is let go while the page is adjusted (less memory)

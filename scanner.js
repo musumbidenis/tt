@@ -1,5 +1,5 @@
 /* Document scanner for POE evidence, all on the phone (no internet needed):
- *   Scanner.load(file)            photo → canvas (no more than 2400 px on the long side, upright)
+ *   Scanner.load(file)            photo → canvas (no more than 4000 px on the long side, upright)
  *   Scanner.findCorners(canvas)   where the sheet of paper is: 4 points (top-left, top-right, bottom-right, bottom-left)
  *   Scanner.flatten(canvas, quad) straightens the sheet (perspective correction) → new canvas
  *   Scanner.filter(canvas, mode)  'document' (clean white page, crisp ink), 'grey' or 'colour'
@@ -11,8 +11,8 @@
 const Scanner = (() => {
   // Phones run out of memory with camera-sized images (a 12 MP photo is about 48 MB once decoded) and then the
   // browser closes the page. So photos are decoded already shrunk, and pages are kept at about A4 at 200 dpi.
-  // The page is kept at up to 2400 px (A4 at about 205 dpi): sharp enough for small handwriting and pencil.
-  const MAX_SRC = 3000, MAX_OUT = 2400;
+  // The page is kept at up to 3000 px (A4 at about 255 dpi): sharp enough for small handwriting and pencil.
+  const MAX_SRC = 4000, MAX_OUT = 3000;
 
   /** A JPEG's width and height from its header (and whether its EXIF turns it on its side), without decoding it. */
   async function jpegSize(file) {
@@ -151,10 +151,15 @@ const Scanner = (() => {
     return b.map((v, i) => v / A[i][i]).concat(1);
   }
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-  function flatten(canvas, quad) {
+  /** The size the straightened page will have. */
+  function outSize(quad) {
     const [tl, tr, br, bl] = quad;
     let W = Math.max(dist(tl, tr), dist(bl, br)), H = Math.max(dist(tl, bl), dist(tr, br));
-    const k = Math.min(1, MAX_OUT / Math.max(W, H)); W = Math.max(16, Math.round(W * k)); H = Math.max(16, Math.round(H * k));
+    const k = Math.min(1, MAX_OUT / Math.max(W, H));
+    return { w: Math.max(16, Math.round(W * k)), h: Math.max(16, Math.round(H * k)) };
+  }
+  function flatten(canvas, quad) {
+    const { w: W, h: H } = outSize(quad);
     const m = homography([[0, 0], [W, 0], [W, H], [0, H]], quad);
     const xs = quad.map((p) => p[0]), ys = quad.map((p) => p[1]);
     const bx = Math.max(0, Math.floor(Math.min(...xs)) - 1), by = Math.max(0, Math.floor(Math.min(...ys)) - 1);
@@ -210,7 +215,7 @@ const Scanner = (() => {
     g.putImageData(im, 0, 0);
     bgC.width = 0; bgC.height = 0; s.width = 0; s.height = 0;   // give the working copies back at once
     const blC = document.createElement('canvas'); blC.width = W; blC.height = H;
-    const bl = blC.getContext('2d', { willReadFrequently: true }); bl.filter = 'blur(1.2px)'; bl.drawImage(out, 0, 0);
+    const bl = blC.getContext('2d', { willReadFrequently: true }); bl.filter = `blur(${Math.max(1.2, 1.2 * Math.max(W, H) / 2400).toFixed(2)}px)`; bl.drawImage(out, 0, 0);   // blur radius scales with the resolution
     const bd = bl.getImageData(0, 0, W, H).data;
     blC.width = 0; blC.height = 0;
     for (let i = 0; i < p.length; i += 4) {
@@ -225,11 +230,11 @@ const Scanner = (() => {
 
   /* ---------- a page for the PDF: high quality ---------- */
   // A page is kept like a scanner's colour document setting: white paper, ink in its own colour, smooth strokes, pencil
-  // and shading kept. JPEG quality 0.9, lowered only for a very busy page, never below 0.8.
-  const PAGE_BUDGET = 900 * 1024;
+  // and shading kept. JPEG quality 0.92, lowered only for a very busy page, never below 0.82.
+  const PAGE_BUDGET = 1400 * 1024;
   async function page(canvas) {
-    let q = 0.9, jpeg = await toJpeg(canvas, q);
-    while (jpeg.size > PAGE_BUDGET && q > 0.8) { q = Math.round((q - 0.05) * 100) / 100; jpeg = await toJpeg(canvas, q); }
+    let q = 0.92, jpeg = await toJpeg(canvas, q);
+    while (jpeg.size > PAGE_BUDGET && q > 0.82) { q = Math.round((q - 0.02) * 100) / 100; jpeg = await toJpeg(canvas, q); }
     return { width: canvas.width, height: canvas.height, jpeg };
   }
 
@@ -263,5 +268,5 @@ const Scanner = (() => {
     return new Blob(parts, { type: 'application/pdf' });
   }
 
-  return { load, rotate, findCorners, defaultQuad, flatten, filter, toJpeg, page, pdf, release, thumb };
+  return { load, rotate, findCorners, defaultQuad, outSize, flatten, filter, toJpeg, page, pdf, release, thumb };
 })();
