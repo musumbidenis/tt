@@ -363,7 +363,7 @@ const PoeStaff = (() => {
     } catch (err) {
       if (ps.open !== id) return;
       $('#poePages').innerHTML = err.needGoogle
-        ? `<p>${esc(err.message)} Students now save their documents in their own college Google Drive and share them with you.</p><button type="button" class="btn primary" data-act="gconnect">${me()?.email ? 'Sign in to Google' : 'Connect Google'}</button>`
+        ? `<p>${esc(err.message)} Students now save their documents in their own college Google Drive and share them with you.</p><button type="button" class="btn primary" data-act="gconnect">Connect Google</button>`
         : `<p class="err-text">${esc(err.message)}</p><p class="muted small">You can still open it in Drive.</p>`;
     }
   }

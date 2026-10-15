@@ -50,7 +50,12 @@ const Google = (() => {
   const setServer = (kind, fns) => { servers[kind] = fns; };
   let probed = null;   // null = not asked yet; the last answer is kept for offline starts
   /** Asks the server (once) whether it keeps Google sign-ins. Safe to call often; resolves with true/false. */
+  // Asked again whenever the app comes back to the screen, so an app left open since before the server was set up
+  // stops using the hour-long sign-in.
+  let probeUrl = '';
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && probeUrl) probe(probeUrl); });
   function probe(url) {
+    if (url) probeUrl = url;
     if (probed === null) probed = lsGet(SUP) === '1';
     if (!url || !navigator.onLine) return Promise.resolve(probed);
     return fetch(url + (url.includes('?') ? '&' : '?') + 'action=ping', { redirect: 'follow' }).then((r) => r.json())
