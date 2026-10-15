@@ -18,6 +18,10 @@ const PoeStaff = (() => {
   const canDecide = () => hasRole('TRAINER') || hasRole('HOD');
   const byStudentAllowed = () => hasRole('MIS') || hasRole('HOD') || hasRole('IAO');
 
+  /** Until this person has connected Google (once), a card at the top of the tab: students' documents open with it. */
+  const connectCard = () => (typeof Google !== 'undefined' && Google.on() && !Google.connected('staff')
+    ? `<div class="connect-card"><div><b>Connect your college Google account</b><span class="small">Students' documents are in their own Google Drive and shared with you. Connect once and they open straight away - you will not be asked again.</span></div>
+      <button type="button" class="btn primary small" data-act="gconnect">Connect Google</button></div>` : '');
   async function load() {
     const res = await api('poeList', {});
     if (!res.ok) throw new Error(res.error || 'Could not load the evidence');
@@ -70,6 +74,7 @@ const PoeStaff = (() => {
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+        ${connectCard()}
         ${modeToggle()}
         <p class="muted small">${canDecide() ? 'Students send CAT and practical evidence from the student app. Open one to see it, then approve it or return it with a note.'
           : 'Students send CAT and practical evidence from the student app; their trainers approve it or return it with a note.'}</p>
@@ -185,6 +190,7 @@ const PoeStaff = (() => {
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+        ${connectCard()}
         ${modeToggle()}
         <div class="chips poe-chips" role="group" aria-label="Show">${chips}</div>
         <div class="poe-filters">
@@ -269,34 +275,25 @@ const PoeStaff = (() => {
   /* A document in the student's own Drive: opened with the trainer's Google sign-in. Its fingerprint (md5) is
    * compared with the one recorded when it was sent, so a file changed afterwards is flagged. */
   const needGoogle = () => Object.assign(new Error('Connect your Google account to open this document.'), { needGoogle: true });
-  /** A file sent to the app by the college bridge account (every student file is shared with it), with its fingerprint. */
-  async function bridgeFetch(v) {
-    if (!v.ticket) throw new Error('The Google Drive link is not set up yet');
-    const res = await fetch(v.driveUrl + (v.driveUrl.includes('?') ? '&' : '?') + 'action=file&ticket=' + encodeURIComponent(v.ticket), { redirect: 'follow' });
-    const out = await res.json();
-    if (!out.ok) throw new Error(out.error || 'The Drive did not send the file');
-    const bin = atob(out.data), bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return { bytes, mime: out.mime || 'application/pdf', name: out.name, md5: out.md5 || '' };
-  }
-  /* A document in the student's own Drive. Nobody has to connect Google to open it: the college bridge account can read
-   * every student file and sends it. Staff who did connect open it directly (a little faster). Either way the fingerprint
-   * (md5) is compared with the one recorded when it was sent, so a file changed afterwards is flagged. */
   async function driveFile(id) {
     const hit = await cachedFile(id);
     if (!navigator.onLine) { if (hit) return hit; throw new Error('Connect to the internet to open this document.'); }
+    try { await Google.ensure('staff'); } catch (err) {
+      if (err instanceof Google.NeedSignIn) { if (hit) return hit; throw needGoogle(); }
+      if (hit) return hit; throw err;
+    }
     const v = await api('poeView', { id });
     if (!v.ok) throw new Error(v.error);
-    let file = null;
-    if (v.direct && typeof Google !== 'undefined' && Google.on() && Google.connected('staff')) {
-      try {
-        const m = await Google.meta('staff', v.fileId);
-        file = hit && hit.md5 && hit.md5 === m.md5Checksum ? { ...hit } : { bytes: await Google.download('staff', v.fileId), mime: 'application/pdf', name: v.fileName, md5: m.md5Checksum || '' };
-      } catch { file = null; /* not reachable this way: the bridge sends it */ }
+    let m;
+    try { m = await Google.meta('staff', v.fileId); } catch (err) {
+      if (err instanceof Google.NeedSignIn) throw needGoogle();
+      if (err.status === 404 || err.status === 403) throw new Error(`This document has not been shared with ${Google.email() || 'your Google account'} yet. It is shared when the student's phone is next online. Check that the Google account in Profile is your college one.`);
+      throw err;
     }
-    if (!file) file = await bridgeFetch(v);
-    file.changed = !!(v.md5 && file.md5 && file.md5 !== v.md5);
-    if (file.changed) api('poeChanged', { id, md5: file.md5 }).catch(() => {});
+    const changed = !!(v.md5 && m.md5Checksum && m.md5Checksum !== v.md5);
+    if (changed) api('poeChanged', { id, md5: m.md5Checksum }).catch(() => {});
+    if (hit && hit.md5 && hit.md5 === m.md5Checksum) return { ...hit, changed };
+    const file = { bytes: await Google.download('staff', v.fileId), mime: 'application/pdf', name: v.fileName, md5: m.md5Checksum || '', changed };
     keepFile(id, file);
     return file;
   }
