@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.17.0';
+export const VERSION = '7.18.0';
 const SCHEMA_VERSION = '20';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -2042,6 +2042,9 @@ const STUDENT_ACTIONS = {
   },
   async poeTicket(env, b) {
     const t = await studentOf(env, b);
+    // Students connect their college Google account and save POE in their own Drive; nothing new goes through the college
+    // Drive (an upload already under way can still be confirmed with poeDone).
+    if (googleReady(env)) fail('Connect your college Google account to send POE. Your file is safe on this device.', { needGoogle: true });
     const item = String(b.item || '').toUpperCase();
     if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
     if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
