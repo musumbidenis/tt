@@ -1,12 +1,11 @@
 /* POE tab → Verification: internal verification of POE evidence.
- *  - The MIS Officer or the Internal Assessment Officer drafts a panel (a chair and members); it is approved at once (the
- *    HOD can return it).
+ *  - The MIS Officer or the Internal Assessment Officer drafts a panel (a chair and members); it is approved at once.
  *  - The MIS Officer ticks the trainers and the classes; the system makes the panels, gives each class to a panel
  *    (biggest classes first, balanced by students) and each unit to one member, the least loaded, never anyone who teaches
  *    it - no class is ever left out: only when nobody else is left are the rules bent, and the history says so. The server draws the sample: everyone up to 10 students, otherwise max(10, ⌈√N × risk⌉), always including
  *    students returned-then-approved, files changed after sending and one from each third of the marks.
- *  - Both members check every sampled student (valid, authentic, current, sufficient; agree with the trainer?) and each
- *    gives a result; the report takes the stricter. Too many disagreements doubles the sample, then takes in everyone.
+ *  - The verifier checks every sampled student (valid, authentic, current, sufficient; agree with the trainer?) and gives
+ *    a result. Too many disagreements doubles the sample, then takes in everyone.
  *  - The trainer responds; the chair or the HOD signs. The External Assessment Officer sees every panel's class-units,
  *    can pick their own sample by class and unit, and gives their own result.
  * Uses app.js (api, $, $$, esc, toast, hasRole, me, fmtTime, lower) and PoeStaff (evidence list and preview). */
@@ -16,10 +15,8 @@ const Verify = (() => {
   const vs = { data: null, open: '', seq: 0 };
   const RESULT = { verified: 'Verified', actions: 'Verified with actions', not_verified: 'Not verified' };
   const STAT = { open: ['pending', 'In progress'], submitted: ['wait', 'Submitted'], signed: ['synced', 'Signed'] };
-  const PSTAT = { draft: ['pending', 'Waiting for the HOD'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned by the HOD'] };
-  const slotOf = (v) => (isMe(v.verifier) ? 'internal' : v.verifier2 && isMe(v.verifier2) ? 'second' : '');
+  const slotOf = (v) => (isMe(v.verifier) ? 'internal' : '');
   const external = () => hasRole('EAO');
-  const both = (v) => [v.verifier, v.verifier2].filter(Boolean).map(staffName).join(' and ');
   const office = () => hasRole('MIS') || hasRole('IAO') || hasRole('HOD');
   const drafts = () => hasRole('MIS') || hasRole('IAO');
   const isMe = (code) => lower(code) === lower(me()?.code || '');
@@ -106,8 +103,8 @@ const Verify = (() => {
       { k: 'cls', label: 'Class', sort: (v) => v.classCode, cell: (v) => esc(v.classCode) },
       { k: 'unit', label: 'Unit', sort: (v) => v.unitCode + ' ' + v.unitName, cell: (v) => `<span title="${esc(v.unitName)}">${esc(v.unitCode)}</span>` },
       { k: 'trainer', label: 'Trainer', sort: (v) => v.trainerName || v.trainerCode, cell: (v) => esc(v.trainerName || v.trainerCode) },
-      { k: 'ver', label: 'Verifier', sort: (v) => both(v), cell: (v) => `${esc(staffName(v.verifier))}${v.v1.at ? ' ✓' : ''}${v.verifier2 ? `<br>${esc(staffName(v.verifier2))}${v.v2.at ? ' ✓' : ''}` : ''}` },
-      { k: 'size', label: 'Sample', cls: 'num', sort: (v) => v.size, cell: (v) => `<span title="${v.size} of the ${v.population} students in the class">${v.status === 'open' && v.sample.length ? `${done(v, 'internal')}+${done(v, 'second')} / ` : ''}${v.size} of ${v.population}</span>` },
+      { k: 'ver', label: 'Verifier', sort: (v) => staffName(v.verifier), cell: (v) => `${esc(staffName(v.verifier))}${v.v1?.at ? ' ✓' : ''}` },
+      { k: 'size', label: 'Sample', cls: 'num', sort: (v) => v.size, cell: (v) => `<span title="${v.size} of the ${v.population} students in the class">${v.status === 'open' && v.sample.length ? `${done(v, 'internal')} / ` : ''}${v.size} of ${v.population}</span>` },
       { k: 'status', label: 'Status', sort: (v) => (STAT[v.status] || [, v.status])[1], cell: (v) => pill(STAT[v.status] || ['pending', v.status]) },
       { k: 'result', label: 'Result', sort: (v) => RESULT[v.result] || '', cell: (v) => `${v.result ? esc(RESULT[v.result]) : '–'}${v.extResult ? `<br><small class="muted">External: ${esc(RESULT[v.extResult])}</small>` : ''}` },
       { k: 'open', label: '<span class="sr">Open</span>', cell: (v) => `<button type="button" class="btn small" data-vopen="${esc(v.id)}">Open</button>${drafts() ? ` <button type="button" class="btn small ghost danger-text" data-vact="del-ver" data-id="${esc(v.id)}" data-what="${esc(v.classCode + ' ' + v.unitCode)}">Delete</button>` : ''}${opts.hod && v.status === 'open' ? ` <button type="button" class="btn small ghost" data-vact="redraw" data-id="${esc(v.id)}">Draw again</button>` : ''}` },
@@ -150,18 +147,14 @@ const Verify = (() => {
         <button class="btn primary">${p ? 'Save the panel' : 'Draft the panel'}</button></form>`;
     const rows = d.panels.map((p) => {
       const vers = d.verifications.filter((v) => v.panelId === p.id);
-      return `<details class="mdone panel"${p.status !== 'approved' || vers.length ? ' open' : ''}><summary><b>${esc(p.name)}</b> ${pill(PSTAT[p.status] || ['pending', p.status])}
+      return `<details class="mdone panel"${vers.length ? ' open' : ''}><summary><b>${esc(p.name)}</b>
           <span class="muted small">Chair ${esc(staffName(p.chair))} - ${p.members.length} member${p.members.length === 1 ? '' : 's'}</span></summary>
         <div class="panel-who"><p class="small">${p.members.map((m) => esc(staffName(m)) + (lower(m) === lower(p.chair) ? ' (chair)' : '')).join(', ')}</p>
           ${drafts() ? `<button type="button" class="btn small danger" data-vact="del-panel" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-n="${vers.length}">Delete panel</button>` : ''}</div>
-        ${p.note ? `<p class="small warn-text">HOD: ${esc(p.note)}</p>` : ''}
-        ${p.decidedBy === 'Approved automatically' ? '<p class="muted tiny">Approved automatically when saved.</p>' : ''}
-        ${hasRole('HOD') && p.status === 'approved' ? `<div class="row-actions"><input class="hod-note" data-note="${esc(p.id)}" placeholder="Why return it?"><button type="button" class="btn small" data-vact="return-panel" data-id="${esc(p.id)}">Return the panel</button></div>` : ''}
-        ${hasRole('HOD') && ['draft', 'returned'].includes(p.status) ? `<div class="row-actions"><input class="hod-note" data-note="${esc(p.id)}" placeholder="Note (needed to return)"><button type="button" class="btn small" data-vact="return-panel" data-id="${esc(p.id)}">Return</button><button type="button" class="btn small primary" data-vact="approve-panel" data-id="${esc(p.id)}">Approve the panel</button></div>` : ''}
-        ${p.status === 'approved' ? table(vers, { key: 'vPanel:' + p.id, hod: hasRole('HOD') }) + (drafts() ? assignForm(p, vers) : '') : ''}
+        ${table(vers, { key: 'vPanel:' + p.id, hod: hasRole('HOD') }) + (drafts() ? assignForm(p, vers) : '')}
         ${drafts() ? `<details class="mdone"><summary>Change this panel</summary>${form(p)}</details>` : ''}</details>`;
     }).join('');
-    return card('Verification panels', drafts() ? 'Made by the system from the trainers you ticked. You can still change a panel or delete it; the HOD can return one.' : 'Panels made for this term\'s verification.',
+    return card('Verification panels', drafts() ? 'Made by the system from the trainers you ticked. You can still change a panel or delete it.' : 'Panels made for this term\'s verification.',
       rows || '<p class="muted small">No panels yet. Set up verification above.</p>');
   }
   function assignForm(p, vers) {
@@ -170,8 +163,7 @@ const Verify = (() => {
     const eaos = vs.data.staff.filter((s) => s.roles.includes('EAO'));
     return `<form class="assign-form" data-panel="${esc(p.id)}">
         <label>Class and unit<select name="cu" required><option value="">Choose…</option>${opts.map((u) => `<option value="${esc(u.classCode + '|' + u.unitCode)}" data-trainer="${esc(u.trainerCode)}">${esc(u.classCode)} - ${esc(u.unitCode)} ${esc(u.unitName)} (${esc(u.trainerName || u.trainerCode)})</option>`).join('')}</select></label>
-        <label>First verifier<select name="verifier" required><option value="">Choose…</option>${p.members.map((m) => `<option value="${esc(m)}">${esc(staffName(m))}</option>`).join('')}</select></label>
-        <label>Second verifier<select name="verifier2" required><option value="">Choose…</option>${p.members.map((m) => `<option value="${esc(m)}">${esc(staffName(m))}</option>`).join('')}</select></label>
+        <label>Verifier<select name="verifier" required><option value="">Choose…</option>${p.members.map((m) => `<option value="${esc(m)}">${esc(staffName(m))}</option>`).join('')}</select></label>
         <button class="btn primary">Give it and draw the sample</button>
       </form>
       ${eaos.length && vers.length ? `<div class="ext-assign"><b class="small">External Assessment Officer</b>${vers.map((v) => `<label class="small">${esc(v.classCode)} - ${esc(v.unitCode)}
@@ -261,13 +253,13 @@ const Verify = (() => {
   const sPicked = new Set();
   /* ---------- one class-unit ---------- */
   function detail(v) {
-    const d = vs.data, slot = slotOf(v), mySub = slot === 'internal' ? v.v1 : slot === 'second' ? v.v2 : null;
+    const d = vs.data, slot = slotOf(v), mySub = slot === 'internal' ? v.v1 : null;
     const mineInt = !!slot && v.status === 'open' && !mySub?.at, mineExt = external();
     const extList = v.extSample.filter((a) => !v.sample.some((s) => lower(s) === lower(a)));
     const sample = [...v.sample, ...extList];
     const showExt = mineExt || !!v.extResult || d.checks.some((c) => c.verificationId === v.id && c.who === 'external');
     const checked = v.sample.filter((a) => checkOf(v, a, slot || 'internal')?.agree != null).length;
-    const against = v.sample.filter((a) => checkOf(v, a, 'internal')?.agree === false || checkOf(v, a, 'second')?.agree === false).length;
+    const against = v.sample.filter((a) => checkOf(v, a, 'internal')?.agree === false).length;
     const order = sample.flatMap((a) => evidenceOf(v, a).map((e) => e.id));
     const extEdit = (adm) => mineExt && (v.extSample.some((s) => lower(s) === lower(adm)) || ['submitted', 'signed'].includes(v.status));
     const panel = d.panels.find((p) => p.id === v.panelId);
@@ -281,7 +273,6 @@ const Verify = (() => {
       { k: 'why', label: 'Why in the sample', cls: 'small', sort: why, cell: (adm) => esc(why(adm)) },
       { k: 'ev', label: 'Approved evidence', sort: (adm) => evidenceOf(v, adm).length, cell: (adm) => { const ev = evidenceOf(v, adm); return ev.length ? ev.map((e) => `<button type="button" class="btn small" data-vview="${esc(e.id)}" data-order="${esc(order.join(','))}">${esc(e.item)}</button>`).join(' ') : '<span class="muted small">no approved file</span>'; } },
       { k: 'v1', label: esc(staffName(v.verifier)), sort: (adm) => status(adm, 'internal'), cell: (adm) => (extList.includes(adm) ? '' : checkCell(v, adm, 'internal', mineInt && slot === 'internal')) },
-      ...(v.verifier2 ? [{ k: 'v2', label: esc(staffName(v.verifier2)), sort: (adm) => status(adm, 'second'), cell: (adm) => (extList.includes(adm) ? '' : checkCell(v, adm, 'second', mineInt && slot === 'second')) }] : []),
       ...(showExt ? [{ k: 'ext', label: 'External check', sort: (adm) => status(adm, 'external'), cell: (adm) => checkCell(v, adm, 'external', extEdit(adm)) }] : []),
     ], { first: 'name', cls: 'ver-sample', filter: 'Filter by name or admission no.', empty: 'No sample.', search: (adm) => `${nameOf(adm)} ${adm}`,
       tools: canPick ? (shown) => `<label class="kchip"><input type="checkbox" data-spickall${shown.length && shown.filter((a) => !extList.includes(a)).every((a) => sPicked.has(a)) ? ' checked' : ''}><span>Select all (${shown.length})</span></label>
@@ -290,11 +281,10 @@ const Verify = (() => {
     const firstLog = v.log[0]?.what || '';
     return `<section class="card ver-detail">
       <div class="msec-head"><h2>${esc(v.classCode)} - ${esc(v.unitCode)} ${esc(v.unitName)}</h2><button type="button" class="btn small ghost" data-vact="back">‹ Back</button></div>
-      <p class="small">Trainer <b>${esc(v.trainerName || v.trainerCode)}</b> - verifiers <b>${esc(both(v))}</b>${v.external ? ` - external <b>${esc(staffName(v.external))}</b>` : ''} - ${pill(STAT[v.status] || ['pending', v.status])}</p>
+      <p class="small">Trainer <b>${esc(v.trainerName || v.trainerCode)}</b> - verifier <b>${esc(staffName(v.verifier))}</b>${v.external ? ` - external <b>${esc(staffName(v.external))}</b>` : ''} - ${pill(STAT[v.status] || ['pending', v.status])}</p>
       ${!v.sample.length ? `<p class="warn-text small">No sample: the class list was empty when this was given out.${office() ? ' <button type="button" class="btn small primary" data-vact="draw" data-id="' + esc(v.id) + '">Draw the sample now</button>' : ''}</p>` : ''}
-      ${v.status === 'open' && (v.v1.at || v.v2.at) ? `<p class="small">${[['v1', v.verifier], ['v2', v.verifier2]].filter(([k]) => v[k].at).map(([k, c]) => `${esc(staffName(c))} submitted: <b>${esc(RESULT[v[k].result])}</b>`).join(' - ')} - waiting for the other verifier.</p>` : ''}
       <p class="small">Sample: <b>${v.size}</b> of the ${v.population} students in the class${v.risk > 1 ? ` (higher risk × ${v.risk})` : ''}. ${esc(firstLog)}${v.round > 1 ? ` <b class="warn-text">${v.round === 2 ? 'The sample was doubled after disagreements.' : 'Every student is now in the sample.'}</b>` : ''}</p>
-      ${v.status === 'open' && slot ? `<p class="small">You have checked ${checked} of ${v.sample.length}${against ? ` - <b class="warn-text">${against} disagreement${against === 1 ? '' : 's'} between you</b>` : ''}</p>` : ''}
+      ${v.status === 'open' && slot ? `<p class="small">You have checked ${checked} of ${v.sample.length}${against ? ` - <b class="warn-text">${against} disagreement${against === 1 ? '' : 's'}</b>` : ''}</p>` : ''}
       ${sampleTable}
       ${extBox(v)}
       ${mineInt ? `<form class="ver-submit"><h3>Your result</h3>
@@ -302,7 +292,6 @@ const Verify = (() => {
         <label>Actions for the trainer <span class="muted small">(needed unless verified)</span><textarea name="actions" rows="3" maxlength="2000"></textarea></label>
         <button class="btn primary">Submit the result</button></form>` : ''}
       ${v.status !== 'open' ? `<div class="ver-result"><h3>Result: ${esc(RESULT[v.result] || '')}</h3>
-        ${v.v1.at || v.v2.at ? `<p class="small">${[['v1', v.verifier], ['v2', v.verifier2]].filter(([k]) => v[k].at).map(([k, c]) => `${esc(staffName(c))}: ${esc(RESULT[v[k].result])}`).join(' - ')} (the report takes the stricter)</p>` : ''}
         ${v.actions ? `<p class="small"><b>Actions:</b> ${esc(v.actions)}</p>` : ''}
         <p class="muted small">Submitted ${esc(fmtTime(v.submittedAt))}${v.signedAt ? ` - signed by ${esc(v.signedBy)} ${esc(fmtTime(v.signedAt))}` : ''}</p>
         ${v.response ? `<p class="small"><b>Trainer's response:</b> ${esc(v.response)}</p>` : ''}
@@ -334,20 +323,19 @@ const Verify = (() => {
   function reportRows(v) {
     const yn = (b) => (b ? 'Yes' : 'No');
     const one = (c) => (c && c.agree != null ? `${['valid', 'authentic', 'current', 'sufficient'].filter((k) => c[k]).length}/4 - ${c.agree ? 'Agree' : 'Do not agree'}${c.comment ? ' - ' + c.comment : ''}` : '');
-    return v.sample.map((adm, i) => [i + 1, adm.toUpperCase(), nameOf(adm), v.reasons[adm] || '', one(checkOf(v, adm, 'internal')), one(checkOf(v, adm, 'second')), one(checkOf(v, adm, 'external'))]);
+    return v.sample.map((adm, i) => [i + 1, adm.toUpperCase(), nameOf(adm), v.reasons[adm] || '', one(checkOf(v, adm, 'internal')), one(checkOf(v, adm, 'external'))]);
   }
-  const HEAD = ['#', 'Admission no.', 'Name', 'Why in the sample', 'First verifier (ticks - decision)', 'Second verifier', 'External'];
+  const HEAD = ['#', 'Admission no.', 'Name', 'Why in the sample', 'Verifier (ticks - decision)', 'External'];
   function printReport(v) {
     const panel = vs.data.panels.find((p) => p.id === v.panelId);
     const chairSigned = !!(v.signedAt && panel && lower(staffName(panel.chair)) === lower(v.signedBy || ''));
     $('#printArea').innerHTML = `<div class="tbl-print ver-print"><h1>INTERNAL VERIFICATION REPORT</h1>
       <p>${esc(v.classCode)} - ${esc(v.unitCode)} ${esc(v.unitName)} - trainer ${esc(v.trainerName || v.trainerCode)}</p>
-      <p>Panel: ${esc(panel?.name || '')} - verifiers ${esc(both(v))} - sample ${v.size} of ${v.population}${v.risk > 1 ? ` (risk × ${v.risk})` : ''}</p>
+      <p>Panel: ${esc(panel?.name || '')} - verifier ${esc(staffName(v.verifier))} - sample ${v.size} of ${v.population}${v.risk > 1 ? ` (risk × ${v.risk})` : ''}</p>
       <table><thead><tr>${HEAD.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${reportRows(v).map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>
       <p><b>Result:</b> ${esc(RESULT[v.result] || 'not given yet')}${v.actions ? ` - <b>Actions:</b> ${esc(v.actions)}` : ''}</p>
       ${v.response ? `<p><b>Trainer's response:</b> ${esc(v.response)}</p>` : ''}
-      <table class="sign-lines"><tr><th>First verifier</th><td>${esc(staffName(v.verifier))}</td><th>Signature</th><td class="sig">${v.v1.at ? esc(initials(staffName(v.verifier))) : ''}</td><th>Date</th><td>${esc(v.v1.at ? fmtShort(v.v1.at) : '')}</td></tr>
-        ${v.verifier2 ? `<tr><th>Second verifier</th><td>${esc(staffName(v.verifier2))}</td><th>Signature</th><td class="sig">${v.v2.at ? esc(initials(staffName(v.verifier2))) : ''}</td><th>Date</th><td>${esc(v.v2.at ? fmtShort(v.v2.at) : '')}</td></tr>` : ''}
+      <table class="sign-lines"><tr><th>Verifier</th><td>${esc(staffName(v.verifier))}</td><th>Signature</th><td class="sig">${v.v1.at ? esc(initials(staffName(v.verifier))) : ''}</td><th>Date</th><td>${esc(v.v1.at ? fmtShort(v.v1.at) : '')}</td></tr>
         <tr><th>Panel chair</th><td>${esc(panel ? staffName(panel.chair) : '')}</td><th>Signature</th><td class="sig">${chairSigned ? esc(initials(staffName(panel.chair))) : ''}</td><th>Date</th><td>${chairSigned ? esc(fmtShort(v.signedAt)) : ''}</td></tr>
         <tr><th>HOD</th><td>${esc(v.signedBy || '')}</td><th>Signature</th><td class="sig">${v.signedAt ? esc(initials(v.signedBy)) : ''}</td><th>Date</th><td>${esc(v.signedAt ? fmtShort(v.signedAt) : '')}</td></tr></table></div>`;
     document.body.classList.add('printing', 'print-table');
@@ -373,11 +361,6 @@ const Verify = (() => {
     try {
       if (act === 'reload') { vs.data = null; redraw(); }
       if (act === 'back') { vs.open = ''; redraw(); }
-      if (act === 'approve-panel' || act === 'return-panel') {
-        const note = $(`[data-note="${a.dataset.id}"]`)?.value.trim() || '';
-        await call('decidePanel', { id: a.dataset.id, decision: act === 'approve-panel' ? 'approved' : 'returned', note }, act === 'approve-panel' ? 'Panel approved' : 'Panel returned');
-        vs.data = null; redraw();
-      }
       if (act === 'mark-ok' || act === 'mark-no') {
         const ok = act === 'mark-ok', comment = ok ? '' : prompt('Why do you not agree with the trainer? (saved for each student ticked)');
         if (!ok && !String(comment || '').trim()) return true;
@@ -456,15 +439,14 @@ const Verify = (() => {
         vs.data = null; redraw();
       } else if (form.matches('.assign-form')) {
         const fd = new FormData(form), [classCode, unitCode] = String(fd.get('cu')).split('|');
-        const r = await call('assignVerification', { panelId: form.dataset.panel, classCode, unitCode, verifier: fd.get('verifier'), verifier2: fd.get('verifier2') });
-        toast(`Given to ${both(r.verification)}: ${r.verification.size} of ${r.verification.population} students to check`, 'ok');
+        const r = await call('assignVerification', { panelId: form.dataset.panel, classCode, unitCode, verifier: fd.get('verifier') });
+        toast(`Given to ${staffName(r.verification.verifier)}: ${r.verification.size} of ${r.verification.population} students to check`, 'ok');
         upsertVer(r.verification); redraw();
       } else if (form.matches('.ver-submit')) {
         const fd = new FormData(form), v = vs.data.verifications.find((x) => x.id === vs.open);
         const r = await call('submitVerification', { id: v.id, result: fd.get('result'), actions: fd.get('actions') });
         if (r.extended) toast(r.extended === 'doubled' ? `Too many disagreements: the sample is doubled to ${r.verification.size}. Check the new students.` : `Still too many disagreements: every student (${r.verification.size}) is now in the sample.`, 'err');
-        else if (r.waiting) toast('Result submitted. The report is ready when the second verifier submits theirs.', 'ok');
-        else toast('Both results are in. The chair or the HOD signs the report.', 'ok');
+        else toast('Result submitted. The chair or the HOD signs the report.', 'ok');
         upsertVer(r.verification); vs.data = null; redraw();
       } else if (form.matches('.ver-respond')) {
         const r = await call('respondVerification', { id: vs.open, response: new FormData(form).get('response') }, 'Response sent'); upsertVer(r.verification); redraw();
@@ -482,9 +464,9 @@ const Verify = (() => {
       return true;
     }
     if (t.matches('.assign-form [name=cu]')) {
-      // Nobody verifies a unit they teach: leave its trainers out of both lists.
+      // Nobody verifies a unit they teach: leave its trainers out of the list.
       const unit = t.value.split('|')[1] || '', own = new Set(vs.data.loading.filter((u) => u.unitCode === unit).map((u) => lower(u.trainerCode)));
-      for (const n of ['verifier', 'verifier2']) for (const o of t.form.querySelector(`[name=${n}]`).options) o.hidden = !!o.value && own.has(lower(o.value));
+      for (const o of t.form.querySelector('[name=verifier]').options) o.hidden = !!o.value && own.has(lower(o.value));
       return true;
     }
     if (t.matches('[data-vpick]')) { if (t.checked) vPicked.add(t.dataset.vpick); else vPicked.delete(t.dataset.vpick); redrawTable(t.closest('[data-vt]').dataset.vt); return true; }
