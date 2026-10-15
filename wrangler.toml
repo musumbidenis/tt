@@ -19,3 +19,5 @@ database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
 # Only college Google accounts may connect (staff) or own evidence files (students). Not a secret.
 [vars]
 GOOGLE_DOMAIN = "rvnp.ac.ke"
+# The app's Google sign-in ID (not a secret; the same as googleClientId in config.js). The secret GOOGLE_CLIENT_SECRET is set in Cloudflare.
+GOOGLE_CLIENT_ID = "945611933983-grt6lrqgnovsbe52rec7bd9tdmt8j1rp.apps.googleusercontent.com"

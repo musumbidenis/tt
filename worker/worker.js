@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.16.0';
-const SCHEMA_VERSION = '19';
+export const VERSION = '7.17.0';
+const SCHEMA_VERSION = '20';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -102,7 +102,9 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   'ALTER TABLE verifications ADD COLUMN v1_at TEXT', 'ALTER TABLE verifications ADD COLUMN v2_result TEXT', 'ALTER TABLE verifications ADD COLUMN v2_actions TEXT',
   'ALTER TABLE verifications ADD COLUMN v2_at TEXT', 'ALTER TABLE verifications ADD COLUMN ext_sample TEXT',
   // Panels are numbered; the name follows ("Term 3 2026 - Panel 1").
-  'ALTER TABLE panels ADD COLUMN number INTEGER'];
+  'ALTER TABLE panels ADD COLUMN number INTEGER',
+  // Google connected once: the long-lived permission Google gives (kept encrypted), so nobody signs in again.
+  'ALTER TABLE trainees ADD COLUMN g_refresh TEXT', 'ALTER TABLE staff ADD COLUMN g_refresh TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -269,7 +271,7 @@ export default {
         if (p.action === 'check') return reply(await checkApproval(env, p.ref));
         if (p.action === 'classlist') return reply(await classList(env, p.class));
         if (p.action === 'units') return reply(await classUnits(env, p.class));
-        if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso(), push: !!env.VAPID_PRIVATE_KEY });
+        if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso(), push: !!env.VAPID_PRIVATE_KEY, googleConnect: googleReady(env) });
         return reply({ ok: false, error: 'Unknown action' });
       }
       const b = JSON.parse((await request.text()) || '{}');
@@ -339,6 +341,8 @@ const ACTIONS = {
   poeView: { fn: (env, b, me) => poeView(env, b, me) },
   poeChanged: { fn: (env, b, me) => poeChanged(env, b, me) },
   setGoogle: { fn: (env, b, me) => setGoogle(env, b, me) },
+  googleConnect: { fn: (env, b, me) => googleConnect(env, 'staff', me.code, b.code) },
+  googleToken: { fn: (env, b, me) => googleToken(env, 'staff', me.code) },
   setArchiveEmail: { role: ['MIS'], fn: (env, b, me) => setArchiveEmail(env, b, me) },
   backupStatus: { role: ['MIS', 'HOD'], fn: (env) => backupStatus(env) },
   setBackup: { role: ['MIS', 'HOD'], fn: (env, b, me) => setBackup(env, b, me) },
@@ -1943,6 +1947,58 @@ async function google(env, path, token) {
   if (!res.ok) fail(`Google said no (${res.status}). Try again.`);
   return res.json();
 }
+/* ---------- Google connected once ----------
+ * The app sends the one-time code from Google's sign-in window; the server swaps it for a refresh token (kept encrypted with
+ * the server's own key) and from then on hands the device a fresh access token (an hour long) whenever it needs one. Needs
+ * GOOGLE_CLIENT_ID (a plain variable) and the secret GOOGLE_CLIENT_SECRET on the Worker; without them the app keeps the
+ * old sign-in window. */
+const googleReady = (env) => !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+async function sealKey(env) { return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', enc.encode('g_refresh|' + (await authSecret(env)))), 'AES-GCM', false, ['encrypt', 'decrypt']); }
+async function seal(env, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const out = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await sealKey(env), enc.encode(text)));
+  return bytesB64u(iv) + '.' + bytesB64u(out);
+}
+async function unseal(env, s) {
+  const [iv, data] = String(s || '').split('.');
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64uBytes(iv) }, await sealKey(env), b64uBytes(data)));
+}
+async function googleOauth(env, params) {
+  const res = await fetch((env.GOOGLE_OAUTH_TEST || 'https://oauth2.googleapis.com') + '/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, ...params }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Fail(out.error_description || out.error || 'Google did not accept that'), { grant: out.error });
+  return out;
+}
+/** Swaps the code for tokens, checks the account is a college one, keeps the refresh token. table: 'trainees' | 'staff'. */
+async function googleConnect(env, table, key, code) {
+  if (!googleReady(env)) fail('Connecting Google once is not set up on the server yet');
+  if (!code) fail('Google did not send a code');
+  const t = await googleOauth(env, { code: String(code), grant_type: 'authorization_code', redirect_uri: 'postmessage' });
+  const u = await google(env, '/oauth2/v3/userinfo', t.access_token);
+  const email = lower(u.email || '');
+  if (!okDomain(env, email)) fail(`Use your college Google account (@${env.GOOGLE_DOMAIN}), not ${email}.`);
+  const col = table === 'staff' ? 'code' : 'adm_no';
+  // Google gives the refresh token only the first time someone allows the app; a reconnect without one keeps the old one.
+  if (t.refresh_token) await run(env, `UPDATE ${table} SET g_refresh=?, email=?, updated_at=? WHERE ${col}=?`, await seal(env, t.refresh_token), email, nowIso(), key);
+  else await run(env, `UPDATE ${table} SET email=?, updated_at=? WHERE ${col}=?`, email, nowIso(), key);
+  if (table === 'staff') await markChanged(env);
+  return { ok: true, accessToken: t.access_token, expiresIn: Number(t.expires_in) || 3600, email, kept: !!t.refresh_token };
+}
+/** A fresh access token from the kept refresh token; needConnect when there is none or Google no longer accepts it. */
+async function googleToken(env, table, key) {
+  if (!googleReady(env)) return { ok: false, needConnect: true, error: 'Connecting Google once is not set up on the server yet' };
+  const col = table === 'staff' ? 'code' : 'adm_no';
+  const row = await one(env, `SELECT g_refresh, email FROM ${table} WHERE ${col}=?`, key);
+  if (!row?.g_refresh) return { ok: false, needConnect: true, error: 'Connect Google first' };
+  try {
+    const t = await googleOauth(env, { refresh_token: await unseal(env, row.g_refresh), grant_type: 'refresh_token' });
+    return { ok: true, accessToken: t.access_token, expiresIn: Number(t.expires_in) || 3600, email: row.email || '' };
+  } catch (e) {
+    if (e.grant === 'invalid_grant') { await run(env, `UPDATE ${table} SET g_refresh=NULL WHERE ${col}=?`, key); return { ok: false, needConnect: true, error: 'Google asks you to connect again' }; }
+    throw e;
+  }
+}
 const okDomain = (env, email) => !env.GOOGLE_DOMAIN || lower(String(email || '').split('@')[1]) === lower(env.GOOGLE_DOMAIN);
 /** Signed with the database's own key (no Drive bridge needed): what the phone may save, and as which version. */
 async function signPlan(env, payload) { const body = b64u(JSON.stringify(payload)); return body + '.' + (await hmacHex('plan|' + body, await authSecret(env))); }
@@ -1969,6 +2025,8 @@ async function shareTargets(env, classCode, unitCode, ctx = {}) {
 }
 const sharedOf = (r) => { try { return JSON.parse(r.shared || '[]') || []; } catch { return []; } };
 const STUDENT_ACTIONS = {
+  async googleConnect(env, b) { const t = await studentOf(env, b); return googleConnect(env, 'trainees', t.adm_no, b.code); },
+  async googleToken(env, b) { const t = await studentOf(env, b); return googleToken(env, 'trainees', t.adm_no); },
   /** Every lesson of this student's class with their mark, so the student keeps a copy of their own attendance. */
   async myAttendance(env, b) {
     const t = await studentOf(env, b);
@@ -2202,7 +2260,7 @@ async function poeChanged(env, b, me) {
 }
 /** Connect Google in the staff app: the address students' files are shared with. Checked with Google, never typed in. */
 async function setGoogle(env, b, me) {
-  if (b.clear) { await run(env, 'UPDATE staff SET email=NULL, updated_at=? WHERE code=?', nowIso(), me.code); return { ok: true, email: '' }; }
+  if (b.clear) { await run(env, 'UPDATE staff SET email=NULL, g_refresh=NULL, updated_at=? WHERE code=?', nowIso(), me.code); return { ok: true, email: '' }; }
   const u = await google(env, '/oauth2/v3/userinfo', b.accessToken);
   const email = lower(u.email || '');
   if (!email || u.email_verified === false) fail('Google did not give an email address');

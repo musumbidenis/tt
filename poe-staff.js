@@ -272,7 +272,10 @@ const PoeStaff = (() => {
   async function driveFile(id) {
     const hit = await cachedFile(id);
     if (!navigator.onLine) { if (hit) return hit; throw new Error('Connect to the internet to open this document.'); }
-    if (!Google.token('staff')) { if (hit) return hit; throw needGoogle(); }
+    try { await Google.ensure('staff'); } catch (err) {
+      if (err instanceof Google.NeedSignIn) { if (hit) return hit; throw needGoogle(); }
+      if (hit) return hit; throw err;
+    }
     const v = await api('poeView', { id });
     if (!v.ok) throw new Error(v.error);
     let m;

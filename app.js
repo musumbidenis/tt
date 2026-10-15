@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.44.0';
+const APP_VERSION = '4.45.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -2238,10 +2238,16 @@ function renderIdentity() {
 }
 /* ---------- the trainer's college Google account ----------
  * Students share their POE documents (in their own Drive) with this address, and the app opens them with it. */
+/** How the staff app reaches the server for Google (connect once, fresh tokens afterwards), and whether the server does that. */
+function setupGoogleServer() {
+  if (typeof Google === 'undefined' || !Google.on()) return;
+  Google.setServer('staff', { connect: (code) => api('googleConnect', { code }), token: () => api('googleToken', {}), supported: () => Google.supports() });
+  Google.probe(serverUrl()).then(() => renderGoogleCard());
+}
 async function connectGoogle(choose = false) {
   if (!navigator.onLine) { toast('Connecting Google needs internet', 'err'); return false; }
   try {
-    const g = await Google.signIn('staff', { choose });
+    const g = await Google.connect('staff', { choose });
     const res = await api('setGoogle', { accessToken: g.token });
     if (!res.ok) throw new Error(res.error);
     await saveAuth({ ...state.auth, staff: { ...state.auth.staff, email: res.email } });
@@ -2456,6 +2462,7 @@ async function init() {
   await loadSettings();
   await loadAuth();
   fillSettingsForms();
+  setupGoogleServer();
   updateNet();
   wire();
   await loadRoster();
