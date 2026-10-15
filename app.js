@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.42.0';
+const APP_VERSION = '4.43.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1143,7 +1143,7 @@ async function reportSource(classCode, unitCode) {
       if (res.ok) { server = res; await updateLocal(key, (d) => { d.data = res; d.at = nowISO(); }); }
     } catch { /* use the cached copy */ }
   }
-  if (!server) { const c = await getLocal(key); if (c.data) server = { ...c.data, cached: c.at }; }
+  if (!server) { const c = await getLocal(key), at = await resetAt(); if (c.data && !(at && String(c.at || '') < at)) server = { ...c.data, cached: c.at }; }
   const byId = new Map(local.map((l) => [l.id, l]));
   for (const l of server?.lessons || []) {
     const mine = byId.get(l.id);
@@ -1770,6 +1770,20 @@ function scheduleAutoSync() {
   autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false }); }, 5000);
 }
 
+/** Starting afresh (the MIS Officer cleared the registers and marks on the server): this device drops its own copies made
+ *  before that moment, once. Registers and marks made since are kept. */
+async function applyReset(at) {
+  if (!at) return;
+  const log = await getLocal('syncLog');
+  if (log.resetAt === at) return;
+  const old = (await byPrefix('session:')).filter((s) => String(s.updatedAt || s.createdAt || '') < at);
+  if (old.length) await db.bulkDocs(old.map((s) => ({ ...s, _deleted: true })));
+  await updateLocal('syncLog', (d) => { d.resetAt = at; });
+  await updateLocal('sheetsSync', (d) => { d.map = {}; }, { map: {} });
+  if (old.length) toast(`The registers were cleared to start afresh - ${old.length} old register${old.length === 1 ? '' : 's'} removed from this device`, 'ok');
+}
+const resetAt = async () => (await getLocal('syncLog')).resetAt || '';
+
 async function pullRoster({ silent = false } = {}) {
   if (!state.auth || state.auth.mustChange) return;
   const btn = $('#pullRoster'); btn.disabled = true;
@@ -1788,6 +1802,7 @@ async function pullRoster({ silent = false } = {}) {
     }
     if (!(res.trainees || []).length && state.trainees.length) throw new Error('the server has no students yet — kept the class lists already on this device');
     const r = await replaceRoster(res);
+    await applyReset(res.resetAt);
     await updateLocal('meta', (d) => {
       Object.assign(d, { term: res.term || null, weeks: res.weeks || [], pending: res.pending || [], rejected: res.rejected || [], aliases: res.aliases || [], staff: res.staff || {},
         terms: res.terms || [], unlocks: res.unlocks || [], archived: res.archived || [], streamMates: res.streamMates || [] });

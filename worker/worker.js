@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.14.0';
+export const VERSION = '7.15.0';
 const SCHEMA_VERSION = '19';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -677,6 +677,8 @@ async function readRoster(env, b, me, pre) {
     rejected: reqs.filter((r) => r.status === 'rejected').map((r) => ({ admNo: r.adm_no, classCode: r.class_code })),
     aliases: reqs.filter((r) => r.status === 'merged' && r.merged_into).map((r) => ({ from: r.adm_no, to: r.merged_into, classCode: r.class_code })),
     streamMates, staff,
+    // Set when the MIS Officer starts afresh: phones drop their registers and marks from before this moment.
+    resetAt: (await getMeta(env, 'data_reset')) || '',
   };
 }
 

@@ -31,6 +31,15 @@ const Marks = (() => {
   async function load(cls, unit) {
     let d = await getLocal(docId(cls, unit), { rows: {}, dirty: {} });
     d.rows = d.rows || {}; d.dirty = d.dirty || {};
+    // Started afresh on the server: marks from before that moment go (once); anything typed since stays.
+    const at = await resetAt();
+    if (at && (d.resetAt || '') < at) {
+      d = await updateLocal(docId(cls, unit), (x) => {
+        x.rows = Object.fromEntries(Object.entries(x.rows || {}).filter(([, r]) => String(r.updatedAt || '') > at));
+        x.dirty = Object.fromEntries(Object.entries(x.dirty || {}).filter(([k]) => x.rows[k]));
+        x.sheet = null; x.resetAt = at;
+      }, { rows: {}, dirty: {} });
+    }
     // Marks typed on this device before marksheets spanned terms (and maybe not sent yet) move across once.
     if (!d._rev) {
       const old = await getLocal(oldDocId(cls, unit), { rows: {}, dirty: {} });
