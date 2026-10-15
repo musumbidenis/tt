@@ -1214,3 +1214,5 @@ details.vcard > :last-child { margin-bottom: 1rem; }
 #poe .vcheck { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
 #poe .ver-ph { font-size: .9rem; color: var(--ink-2); margin: .9rem 0 .25rem; }
 #poe .su-go { align-items: center; }
+.connect-card { display: flex; flex-wrap: wrap; gap: .5rem .9rem; align-items: center; justify-content: space-between; padding: .7rem .85rem; margin: .5rem 0; border: 1px solid color-mix(in srgb, var(--p) 40%, var(--line)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--p) 7%, var(--surface)); }
+.connect-card > div { display: grid; gap: .15rem; flex: 1 1 16rem; }

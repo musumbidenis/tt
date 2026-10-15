@@ -18,6 +18,10 @@ const PoeStaff = (() => {
   const canDecide = () => hasRole('TRAINER') || hasRole('HOD');
   const byStudentAllowed = () => hasRole('MIS') || hasRole('HOD') || hasRole('IAO');
 
+  /** Until this person has connected Google (once), a card at the top of the tab: students' documents open with it. */
+  const connectCard = () => (typeof Google !== 'undefined' && Google.on() && !Google.connected('staff')
+    ? `<div class="connect-card"><div><b>Connect your college Google account</b><span class="small">Students' documents are in their own Google Drive and shared with you. Connect once and they open straight away - you will not be asked again.</span></div>
+      <button type="button" class="btn primary small" data-act="gconnect">Connect Google</button></div>` : '');
   async function load() {
     const res = await api('poeList', {});
     if (!res.ok) throw new Error(res.error || 'Could not load the evidence');
@@ -70,6 +74,7 @@ const PoeStaff = (() => {
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+        ${connectCard()}
         ${modeToggle()}
         <p class="muted small">${canDecide() ? 'Students send CAT and practical evidence from the student app. Open one to see it, then approve it or return it with a note.'
           : 'Students send CAT and practical evidence from the student app; their trainers approve it or return it with a note.'}</p>
@@ -185,6 +190,7 @@ const PoeStaff = (() => {
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+        ${connectCard()}
         ${modeToggle()}
         <div class="chips poe-chips" role="group" aria-label="Show">${chips}</div>
         <div class="poe-filters">
@@ -483,7 +489,7 @@ const PoeStaff = (() => {
       if (a?.dataset.act === 'batch-approve') { batchApprove(a); return; }
       if (a?.dataset.act === 'batch-return') { batchReturn(a); return; }
       if (a?.dataset.act === 'slip') printSlip(ps.list.find((x) => x.id === ps.open));
-      if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (ok && id) { ps.files.delete(id); openViewer(id); } }); }
+      if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (!ok) return; if (id && $('#poeDialog').open) { ps.files.delete(id); openViewer(id); } else draw(); }); }
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; Verify.reset(); render(); }
       if (a?.dataset.act === 'unit-xlsx' || a?.dataset.act === 'unit-pdf') {
         const { head, rows } = unitSheet(shownUnit());
