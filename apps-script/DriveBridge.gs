@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.7.1';
+var BRIDGE_VERSION = '1.8.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -190,8 +190,14 @@ function bulkSave_(b) {
 function viewFile_(ticket) {
   try {
     var t = readTicket_(ticket, 'view');
-    var f = DriveApp.getFileById(t.fileId), blob = f.getBlob();
-    return { ok: true, name: f.getName(), mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
+    var f = DriveApp.getFileById(t.fileId), blob = f.getBlob(), md5 = '';
+    // The file's fingerprint, so the app can tell a file changed in the student's Drive after it was sent (1.8.0).
+    try {
+      var m = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + t.fileId + '?fields=md5Checksum&supportsAllDrives=true',
+        { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+      md5 = JSON.parse(m.getContentText()).md5Checksum || '';
+    } catch (e) { /* no fingerprint: the preview still opens */ }
+    return { ok: true, name: f.getName(), mime: blob.getContentType(), md5: md5, data: Utilities.base64Encode(blob.getBytes()) };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }

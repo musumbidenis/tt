@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.18.0';
+export const VERSION = '7.19.0';
 const SCHEMA_VERSION = '20';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -2239,10 +2239,13 @@ async function poeView(env, b, me) {
   // In the student's Drive: the trainer's own Google sign-in opens it; the fingerprint shows if it changed since.
   // A panel member or an Assessment Officer it is not shared with opens it through the bridge (the backup account can read it).
   const sharedWithMe = me.roles.includes('HOD') || me.roles.includes('MIS') || (await myUnitPairs(env, me)).pairs.has(r.class_code + '|' + r.unit_code) || (await everTaught(env, me)).has(r.class_code + '|' + r.unit_code);
-  if (r.source === 'drive' && sharedWithMe) return { ok: true, source: 'drive', fileId: r.file_id, fileName: r.file_name, md5: r.md5 || '', ownerEmail: r.owner_email || '' };
+  // Every file is shared with the college bridge account too, so staff never need to connect Google: the bridge opens
+  // it for them. Staff who have connected may open it directly (a little faster).
   const url = await getMeta(env, 'drive_url');
+  const bridge = url ? { driveUrl: url, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) } : {};
+  if (r.source === 'drive') return { ok: true, source: 'drive', fileId: r.file_id, fileName: r.file_name, md5: r.md5 || '', ownerEmail: r.owner_email || '', direct: sharedWithMe, ...bridge };
   if (!url) fail('The Google Drive link is not set up yet');
-  return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
+  return { ok: true, fileName: r.file_name, ...bridge };
 }
 /** Reports in bulk: a ticket for the bridge to save this run's files in Drive (Reports / <run> / ...), good for three hours. */
 async function bulkTicket(env, b, me) {
