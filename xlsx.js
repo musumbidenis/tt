@@ -283,7 +283,7 @@ const Xlsx = (() => {
     setCell(doc, byNum['11'], 'C11', d.unitCode || '');
     setCell(doc, byNum['11'], 'G11', d.unitTitle || '');
     setCell(doc, byNum['12'], 'C12', d.series || '');
-    const avg = (xs) => (xs.filter((x) => x !== '' && x != null).length === 3 ? xs.reduce((n, x) => n + Number(x), 0) / 3 : 'C.R.N.M');
+    const avg = (xs) => (xs.filter((x) => x !== '' && x != null).length === 3 ? Math.round(xs.reduce((n, x) => n + Number(x), 0) / 3) : 'C.R.N.M');
     const list = d.students.length ? d.students : [{ admNo: '', name: '', cat: [], prac: [] }];
     list.forEach((s, i) => {
       const r = 16 + i, row = renumber(proto.cloneNode(true), r);
@@ -296,8 +296,8 @@ const Xlsx = (() => {
         ['I', 'J', 'K'].forEach((c, k) => setCell(doc, row, c + r, s.prac?.[k] ?? ''));
       }
       if (s.admNo) {
-        setCell(doc, row, 'H' + r, { f: `IF(COUNT(E${r}:G${r})=3,SUM(E${r}:G${r})/3,"C.R.N.M")`, v: avg(s.cat || []) });
-        setCell(doc, row, 'L' + r, { f: `IF(COUNT(I${r}:K${r})=3,SUM(I${r}:K${r})/3,"C.R.N.M")`, v: avg(s.prac || []) });
+        setCell(doc, row, 'H' + r, { f: `IF(COUNT(E${r}:G${r})=3,ROUND(SUM(E${r}:G${r})/3,0),"C.R.N.M")`, v: avg(s.cat || []) });
+        setCell(doc, row, 'L' + r, { f: `IF(COUNT(I${r}:K${r})=3,ROUND(SUM(I${r}:K${r})/3,0),"C.R.N.M")`, v: avg(s.prac || []) });
       }
       sheetData.appendChild(row);
     });

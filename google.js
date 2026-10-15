@@ -1,7 +1,7 @@
 /* Google sign-in and Drive, for both apps (needs googleClientId in config.js; without it nothing here is used).
  * Students: the app may only see the files it makes in their Drive (drive.file).
  * Staff: the app may also open files students shared with them (drive.readonly), and make their own files.
- * The sign-in lasts about an hour and is kept for this browser tab only; it is never sent anywhere except to
+ * The sign-in lasts about an hour and is kept on this device for that hour (closing the app does not lose it); it is never sent anywhere except to
  * Google and, once when a file is recorded or an account connected, to the college's own server to check it. */
 'use strict';
 
@@ -14,7 +14,7 @@ const Google = (() => {
   };
   const KEY = 'rvnp_google', MAIL = 'rvnp_google_email';
   let tok = null;
-  try { tok = JSON.parse(sessionStorage.getItem(KEY) || 'null'); } catch { tok = null; }
+  try { tok = JSON.parse(localStorage.getItem(KEY) || sessionStorage.getItem(KEY) || 'null'); } catch { tok = null; }
   const remembered = () => { try { return localStorage.getItem(MAIL) || ''; } catch { return ''; } };
 
   /* Google's sign-in script, loaded only when needed (it is not kept for offline use). Loading it early, when a screen
@@ -57,13 +57,13 @@ const Google = (() => {
     const mail = String(who.email || '').toLowerCase();
     if (cfg().googleDomain && !mail.endsWith('@' + cfg().googleDomain)) throw new Error(`Use your college Google account (@${cfg().googleDomain}), not ${mail || 'that one'}.`);
     tok = { kind, token: got.access_token, exp: Date.now() + (Number(got.expires_in) || 3600) * 1000, email: mail };
-    try { sessionStorage.setItem(KEY, JSON.stringify(tok)); localStorage.setItem(MAIL, mail); } catch { /* private window: kept in memory */ }
+    try { localStorage.setItem(KEY, JSON.stringify(tok)); localStorage.setItem(MAIL, mail); } catch { /* private window: kept in memory */ }
     return tok;
   }
   function signOut() {
     if (tok && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(tok.token, () => {});
     tok = null;
-    try { sessionStorage.removeItem(KEY); localStorage.removeItem(MAIL); } catch { /* nothing kept */ }
+    try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); localStorage.removeItem(MAIL); } catch { /* nothing kept */ }
   }
 
   class NeedSignIn extends Error {}
@@ -71,7 +71,7 @@ const Google = (() => {
     const t = token(kind);
     if (!t) throw new NeedSignIn('Sign in to Google first');
     const res = await fetch(url.startsWith('http') ? url : 'https://www.googleapis.com' + url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + t } });
-    if (res.status === 401) { tok = null; try { sessionStorage.removeItem(KEY); } catch { /* */ } throw new NeedSignIn('Your Google sign-in has expired'); }
+    if (res.status === 401) { tok = null; try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); } catch { /* */ } throw new NeedSignIn('Your Google sign-in has expired'); }
     return res;
   }
   async function json(kind, url, opts) {

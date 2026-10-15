@@ -320,8 +320,7 @@ const POE = (() => {
   /* ---------- saving: one PDF per item, kept on the device ---------- */
   async function saveAll() {
     const btn = $('#poeSave');
-    // Signing in to Google has to start from the tap itself (a window opened later is blocked).
-    if (viaGoogle() && navigator.onLine && !Google.token('student')) await googleSignIn();
+    // No sign-in needed to send: signed in to Google, the file goes to the student's own Drive; if not, to the college Drive.
     btn.disabled = true; btn.textContent = 'Making the PDF…';
     try {
       for (const it of [...ps.picked]) {
@@ -346,7 +345,7 @@ const POE = (() => {
         await sdb.remove(d._id, d._rev);
         ps.picked.delete(it);
       }
-      toast(viaGoogle() ? 'Saved on this device. It goes to your Google Drive when you have internet.' : 'Saved on this device. It is sent to the college Drive when you have internet.', 'ok');
+      toast(viaGoogle() && Google.token('student') ? 'Saved on this device. It goes to your Google Drive when you have internet.' : 'Saved on this device. It is sent to the college Drive when you have internet.', 'ok');
       await render();
       sync();
     } catch (e) { toast('Could not save: ' + e.message, 'err'); }
@@ -366,14 +365,18 @@ const POE = (() => {
   async function sync() {
     const p = st.profile;
     if (ps.syncing || !p || !navigator.onLine || !st.sheetsUrl) return;
-    const google = viaGoogle();
+    // Signed in to Google (the sign-in lasts an hour): the student's own Drive. Not signed in: the college Drive, so nothing
+    // waits for a sign-in.
+    const google = viaGoogle() && !!Google.token('student');
     ps.syncing = true;
     try {
       const waiting = (await allDocs()).filter((d) => d.status === 'saved' || d.status === 'uploading' || d.status === 'error');
       for (const d of waiting) {
         try {
-          if (google) {
-            if (!Google.token('student')) throw new Google.NeedSignIn('Sign in to Google to send it');
+          // A file already saved in the student's Drive but not yet recorded needs the sign-in to finish; anything else
+          // that was planned for their Drive goes to the college Drive instead.
+          if (google || d.drive?.fileId) {
+            if (!Google.token('student')) throw new Google.NeedSignIn('Sign in to Google to finish sending it');
             d.status = 'uploading'; d.needGoogle = false; await saveDraft(d); await render();
             const r = await sendViaDrive(d, p);
             Object.assign(d, { status: 'sent', serverId: r.evidence.id, fileName: r.fileName, version: r.version, sentAt: nowISO(), error: '' });
@@ -381,6 +384,7 @@ const POE = (() => {
             await saveDraft(d);
             continue;
           }
+          delete d.plan; delete d.drive;
           d.status = 'uploading'; await saveDraft(d); await render();
           // An upload whose confirmation was lost is confirmed again, not uploaded twice.
           if (!d.upload) {
@@ -409,7 +413,7 @@ const POE = (() => {
           await saveDraft(d);
         } catch (e) {
           d.status = 'error';
-          d.needGoogle = google && e instanceof Google.NeedSignIn;
+          d.needGoogle = e instanceof Google.NeedSignIn;
           d.error = !navigator.onLine ? 'Waiting for internet'
             : d.needGoogle ? 'Sign in to Google to send it. Your file is safe on this device.'
             : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this device.'

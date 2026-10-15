@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.15.0';
+export const VERSION = '7.16.0';
 const SCHEMA_VERSION = '19';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -2258,7 +2258,8 @@ async function poeReceive(env, b, me) {
 }
 /* ---------- marks (continuous assessment): entered in the app, offline too; the Drive sheet mirrors them ---------- */
 const MARK_COLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
-const markOf = (v) => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) fail('Marks are percentages from 0 to 100'); return Math.round(n * 10) / 10; };
+// Marks are whole numbers from 0 to 100.
+const markOf = (v) => { if (v === '' || v === null || v === undefined) return null; const n = Number(v); if (!Number.isInteger(n) || n < 0 || n > 100) fail('Marks are whole numbers from 0 to 100'); return n; };
 const marksOut = (r) => ({ admNo: r.adm_no, ...Object.fromEntries(MARK_COLS.map((c) => [c, r[c] ?? null])), updatedAt: r.updated_at, updatedBy: r.updated_by || '' });
 const metaOf = (r) => { try { return JSON.parse(r?.meta || '{}') || {}; } catch { return {}; } };
 /** The cells of a row entered in a term that has ended, and not unlocked for this class and unit: they cannot change. */

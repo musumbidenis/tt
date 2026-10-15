@@ -17,15 +17,15 @@ const Marks = (() => {
   const oldDocId = (cls, unit) => `marks:${state.meta.term?.id || 'term'}:${cls}|${unit}`;   // before marks spanned terms
   // AVG only when all three marks are in; with some missing the marksheet says C.R.N.M.
   const has = (r, k) => r?.[k] !== null && r?.[k] !== undefined && r?.[k] !== '';
-  const avg = (r, keys) => (keys.every((k) => has(r, k)) ? keys.reduce((n, k) => n + Number(r[k]), 0) / 3 : null);
+  const avg = (r, keys) => (keys.every((k) => has(r, k)) ? Math.round(keys.reduce((n, k) => n + Number(r[k]), 0) / 3) : null);
   const avgText = (r, keys) => { const a = avg(r, keys); return a !== null ? String(Math.round(a)) : keys.some((k) => has(r, k)) ? 'C.R.N.M' : ''; };
   const show = (n) => (n === null || n === undefined ? '' : String(Math.round(n)));
   const canEdit = (unit) => (hasRole('HOD') || (hasRole('TRAINER') && isMyUnit(unit)));
   const parse = (v) => {
-    const t = String(v ?? '').trim().replace(',', '.');
+    const t = String(v ?? '').trim();
     if (t === '') return { ok: true, value: null };
-    const n = Number(t);
-    return Number.isFinite(n) && n >= 0 && n <= 100 ? { ok: true, value: Math.round(n * 10) / 10 } : { ok: false };
+    const n = /^\d{1,3}$/.test(t) ? Number(t) : NaN;   // whole numbers only: "7.5" and "7,5" are refused
+    return n >= 0 && n <= 100 ? { ok: true, value: n } : { ok: false };
   };
 
   async function load(cls, unit) {
@@ -158,7 +158,7 @@ const Marks = (() => {
         <span id="marksStatus" class="save-state"></span>
       </div>
       ${!roster.length ? '<div class="empty-state"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg><b>No trainees in this class yet</b><span>Once the class list is loaded, the marks sheet shows up here.</span></div>' : `
-      ${edits ? `<p class="muted small">Marks are percentages (0–100). Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.${edits < ms.sheets.length ? ' Only the streams you teach can be changed.' : ''}</p>`
+      ${edits ? `<p class="muted small">Marks are percentages - whole numbers from 0 to 100. Each one is saved on this device as you type and sent when there is internet. Enter moves down the column.${edits < ms.sheets.length ? ' Only the streams you teach can be changed.' : ''}</p>`
         : '<p class="muted small">Only the trainer of this unit can change these marks.</p>'}
       ${locked.size ? `<div class="report-lock"><span><b>Some marks are locked.</b> Marks entered in ${[...locked.values()].map(esc).join(', ')} cannot change now that the term has ended.</span>
         ${hasRole('HOD') || hasRole('MIS') ? [...locked].map(([id, name]) => `<button type="button" class="btn small" data-munlock="${esc(id)}">Unlock ${esc(name)} for 7 days</button>`).join('') : ''}</div>` : ''}
@@ -189,7 +189,7 @@ const Marks = (() => {
   function rowHtml(t, i, r, edit, dirty) {
     const cell = (c) => {
       const lock = (r.locked || []).includes(c);
-      return `<td><input class="mk${lock ? ' locked' : ''}" inputmode="decimal" autocomplete="off" data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" data-col="${c}" value="${r[c] ?? ''}"
+      return `<td><input class="mk${lock ? ' locked' : ''}" inputmode="numeric" autocomplete="off" data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" data-col="${c}" value="${r[c] ?? ''}"
       aria-label="${esc(t.name)} ${HEAD[c]}"${lock ? ` title="Entered in ${esc(r.terms?.[c] || 'an earlier term')}, which has ended: locked"` : ''} ${edit && !lock ? '' : 'readonly'}></td>`;
     };
     return `<tr data-adm="${esc(t.admNo)}" data-cls="${esc(t.cls)}" class="${t.gone ? 'gone' : ''}${dirty ? ' dirty' : ''}">

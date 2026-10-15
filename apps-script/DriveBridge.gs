@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.7.0';
+var BRIDGE_VERSION = '1.7.1';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -531,8 +531,8 @@ function writeMarksheet_(ss, u) {
     row[0] = i + 1; row[1] = s.regCode || ''; row[2] = s.admNo; row[3] = s.name;
     for (var k = 0; k < 3; k++) { row[4 + k] = s.cat[k] === null ? '' : s.cat[k]; row[8 + k] = s.prac[k] === null ? '' : s.prac[k]; }
     // AVG only with all three marks; otherwise C.R.N.M.
-    row[7] = '=IF(COUNT(E' + rn + ':G' + rn + ')=3,SUM(E' + rn + ':G' + rn + ')/3,"C.R.N.M")';
-    row[11] = '=IF(COUNT(I' + rn + ':K' + rn + ')=3,SUM(I' + rn + ':K' + rn + ')/3,"C.R.N.M")';
+    row[7] = '=IF(COUNT(E' + rn + ':G' + rn + ')=3,ROUND(SUM(E' + rn + ':G' + rn + ')/3,0),"C.R.N.M")';
+    row[11] = '=IF(COUNT(I' + rn + ':K' + rn + ')=3,ROUND(SUM(I' + rn + ':K' + rn + ')/3,0),"C.R.N.M")';
   });
   // Prepared by the unit's trainer, received by the Assessment Officer, approved by the HOD; initials sign (server 7.3.0).
   var f = m.footer || {};
