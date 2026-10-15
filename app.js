@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.45.0';
+const APP_VERSION = '4.46.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1686,20 +1686,35 @@ function showSyncStatus(text) {
   if (roster && state.activeTab === 'me') roster.textContent = text;
 }
 
-function toSheetSession(s) {
-  const c = countMarks(s);
-  return {
-    sessionId: s._id, date: s.date, classCode: s.classCode, className: s.className || '',
-    unitCode: s.unitCode, unitName: s.unitName || '', period: slotLabel(s.period, Number(s.slots) === 2 ? 2 : 1),
-    kind: kindOf(s), title: s.title || '', slots: Number(s.slots) === 2 ? 2 : 1,
-    trainerId: s.trainerId || '', trainerName: s.trainerName || '', deviceId: s.deviceId || '',
-    termId: s.termId || '', week: s.week || '', ...(s.combined?.length > 1 ? { combined: s.combined } : {}),
-    notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
-    edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E }, editLog: s.editLog || [], viaQr: s.viaQr || {},
-    marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
-      .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo], at: s.marksAt?.[admNo] || '' })),
-    ...(s.qr ? { qr: { secret: s.qr.secret, intervals: s.qr.intervals } } : {}),
-  };
+/** The one way registers and marks leave this device (staff-outbox.js; the service worker uses the same code when the app is closed). */
+async function outbox(opts = {}) {
+  if (!state.auth?.token) { showSignin(); throw new Error('Sign in first'); }
+  const used = state.auth.token;
+  let out;
+  for (let i = 0; i < 10; i++) {                       // the background worker may be sending right now: wait for it
+    out = await StaffOutbox.run({ db, deviceId: state.deviceId, ...opts });
+    if (!out.busy) break;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  if (out.authError) { if (state.auth?.token === used) showSignin(out.authMessage); throw new Error(out.authMessage || 'Sign in first'); }
+  if (out.busy) throw new Error('Another send is still running');
+  return out;
+}
+/** Asks the browser to send what is unsent even if the app gets closed (Chrome/Edge on Android; elsewhere it just works as before). */
+function wakeOutbox() {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.ready.then((r) => r.sync && r.sync.register('ark-staff-outbox')).catch(() => {});
+  } catch { /* not supported */ }
+}
+async function registerPeriodicOutbox() {
+  try {
+    if (!('serviceWorker' in navigator) || !navigator.permissions?.query) return;
+    const reg = await navigator.serviceWorker.ready;
+    if (!('periodicSync' in reg)) return;
+    const p = await navigator.permissions.query({ name: 'periodic-background-sync' });
+    if (p.state === 'granted') await reg.periodicSync.register('ark-staff-outbox', { minInterval: 12 * 3600 * 1000 });
+  } catch { /* not supported */ }
 }
 
 async function pushRequests() {
@@ -1716,24 +1731,19 @@ async function pushRequests() {
 async function syncSheets({ silent = false, pull = true, force = !silent } = {}) {
   if (!state.auth || state.auth.mustChange) { if (!silent) showSignin(); return; }
   if (state.syncing) return;
-  if (!navigator.onLine) { if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
+  if (!navigator.onLine) { wakeOutbox(); if (!silent) toast('No network — registers are safe on this device and will sync later'); return; }
   if (state.dirty) await saveCurrent();
   state.syncing = true;
   $('#syncBtn')?.classList.add('syncing');
   let sent = 0, locked = 0;
   const pushPending = async () => {
-    for (const batch of chunk((await pendingSessions()).filter((s) => force || !heldBack(s)), 20)) {
-      const res = await api('push', { deviceId: state.deviceId, sessions: batch.map(toSheetSession) });
-      if (!res.ok) throw new Error(res.error || 'The server rejected the upload');
-      await markSent((map) => { for (const s of batch) map[s._id] = s._rev; });
-      // The server combined this register with marks from another device: keep the combined copy here too.
-      for (const r of res.results || []) {
-        if (r.status === 'merged' && r.session) await takeServerCopy(r.session);
-        if (r.status === 'locked') locked++;
-      }
-      for (const s of batch) qrSentAt[s._id] = Date.now();
-      sent += batch.length;
-    }
+    const out = await outbox({ registers: true, marks: false, force, holdBack: heldBack,
+      onBatch: async (batch, res) => {
+        // The server combined this register with marks from another device: keep the combined copy here too.
+        for (const r of res.results || []) if (r.status === 'merged' && r.session) await takeServerCopy(r.session);
+        for (const s of batch) qrSentAt[s._id] = Date.now();
+      } }).catch((e) => { sent += e.partial?.registers || 0; wakeOutbox(); throw e; });
+    locked += out.locked; sent += out.registers;
   };
   try {
     // Registers this trainer made on another device come down first, so nothing here is sent over them.
@@ -1767,6 +1777,7 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
 let autoTimer;
 function scheduleAutoSync() {
   clearTimeout(autoTimer);
+  wakeOutbox();
   autoTimer = setTimeout(() => { if (navigator.onLine) syncSheets({ silent: true, pull: false }); }, 5000);
 }
 
@@ -2431,6 +2442,7 @@ function wire() {
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('Service worker not registered', e));
+  registerPeriodicOutbox();
   // When a new version of the app arrives, switch to it right away (unless something is unsaved or the QR is showing).
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {

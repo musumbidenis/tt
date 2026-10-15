@@ -1,6 +1,6 @@
 /* Student app — POE evidence: scan pages like a document scanner, keep the PDF on the device, and send it
  * when there is internet: to the student's own college Google Drive, shared with the trainer (google.js, when
- * config.js has a googleClientId), or else to the college Drive through the Drive bridge. Statuses (with your trainer, approved, returned) come back
+ * config.js has a googleClientId); the student connects Google first. Statuses (with your trainer, approved, returned) come back
  * when the app opens, when it comes back into view, after an upload, and when a notification arrives.
  * Uses student.js (st, sdb, api, toast, esc, $) and scanner.js. */
 'use strict';
@@ -79,48 +79,22 @@ const POE = (() => {
   const viaGoogle = () => typeof Google !== 'undefined' && Google.on();
   function renderGoogle() {
     const box = $('#poeGoogle'); if (!box) return;
-    box.hidden = !viaGoogle();
-    if (!viaGoogle()) return;
-    $('#poeIntro').textContent = 'Scan your marked CAT or practical like a document. It is saved on this device first, then in your own college Google Drive when you have internet, and shared with your trainer, who approves it.';
+    box.hidden = false;
+    $('#poeIntro').textContent = 'Scan your marked CAT or practical like a document. It is saved on this device first, then in your own Google Drive when you have internet, and shared with your trainer, who approves it.';
+    if (!viaGoogle()) { box.className = 'google-row'; box.innerHTML = '<span class="small">Google Drive is not set up for this app yet. Your documents are safe on this device. Ask your MIS Officer.</span>'; return; }
     const mail = Google.email(), live = !!Google.token('student');
-    if (Google.supports()) {
-      box.innerHTML = mail && Google.connected('student')
-        ? `<span class="small">Google Drive - connected as <b>${esc(mail)}</b></span><button type="button" class="linkish" data-gswitch>Change account</button>`
-        : `<span class="small">Connect your <b>college Google account</b> once, so your documents can be saved in your Drive and shared with your trainer. You will not be asked again.</span><button type="button" class="btn small" data-gsignin>Connect Google</button>`;
+    if (!Google.connected('student')) {
+      box.className = 'google-row card';
+      box.innerHTML = `<b>Connect your college Google account</b><span class="small">Your POE documents are saved in your own Google Drive and shared with your trainer. You do this once.</span><button type="button" class="btn primary" data-gsignin>Connect Google</button>`;
       return;
     }
-    box.innerHTML = mail
-      ? `<span class="small">Google Drive: <b>${esc(mail)}</b>${live ? '' : ' <span class="muted">(you sign in again when sending)</span>'}</span><button type="button" class="linkish" data-gswitch>Use another account</button>`
-      : `<span class="small">Sign in with your <b>college Google account</b> once, so your documents can be saved in your Drive and shared with your trainer.</span><button type="button" class="btn small" data-gsignin>Connect Google Drive</button>`;
+    box.className = 'google-row';
+    box.innerHTML = Google.supports()
+      ? `<span class="small">Google Drive - connected as <b>${esc(mail)}</b></span><button type="button" class="linkish" data-gswitch>Change account</button>`
+      : `<span class="small">Google Drive: <b>${esc(mail)}</b>${live ? '' : ' <span class="muted">(you sign in again when sending)</span>'}</span><button type="button" class="linkish" data-gswitch>Use another account</button>`;
   }
   async function googleSignIn(choose = false) {
     try { await Google.connect('student', { choose }); renderGoogle(); return true; } catch (e) { toast(e.message, 'err'); renderGoogle(); return false; }
-  }
-  /** Saves one document in the student's Drive, shares it, and records it. Each step is remembered on the device,
-   *  so a lost connection carries on where it stopped instead of saving the file twice. */
-  async function sendViaDrive(d, p) {
-    if (!d.plan) {
-      const blob = await attachment(d, 'doc.pdf');
-      const pl = await api('POST', null, { action: 'poeDrivePlan', deviceId: st.deviceId, admNo: p.admNo, unitCode: d.unitCode, item: d.item, bytes: blob.size, pages: d.pageCount });
-      if (!pl.ok) throw new Error(pl.error);
-      d.plan = { plan: pl.plan, fileName: pl.fileName, version: pl.version, folder: pl.folder, subfolder: pl.subfolder, description: pl.description, share: pl.share || [] };
-      await saveDraft(d);
-    }
-    if (!d.drive) {
-      const root = await Google.folder('student', d.plan.folder);
-      const sub = await Google.folder('student', d.plan.subfolder, root);
-      const up = await Google.upload('student', await attachment(d, 'doc.pdf'), { name: d.plan.fileName, parent: sub, description: d.plan.description });
-      d.drive = { fileId: up.id, shared: [] };
-      await saveDraft(d);
-    }
-    for (const email of d.plan.share) {
-      if (d.drive.shared.includes(email)) continue;
-      try { await Google.share('student', d.drive.fileId, email); d.drive.shared.push(email); } catch (e) { if (e instanceof Google.NeedSignIn) throw e; /* shared later */ }
-    }
-    await saveDraft(d);
-    const done = await api('POST', null, { action: 'poeDriveDone', deviceId: st.deviceId, admNo: p.admNo, plan: d.plan.plan, fileId: d.drive.fileId, accessToken: Google.token('student'), shared: d.drive.shared });
-    if (!done.ok) throw new Error(done.error);
-    return { evidence: done.evidence, fileName: d.plan.fileName, version: d.plan.version };
   }
   /** True when this student's own Drive can be used right now (connected, a fresh sign-in is fetched silently). */
   async function driveReady() {
@@ -179,7 +153,7 @@ const POE = (() => {
           <td><b>${esc(r.item)}</b>${r.version ? ` v${r.version}` : ''}<span class="sub">${esc(r.unit)}</span></td>
           <td class="small">${esc(shortDate(r.at))}</td>
           <td><span class="pill ${r.cls}">${esc(r.label)}</span>${r.note ? `<span class="sub">${r.local ? esc(r.note) : `<b>Comment(s):</b> ${esc(r.note)}`}</span>` : ''}
-            <span class="acts">${r.retry ? `<button type="button" class="linkish" data-retry>${r.needGoogle ? 'Sign in to Google and send' : 'Try again'}</button>` : ''}${r.redo ? `<button type="button" class="linkish" data-redo="${esc(r.redo)}">Scan again</button>` : ''}${r.copy ? `<button type="button" class="linkish" data-copy data-id="${esc(r.copy)}">Save a copy</button>` : ''}</span></td></tr>`).join('')}</tbody></table></div>${Tables.bar('poeMine', shown)}`;
+            <span class="acts">${r.retry ? `<button type="button" class="linkish" data-retry>${r.needGoogle ? 'Connect Google and send' : 'Try again'}</button>` : ''}${r.redo ? `<button type="button" class="linkish" data-redo="${esc(r.redo)}">Scan again</button>` : ''}${r.copy ? `<button type="button" class="linkish" data-copy data-id="${esc(r.copy)}">Save a copy</button>` : ''}</span></td></tr>`).join('')}</tbody></table></div>${Tables.bar('poeMine', shown)}`;
   }
 
   /* ---------- drafts: one per unit and item, kept on the device ---------- */
@@ -331,7 +305,6 @@ const POE = (() => {
   /* ---------- saving: one PDF per item, kept on the device ---------- */
   async function saveAll() {
     const btn = $('#poeSave');
-    // No sign-in needed to send: signed in to Google, the file goes to the student's own Drive; if not, to the college Drive.
     btn.disabled = true; btn.textContent = 'Making the PDF…';
     try {
       for (const it of [...ps.picked]) {
@@ -356,7 +329,8 @@ const POE = (() => {
         await sdb.remove(d._id, d._rev);
         ps.picked.delete(it);
       }
-      toast(viaGoogle() && Google.connected('student') ? 'Saved on this device. It goes to your Google Drive when you have internet.' : 'Saved on this device. It is sent to the college Drive when you have internet.', 'ok');
+      queueOutbox();
+      toast(viaGoogle() && Google.connected('student') ? 'Saved on this device. It goes to your Google Drive when you have internet.' : 'Saved on this device. It is sent once you connect Google.', 'ok');
       await render();
       sync();
     } catch (e) { toast('Could not save: ' + e.message, 'err'); }
@@ -371,68 +345,23 @@ const POE = (() => {
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
 
-  /* ---------- sending to the Drive (via the college's Drive bridge) ---------- */
-  const b64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+  /* ---------- sending ----------
+   * The sending itself (always the student's own Google Drive) is student-outbox.js, the same
+   * code the phone runs when the app is closed. This only draws the screen around it and fetches the statuses. */
+  /** The student's Google sign-in for the Outbox: '' when they have not connected Google. */
+  async function googleToken(fresh) {
+    if (fresh) Google.drop();
+    try { return await Google.ensure('student'); } catch (e) { if (e instanceof Google.NeedSignIn) return ''; throw e; }
+  }
   async function sync() {
     const p = st.profile;
     if (ps.syncing || !p || !navigator.onLine || !st.sheetsUrl) return;
-    // Signed in to Google (the sign-in lasts an hour): the student's own Drive. Not signed in: the college Drive, so nothing
-    // waits for a sign-in.
+    // Documents go only to the student's own Drive: without Google connected they wait on the phone.
     ps.syncing = true;
     try {
-      const google = await driveReady();
-      const waiting = (await allDocs()).filter((d) => d.status === 'saved' || d.status === 'uploading' || d.status === 'error');
-      for (const d of waiting) {
-        try {
-          // A file already saved in the student's Drive but not yet recorded needs the sign-in to finish; anything else
-          // that was planned for their Drive goes to the college Drive instead.
-          if (google || d.drive?.fileId) {
-            await Google.ensure('student');   // throws NeedSignIn when the student has not connected
-            d.status = 'uploading'; d.needGoogle = false; await saveDraft(d); await render();
-            const r = await sendViaDrive(d, p);
-            Object.assign(d, { status: 'sent', serverId: r.evidence.id, fileName: r.fileName, version: r.version, sentAt: nowISO(), error: '' });
-            delete d.plan; delete d.drive;
-            await saveDraft(d);
-            continue;
-          }
-          delete d.plan; delete d.drive;
-          d.status = 'uploading'; await saveDraft(d); await render();
-          // An upload whose confirmation was lost is confirmed again, not uploaded twice.
-          if (!d.upload) {
-            const blob = await attachment(d, 'doc.pdf');
-            const t = await api('POST', null, { action: 'poeTicket', deviceId: st.deviceId, admNo: p.admNo, unitCode: d.unitCode, item: d.item, bytes: blob.size, pages: d.pageCount });
-            if (!t.ok) throw new Error(t.error);
-            let res;
-            try {
-              res = await fetch(t.driveUrl, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'upload', ticket: t.ticket, data: await b64(blob), mime: 'application/pdf' }) });
-            } catch (netErr) {
-              // The browser could not complete the request at all (blocked, offline, or the address does not answer).
-              throw Object.assign(new Error('bridge-unreachable'), { bridge: true });
-            }
-            let up;
-            try { up = await res.json(); } catch { throw Object.assign(new Error('bridge-signin'), { bridge: true }); } // a sign-in page came back instead of an answer
-            if (!up.ok) throw new Error(up.error || 'The Drive did not take the file');
-            d.upload = { ticket: t.ticket, fileId: up.fileId, fileName: up.fileName, version: up.version, sig: up.sig };
-            await saveDraft(d);
-          }
-          const up = d.upload;
-          const done = await api('POST', null, { action: 'poeDone', ...up });
-          if (!done.ok) throw new Error(done.error);
-          Object.assign(d, { status: 'sent', serverId: done.evidence.id, fileName: up.fileName, version: up.version, sentAt: nowISO(), error: '' });
-          delete d.upload;
-          await saveDraft(d);
-        } catch (e) {
-          d.status = 'error';
-          d.needGoogle = e instanceof Google.NeedSignIn;
-          d.error = !navigator.onLine ? 'Waiting for internet'
-            : d.needGoogle ? 'Connect Google to send it. Your file is safe on this device.'
-            : /not set up|not switched on|link is not set/i.test(e.message) ? 'The college Drive is not connected yet. Your file is safe on this device.'
-            : e.bridge ? 'The college Drive did not answer this device. Your file is safe on this device. Your MIS Officer can check Manage → Google Drive.'
-            : 'Could not send: ' + e.message;
-          await saveDraft(d);
-        }
-      }
+      const res = await Outbox.run({ db: sdb, serverUrl: st.sheetsUrl, deviceId: st.deviceId, admNo: p.admNo, parts: ['evidence'], wait: true,
+        getToken: viaGoogle() ? googleToken : async () => '', onChange: () => render() });
+      if (res.failed && !res.needGoogle) window.queueOutbox?.();   // something could not go: the phone tries again later, even with the app closed
       const mine = await api('POST', null, { action: 'poeMine', deviceId: st.deviceId, admNo: p.admNo });
       if (mine.ok) { ps.server = mine.evidence; await updateLocal('poeMine', (x) => { x.list = mine.evidence; }); await shareMissing(mine.evidence); }
     } catch { /* offline */ }
@@ -457,14 +386,7 @@ const POE = (() => {
     return reg ? await reg.pushManager.getSubscription() : null;
   }
   /** What the service worker needs when a notification wakes it: it cannot read this app's database. */
-  async function rememberIdentity(on) {
-    try {
-      const c = await caches.open('rvnp-push');
-      if (!on) { await c.delete('./__push-identity'); return; }
-      await c.put('./__push-identity', new Response(JSON.stringify({ serverUrl: st.sheetsUrl, deviceId: st.deviceId, admNo: st.profile.admNo }),
-        { headers: { 'Content-Type': 'application/json' } }));
-    } catch { /* storage blocked: notifications simply will not have the details */ }
-  }
+  async function rememberIdentity() { await window.rememberIdentity?.(); }
   async function renderNotify() {
     const row = $('#poeNotify'), box = $('#poeNotifyOn'), hint = $('#poeNotifyHint');
     if (!row) return;
@@ -480,7 +402,7 @@ const POE = (() => {
     row.hidden = false;
     const sub = await subscription();
     box.checked = !!sub && Notification.permission === 'granted';
-    if (box.checked) await rememberIdentity(true);   // keeps the server address and the device's details in step
+    if (box.checked) await rememberIdentity();   // keeps the server address and the device's details in step
     hint.textContent = box.checked ? 'Your device will tell you when your trainer approves your work or sends it back.'
       : Notification.permission === 'denied' ? 'Notifications are switched off for this app in your device settings. Turn them on there first.'
       : 'Your device tells you when your trainer approves your work or sends it back.';
@@ -496,7 +418,6 @@ const POE = (() => {
           await api('POST', null, { action: 'pushUnsubscribe', deviceId: st.deviceId, admNo: st.profile.admNo, endpoint: sub.endpoint }).catch(() => {});
           await sub.unsubscribe();
         }
-        await rememberIdentity(false);
         toast('Notifications off');
         return;
       }
@@ -506,7 +427,7 @@ const POE = (() => {
         || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(vapidKey()) });
       const r = await api('POST', null, { action: 'pushSubscribe', deviceId: st.deviceId, admNo: st.profile.admNo, endpoint: sub.endpoint });
       if (!r.ok) throw new Error(r.error);
-      await rememberIdentity(true);
+      await rememberIdentity();
       toast('Done — your device will tell you about your evidence', 'ok');
     } catch (e) {
       toast((on ? 'Could not switch that on: ' : 'Could not switch that off: ') + e.message, 'err');

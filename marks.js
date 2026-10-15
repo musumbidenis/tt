@@ -67,22 +67,15 @@ const Marks = (() => {
       d.pulledAt = nowISO();
     }, { rows: {}, dirty: {} });
   }
+  /** Sends one marksheet's unsent rows (or, with no arguments, every marksheet's) through the shared outbox. */
+  async function sendMarks(only) {
+    const out = await outbox({ registers: false, marks: true, ...(only ? { only } : {}) }).catch((e) => { wakeOutbox(); throw e; });
+    if (out.held) toast(`${out.held} mark(s) were entered in a term that has ended, so they were kept as they were. The HOD or MIS Officer can unlock them.`, 'err');
+    return out.marks;
+  }
   async function push(cls, unit) {
-    const d = await load(cls, unit);
-    const keys = Object.keys(d.dirty);
-    if (!keys.length) return 0;
-    const res = await api('marksPush', { classCode: cls, unitCode: unit, rows: keys.map((k) => d.rows[k]).filter(Boolean) });
-    if (!res.ok) throw new Error(res.error);
-    await updateLocal(docId(cls, unit), (x) => {
-      for (const k of keys) if (x.dirty[k] && String(x.rows[k]?.updatedAt) <= String(d.rows[k]?.updatedAt)) delete x.dirty[k];
-      for (const r of res.rows) { const k = lower(r.admNo); if (!x.dirty[k]) x.rows[k] = rowOf(r); }
-      x.lockedTerms = res.lockedTerms || [];
-      x.sentAt = nowISO();
-    }, { rows: {}, dirty: {} }).then(async (x) => {
-      if (!Object.keys(x.dirty || {}).length) await updateLocal('marksIndex', (i) => { i.keys = (i.keys || []).filter((k) => k.slice(k.indexOf(':') + 1) !== `${cls}|${unit}`); }, { keys: [] });
-    });
-    if (res.held) toast(`${res.held} mark(s) were entered in a term that has ended, so they were kept as they were. The HOD or MIS Officer can unlock them.`, 'err');
-    return keys.length;
+    await load(cls, unit);     // brings an older marksheet across and applies a fresh start first
+    return sendMarks([`${LIFE}:${cls}|${unit}`]);
   }
   /** Every marksheet on this phone with unsent rows (run with the register sync and when the internet returns). */
   async function syncAll({ quiet = false } = {}) {
@@ -92,11 +85,8 @@ const Marks = (() => {
     try {
       // _local docs are not listed by the database, so the phone keeps its own list of marksheets with unsent rows.
       const idx = await getLocal('marksIndex', { keys: [] });
-      for (const key of idx.keys || []) {
-        const cu = key.slice(key.indexOf(':') + 1);
-        const [cls, unit] = cu.split('|');
-        sent += await push(cls, unit);
-      }
+      for (const key of idx.keys || []) { const [cls, unit] = key.slice(key.indexOf(':') + 1).split('|'); await load(cls, unit); }
+      sent = await sendMarks();
       if (sent && !quiet) toast(`Marks sent for ${sent} student(s)`, 'ok');
     } catch (e) { if (!quiet) toast('Marks not sent yet: ' + e.message, 'err'); }
     finally { ms.sending = false; }
@@ -247,6 +237,7 @@ const Marks = (() => {
     scheduleSend();
   }
   function scheduleSend() {
+    if (typeof wakeOutbox === 'function') wakeOutbox();
     clearTimeout(ms.sendTimer);
     ms.sendTimer = setTimeout(async () => {
       if (!navigator.onLine) return status();

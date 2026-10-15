@@ -135,6 +135,8 @@ const Google = (() => {
     setFlag(kind, true);
     return tok.token;
   }
+  /** Forgets the stored sign-in (it was refused), so the next ensure() fetches a fresh one. */
+  function drop() { tok = null; try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); } catch { /* */ } }
   function signOut() {
     setFlag('student', false); setFlag('staff', false);
     if (tok && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(tok.token, () => {});
@@ -193,5 +195,5 @@ const Google = (() => {
     return new Uint8Array(await res.arrayBuffer());
   }
 
-  return { on, preload, signIn, connect, ensure, connected, setServer, probe, supports: serverOk, signOut, token, email, NeedSignIn, folder, upload, share, meta, download };
+  return { on, preload, signIn, connect, ensure, connected, setServer, probe, supports: serverOk, signOut, drop, token, email, NeedSignIn, folder, upload, share, meta, download };
 })();

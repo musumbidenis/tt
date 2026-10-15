@@ -1,11 +1,16 @@
 /* Service worker: keeps the whole app available with no network.
  * Bump CACHE when you change any file so devices pick up the new version. */
-const CACHE = 'rvnp-attendance-v4.45.0';
+const CACHE = 'rvnp-attendance-v4.46.0';
 /* What this worker needs in order to answer a notification: the server address, this phone's ID and
  * the student's admission number. The student app writes it here when notifications are switched on,
  * because a service worker woken by a notification cannot read the app's own database. */
 const PUSH_CACHE = 'rvnp-push';
 const PUSH_KEY = './__push-identity';
+/* Sending what is waiting (check-ins and evidence) while the app is closed. Scripts can only be imported while the
+ * worker starts, so they load now; nothing runs unless the student app has stored an identity (the staff app never does). */
+try { importScripts('./vendor/pouchdb.min.js', './student-outbox.js'); } catch (e) { /* sending only happens when the app is open */ }
+// The same for a trainer's unsent registers and marks (staff-outbox.js does nothing without a staff sign-in on this device).
+try { self.window = self.window || self; importScripts('./config.js', './staff-outbox.js'); } catch (e) { /* sending only happens when the app is open */ }
 const KEEP = [CACHE, PUSH_CACHE, 'rvnp-poe-files'];   // POE files a trainer has opened, kept across updates
 const ASSETS = [
   './',
@@ -34,6 +39,8 @@ const ASSETS = [
   './student.js',
   './scanner.js',
   './poe-student.js',
+  './student-outbox.js',
+  './staff-outbox.js',
   './config.js',
   './google.js',
   './manifest-student.webmanifest',
@@ -141,7 +148,32 @@ async function showNotices() {
   });
 }
 
-self.addEventListener('push', (event) => { event.waitUntil(showNotices()); });
+/** Sends whatever is waiting, if this is a student phone that has been set up. Safe to run at any time. */
+async function runOutbox() {
+  try {
+    if (typeof Outbox === 'undefined' || typeof PouchDB === 'undefined') return;
+    const id = await pushIdentity();
+    if (!id || !id.serverUrl || !id.admNo || !id.deviceId) return;
+    const db = new PouchDB('rvnp_student', { auto_compaction: true });
+    const res = await Outbox.run({ db, serverUrl: id.serverUrl, deviceId: id.deviceId, admNo: id.admNo });
+    if (res && (res.checkins || res.evidence)) {
+      for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) c.postMessage({ type: 'outbox-done' });
+    }
+    return !!(res && ((res.failed && !res.needGoogle) || res.offline));
+  } catch { /* the app sends it when it is next opened */ }
+  return false;
+}
+// When something could not go yet, the sync event fails on purpose: the browser then tries again later by itself (a few times).
+self.addEventListener('sync', (event) => { if (event.tag === 'ark-outbox') event.waitUntil(runOutbox().then((again) => { if (again) throw new Error('retry'); })); });
+self.addEventListener('periodicsync', (event) => { if (event.tag === 'ark-outbox') event.waitUntil(runOutbox()); });
+
+/* A trainer's registers and marks: sent when the internet comes back, and now and then, even with the app closed. */
+const STAFF_TAG = 'ark-staff-outbox';
+const staffOutbox = () => (typeof StaffOutbox === 'undefined' || typeof PouchDB === 'undefined' ? Promise.resolve()
+  : StaffOutbox.run({ db: new PouchDB('rvnp_attendance', { auto_compaction: true }) }));
+self.addEventListener('sync', (event) => { if (event.tag === STAFF_TAG) event.waitUntil(staffOutbox()); });   // a failure makes the browser try again later
+self.addEventListener('periodicsync', (event) => { if (event.tag === STAFF_TAG) event.waitUntil(staffOutbox().catch(() => {})); });
+self.addEventListener('push', (event) => { event.waitUntil(Promise.all([showNotices(), runOutbox()])); });
 
 // Tapping the notification opens the student app on Evidence (or brings the open one to the front).
 self.addEventListener('notificationclick', (event) => {

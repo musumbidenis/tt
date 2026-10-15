@@ -51,6 +51,33 @@ async function saveProfile(p) {
     Object.assign(d, p || {});
   });
   ls.set('rvnp_profile', JSON.stringify(p || null)); // second copy, used if the database is ever lost
+  rememberIdentity();
+}
+/** What the phone needs to keep sending while the app is closed (the worker cannot read the page's storage). */
+async function rememberIdentity() {
+  try {
+    if (!st.profile?.admNo || !st.sheetsUrl || !st.deviceId) return;
+    const c = await caches.open('rvnp-push');
+    await c.put('./__push-identity', new Response(JSON.stringify({ serverUrl: st.sheetsUrl, deviceId: st.deviceId, admNo: st.profile.admNo }),
+      { headers: { 'Content-Type': 'application/json' } }));
+  } catch { /* storage blocked: sending simply waits until the app is open */ }
+}
+/** Asks the browser to send what is waiting as soon as there is internet, even if the app is closed. Not on every browser. */
+function queueOutbox() {
+  try {
+    if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+    navigator.serviceWorker.ready.then((reg) => reg.sync?.register('ark-outbox')).catch(() => {});
+  } catch { /* not supported here: the app sends when it is open */ }
+}
+/** Once in a while, even with the app closed (Chrome on an installed app only). */
+async function registerPeriodic() {
+  try {
+    if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+    const reg = await navigator.serviceWorker.ready;
+    if (!('periodicSync' in reg) || !navigator.permissions?.query) return;
+    const perm = await navigator.permissions.query({ name: 'periodic-background-sync' });
+    if (perm.state === 'granted') await reg.periodicSync.register('ark-outbox', { minInterval: 12 * 3600 * 1000 });
+  } catch { /* not supported here */ }
 }
 /* An old Google Apps Script address gives way once config.js points at the new database. */
 const OLD_SERVER = /script\.google(usercontent)?\.com/;
@@ -68,6 +95,7 @@ async function saveSheetsUrl(url) {
   st.sheetsUrl = url;
   await updateLocal('settings', (d) => { d.sheetsUrl = url; });
   ls.set('rvnp_sheets_url', url);
+  rememberIdentity();
 }
 
 function decodeB64(b64) {
@@ -220,6 +248,7 @@ async function handleLesson(l) {
   st.retries = 0;
   st.lastScan = id;
   await mirrorUnsent();
+  queueOutbox();
   showResult('ok', 'Attendance recorded', `${doc.unitName} - ${doc.period}${doc.trainer ? ' - ' + doc.trainer : ''}`,
     navigator.onLine ? 'Sending…' : 'Saved safely on this device — it is sent automatically when you next have internet.');
   await render();
@@ -282,23 +311,13 @@ async function sync({ manual = false } = {}) {
   st.syncing = true;
   $('#syncBtn').classList.add('syncing');
   try {
-    for (let i = 0; i < docs.length; i += 100) {
-      const part = docs.slice(i, i + 100);
-      const res = await api('POST', null, { action: 'checkin', checkins: part.map((d) => ({ sessionId: d.sessionId, classCode: d.classCode, admNo: d.admNo, deviceId: d.deviceId, w: d.w, token: d.token, scannedAt: d.scannedAt })) });
-      if (!res.ok) throw new Error(res.error || 'The server did not accept the check-ins');
-      const byId = new Map((res.results || []).map((r) => [String(r.id).toLowerCase(), r]));
-      for (const d of part) {
-        const r = byId.get(`${d.sessionId}|${d.admNo}|${d.deviceId}`.toLowerCase());
-        if (!r) continue;
-        Object.assign(d, { status: r.status, reason: r.reason || '', checkedAt: nowISO() });
-        await sdb.put(d);
-        // The MIS Officer may have moved this student to another stream: follow the official list.
-        if (r.classCode && st.profile && lowerEq(r.admNo || d.admNo, st.profile.admNo) && r.classCode !== st.profile.classCode) {
-          await saveProfile({ ...st.profile, classCode: r.classCode, className: r.classCode });
-        }
-      }
+    // The sending itself is student-outbox.js, the same code the phone runs when the app is closed.
+    const res = await Outbox.run({ db: sdb, serverUrl: st.sheetsUrl, deviceId: st.deviceId, admNo: st.profile.admNo, parts: ['checkins'], wait: true });
+    if (res.error) throw new Error(res.error);
+    // The MIS Officer may have moved this student to another stream: follow the official list.
+    if (res.moved && st.profile && lowerEq(res.moved.admNo, st.profile.admNo) && res.moved.classCode !== st.profile.classCode) {
+      await saveProfile({ ...st.profile, classCode: res.moved.classCode, className: res.moved.classCode });
     }
-    await updateLocal('settings', (d) => { d.lastSync = nowISO(); });
     if (manual) toast('Check-ins sent', 'ok');
   } catch (e) {
     if (manual) toast('Could not send: ' + e.message, 'err');
@@ -310,6 +329,7 @@ async function sync({ manual = false } = {}) {
   }
   // While a check-in waits for the trainer's device, ask again within seconds instead of a minute.
   const waiting = (await checkins()).some((d) => d.status === 'pending' || d.status === 'saved');
+  if (waiting) queueOutbox();   // still unsent: the phone tries again later, even with the app closed
   clearTimeout(st.retryTimer);
   if (waiting && navigator.onLine && (st.retries = (st.retries || 0) + 1) <= 20) st.retryTimer = setTimeout(() => sync(), 8000);
   else if (!waiting) st.retries = 0;
@@ -455,6 +475,7 @@ async function init() {
   }
   const settings = await getLocal('settings');
   st.sheetsUrl = [settings.sheetsUrl, ls.get('rvnp_sheets_url'), configUrl()].find((u) => u && !outdated(u)) || '';
+  rememberIdentity();
   const restored = await restoreUnsent();
   if (restored) toast(`Recovered ${restored} unsent check-in(s)`, 'ok');
   updateNet();
@@ -488,7 +509,9 @@ async function init() {
   syncAttendance();
   POE.init().then(() => { if (st.openPoe) POE.showEvidence(); }).catch((e) => console.error('Evidence', e));
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(() => registerPeriodic()).catch(() => {});
+    // The phone sent something while the app was closed (or open in the background): show it.
+    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'outbox-done') { render(); POE.render?.(); } });
     const hadController = !!navigator.serviceWorker.controller;
     // A new version is ready: the app reloads to use it, but never in the middle of a scan, with the camera
     // open or while a page is being saved; it waits until the student is idle and the app is on screen.
