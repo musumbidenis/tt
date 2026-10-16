@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.7.1';
+var BRIDGE_VERSION = '1.8.1';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -66,6 +66,7 @@ function doPost(e) {
     if (b.action === 'file') return json_(viewFile_(b.ticket));
     if (b.action === 'nudge') return json_(nudge_(b));
     if (b.action === 'bulk') return json_(bulkSave_(b));
+    if (b.action === 'trash') { var tt = readTicket_(b.ticket, 'trash'), n = 0; (tt.ids || []).forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); n++; } catch (e) { /* gone already */ } }); return json_({ ok: true, trashed: n }); }
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });

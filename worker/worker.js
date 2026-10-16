@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.19.3';
+export const VERSION = '7.20.0';
 const SCHEMA_VERSION = '20';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -361,6 +361,7 @@ const ACTIONS = {
   clearVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => clearVerification(env, b, me) },
   deleteStaff: { role: ['MIS'], fn: (env, b, me) => deleteStaff(env, b, me) },
   deleteStudent: { role: ['MIS'], fn: (env, b, me) => deleteStudent(env, b, me) },
+  purgeEvidence: { role: ['MIS'], fn: (env, b, me) => purgeEvidence(env, b, me) },
   allocateVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => allocateVerification(env, b, me) },
   setupVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => setupVerification(env, b, me) },
   verifyPool: { role: ['EAO', 'IAO', 'HOD', 'MIS'], fn: (env, b, me) => verifyPool(env, b, me) },
@@ -3241,6 +3242,35 @@ async function deleteStudent(env, b, me) {
   return { ok: true };
 }
 
+/** MIS: delete every piece of POE evidence. Files in the college Drive go to its bin (through the bridge); files in a
+ *  student's own Drive are deleted when that student has connected Google (their permission); the rest stay in those
+ *  students' Drives (only they can delete them) and are listed. All the app's records and POE approvals go. */
+async function purgeEvidence(env, b, me) {
+  if (b.confirm !== 'DELETE') fail('Type DELETE to confirm');
+  const rows = await all(env, 'SELECT e.*, t.g_refresh FROM evidence e LEFT JOIN trainees t ON t.adm_no=e.adm_no');
+  let ownDeleted = 0, collegeTrashed = 0; const kept = [], college = [];
+  for (const r of rows) {
+    if (r.archive_id) college.push(r.archive_id);
+    if ((r.source || 'bridge') !== 'drive') { if (r.file_id) college.push(r.file_id); continue; }
+    if (!r.g_refresh) { kept.push({ admNo: r.adm_no, item: r.item, unit: r.unit_code }); continue; }
+    try {
+      const t = await googleToken(env, 'trainees', r.adm_no);
+      const res = t.ok ? await fetch('https://www.googleapis.com/drive/v3/files/' + r.file_id + '?supportsAllDrives=true', { method: 'DELETE', headers: { Authorization: 'Bearer ' + t.accessToken } }) : null;
+      if (res && (res.ok || res.status === 404)) ownDeleted++; else kept.push({ admNo: r.adm_no, item: r.item, unit: r.unit_code });
+    } catch { kept.push({ admNo: r.adm_no, item: r.item, unit: r.unit_code }); }
+  }
+  const url = await getMeta(env, 'drive_url');
+  if (college.length && url) {
+    try {
+      const res = await fetch(url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'trash', ticket: await signTicket(env, { k: 'trash', ids: college, exp: Date.now() + 10 * 6e4 }) }) });
+      collegeTrashed = (await res.json()).trashed || 0;
+    } catch (e) { console.error('trash', e); }
+  }
+  await many(env, ['DELETE FROM evidence'], ["DELETE FROM approvals WHERE kind='poe'"]);
+  await audit(env, me, 'POE deleted', `${rows.length} records; ${collegeTrashed} college Drive files to the bin; ${ownDeleted} deleted from students' Drives; ${kept.length} left in students' Drives`);
+  return { ok: true, records: rows.length, collegeTrashed, ownDeleted, kept };
+}
 async function driveStatus(env) {
   const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
   return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', quotaGb: Number(quota[0]?.value) || 50, domain: env.GOOGLE_DOMAIN || '' };
