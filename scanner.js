@@ -231,11 +231,22 @@ const Scanner = (() => {
   /* ---------- a page for the PDF: high quality ---------- */
   // A page is kept like a scanner's colour document setting: white paper, ink in its own colour, smooth strokes, pencil
   // and shading kept. JPEG quality 0.92, lowered only for a very busy page, never below 0.82.
-  const PAGE_BUDGET = 1400 * 1024;
+  // The original photo kept: JPEG 0.95, stepped down to no lower than 0.8 to fit 2 MB; only if still too big is it made
+  // a little smaller (never below 2000 px on the long side).
+  const PAGE_BUDGET = 2 * 1024 * 1024;
   async function page(canvas) {
-    let q = 0.92, jpeg = await toJpeg(canvas, q);
-    while (jpeg.size > PAGE_BUDGET && q > 0.82) { q = Math.round((q - 0.02) * 100) / 100; jpeg = await toJpeg(canvas, q); }
-    return { width: canvas.width, height: canvas.height, jpeg };
+    let c = canvas, q = 0.95, jpeg = await toJpeg(c, q);
+    while (jpeg.size > PAGE_BUDGET && q > 0.8) { q = Math.round((q - 0.03) * 100) / 100; jpeg = await toJpeg(c, q); }
+    while (jpeg.size > PAGE_BUDGET && Math.max(c.width, c.height) > 2000) {
+      const k = 0.85, n = document.createElement('canvas');
+      n.width = Math.round(c.width * k); n.height = Math.round(c.height * k);
+      const g = n.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, n.width, n.height);
+      if (c !== canvas) release(c);
+      c = n; jpeg = await toJpeg(c, q);
+    }
+    const out = { width: c.width, height: c.height, jpeg };
+    if (c !== canvas) release(c);
+    return out;
   }
 
   /* ---------- a small PDF writer: one image per page (JPEG, or 1-bit deflated), A4 width ---------- */

@@ -353,9 +353,9 @@ const POE = (() => {
           const pages = [];
           for (const name of d.pages) {
             const c = await Scanner.load(await attachment(d, name));
-            const f = Scanner.filter(c, 'document');
-            const page = await Scanner.page(f);   // high quality, ink in its own colour
-            Scanner.release(c); if (f !== c) Scanner.release(f);   // one page in memory at a time
+            // The photo as taken (straightened, no cleaning filter), high quality, at most 2 MB a page.
+            const page = await Scanner.page(c);
+            Scanner.release(c);   // one page in memory at a time
             pages.push(page);
           }
           pdf = await Scanner.pdf(pages);
