@@ -823,7 +823,7 @@ const Admin = (() => {
       // Students upload to this address. The school-only form (/a/macros/<domain>/) asks students to sign in, so uploads fail.
       const schoolOnly = /\/a\/macros\//.test(r.url || '');
       const noFolders = !(r.folders || []).length;
-      fill('m-drive', `<div class="row-actions"><button type="button" class="btn small danger" data-act="purgePoe">Delete all POE evidence</button></div><p class="muted">Connected - last update ${esc(fmtShort(r.at))}</p>
+      fill('m-drive', `<p class="muted">Connected - last update ${esc(fmtShort(r.at))}</p>
         ${schoolOnly ? `<p class="err-text small">The bridge address is the school-only form, so students who are not signed in to the school account cannot send evidence. In Apps Script, deploy a new version of the web app with <b>Who has access: Anyone</b>, then run sync() once.</p>` : ''}
         ${noFolders ? '<p class="warn-text small">The Trainers folder in Drive has no folders inside it yet. Create one folder per trainer inside it, or paste each trainer\'s folder link below.</p>' : ''}
         ${(r.unmatched || []).length ? `<p><b>${r.unmatched.length} trainer${r.unmatched.length === 1 ? '' : 's'} without a folder.</b> A folder is made for each trainer in the loading the next time the Drive updates; you can also choose one yourself or paste its link.</p>
@@ -877,13 +877,6 @@ const Admin = (() => {
     if (t.closest('#adminDialog [data-close]')) { closeDialog(); return; }
     if (!t.closest('#manage, #adminDialog')) return;
     if (t.closest('#soBatch')) { batchSignoffs(t.closest('#soBatch')); return; }
-    if (t.closest('[data-act=purgePoe]')) {
-      if (prompt('This deletes every POE submission and its approval. Files in the college Drive go to its bin; files in students’ own Drives are deleted where the student connected Google. Type DELETE to go ahead.') !== 'DELETE') return;
-      api('purgeEvidence', { confirm: 'DELETE' }).then((r) => { need(r);
-        toast(`Deleted ${r.records} POE records - ${r.collegeTrashed} college Drive file(s) to the bin, ${r.ownDeleted} deleted from students' Drives${r.kept.length ? ` - ${r.kept.length} remain in students' own Drives (only they can delete them)` : ''}`, 'ok');
-      }).catch((err) => toast(err.message, 'err'));
-      return;
-    }
     const ba = t.closest('[data-bact]'); if (ba) { batchAct(ba); return; }
     const ds = t.closest('[data-delstaff]');
     if (ds) {
