@@ -2,3 +2,7 @@
 # /student.html to /student, and the app's offline cache cannot use a redirected page.
 /index.html    /         200
 /student.html  /student  200
+# Short links you can change at any time: edit the address on the right, push, and every printed or shared
+# link (including the TinyURL ones that point here) goes to the new place.
+/guide         https://claude.ai/artifact/5h42jdT8aPmzkqrCq5TuVG   302
+/app           /student                                            302
