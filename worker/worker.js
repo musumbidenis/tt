@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.19.2';
+export const VERSION = '7.19.3';
 const SCHEMA_VERSION = '20';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -404,7 +404,8 @@ function staffPublic(r) {
     hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100, driveFolder: r.drive_folder || '', email: r.email || '',
     endsOn: r.ends_on || '' };
 }
-const accountEnded = (r) => !!(r && r.ends_on && todayIso() > r.ends_on);
+// Only an External Assessment Officer's (visitor) account ends on its date.
+const accountEnded = (r) => !!(r && r.ends_on && hasRole(r.roles, 'EAO') && todayIso() > r.ends_on);
 const getStaff = (env, code) => one(env, 'SELECT * FROM staff WHERE code=?', String(code || '').trim());
 
 /** Sets a PIN (creating the account when `create` is given). Bumps pin_version, which signs out old sessions. */
@@ -953,6 +954,7 @@ async function updateStaff(env, b, me) {
     // Internal or external, never both: the External Assessment Officer is a visitor with no other role.
     if (roles.includes('EAO') && roles.length > 1) fail('An External Assessment Officer is a visitor and has no other role. Choose either External, or the internal roles.');
     row.roles = roles.join(', ');
+    if (!roles.includes('EAO') && row.ends_on) { row.ends_on = null; await run(env, 'UPDATE staff SET ends_on=NULL WHERE code=?', row.code); }
   }
   if (b.driveFolder !== undefined) {
     // A Drive folder link or ID chosen by the MIS Officer when the name match does not find it.
