@@ -465,7 +465,7 @@ const POE = (() => {
       const r = await api('POST', null, { action: 'pushSubscribe', deviceId: st.deviceId, admNo: st.profile.admNo, endpoint: sub.endpoint });
       if (!r.ok) throw new Error(r.error);
       await rememberIdentity();
-      toast('Done — your device will tell you about your evidence', 'ok');
+      toast('Done - your device will tell you about your evidence', 'ok');
     } catch (e) {
       toast((on ? 'Could not switch that on: ' : 'Could not switch that off: ') + e.message, 'err');
     } finally {

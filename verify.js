@@ -276,13 +276,13 @@ const Verify = (() => {
       ...(showExt ? [{ k: 'ext', label: 'External check', sort: (adm) => status(adm, 'external'), cell: (adm) => checkCell(v, adm, 'external', extEdit(adm)) }] : []),
     ], { first: 'name', cls: 'ver-sample', filter: 'Filter by name or admission no.', empty: 'No sample.', search: (adm) => `${nameOf(adm)} ${adm}`,
       tools: canPick ? (shown) => `<label class="kchip"><input type="checkbox" data-spickall${shown.length && shown.filter((a) => !extList.includes(a)).every((a) => sPicked.has(a)) ? ' checked' : ''}><span>Select all (${shown.length})</span></label>
-        <button type="button" class="btn small primary" data-vact="mark-ok"${sPicked.size ? '' : ' disabled'}>Mark selected: all four met - agree${sPicked.size ? ` (${sPicked.size})` : ''}</button>
-        <button type="button" class="btn small" data-vact="mark-no"${sPicked.size ? '' : ' disabled'}>Mark selected: do not agree</button>` : null });
+        <button type="button" class="btn small primary" data-vact="mark-ok"${sPicked.size ? '' : ' disabled'}>Agree - all four met${sPicked.size ? ` (${sPicked.size})` : ''}</button>
+        <button type="button" class="btn small" data-vact="mark-no"${sPicked.size ? '' : ' disabled'}>Do not agree</button>` : null });
     const firstLog = v.log[0]?.what || '';
     return `<section class="card ver-detail">
       <div class="msec-head"><h2>${esc(v.classCode)} - ${esc(v.unitCode)} ${esc(v.unitName)}</h2><button type="button" class="btn small ghost" data-vact="back">‹ Back</button></div>
       <p class="small">Trainer <b>${esc(v.trainerName || v.trainerCode)}</b> - verifier <b>${esc(staffName(v.verifier))}</b>${v.external ? ` - external <b>${esc(staffName(v.external))}</b>` : ''} - ${pill(STAT[v.status] || ['pending', v.status])}</p>
-      ${!v.sample.length ? `<p class="warn-text small">No sample: the class list was empty when this was given out.${office() ? ' <button type="button" class="btn small primary" data-vact="draw" data-id="' + esc(v.id) + '">Draw the sample now</button>' : ''}</p>` : ''}
+      ${!v.sample.length ? `<p class="warn-text small">No sample: the class list was empty when this was given out.${office() ? ' <button type="button" class="btn small" data-vact="draw" data-id="' + esc(v.id) + '">Draw the sample now</button>' : ''}</p>` : ''}
       <p class="small">Sample: <b>${v.size}</b> of the ${v.population} students in the class${v.risk > 1 ? ` (higher risk × ${v.risk})` : ''}. ${esc(firstLog)}${v.round > 1 ? ` <b class="warn-text">${v.round === 2 ? 'The sample was doubled after disagreements.' : 'Every student is now in the sample.'}</b>` : ''}</p>
       ${v.status === 'open' && slot ? `<p class="small">You have checked ${checked} of ${v.sample.length}${against ? ` - <b class="warn-text">${against} disagreement${against === 1 ? '' : 's'}</b>` : ''}</p>` : ''}
       ${sampleTable}

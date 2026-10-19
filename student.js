@@ -1,8 +1,8 @@
-/* Student check-in — works offline.
+/* Student check-in - works offline.
  * First login (online, once): the student picks their class and name; the server ties this
  * device to that student. After that, scanning the trainer's lesson QR works with no internet:
  * the class is checked on the device, the check-in is stored, and it is sent to the server
- * whenever there is internet — even months later. */
+ * whenever there is internet - even months later. */
 'use strict';
 
 const sdb = new PouchDB('rvnp_student', { auto_compaction: true });
@@ -11,7 +11,7 @@ const REASONS = {
   'device-other-student': 'This device is registered to another student',
   'student-other-device': 'You are registered on another phone or browser. Ask the HOD or MIS Officer to reset it',
   'invalid-code': 'Code not valid (expired, or not from your trainer)',
-  'unknown-student': 'You are not on the class list any more — see your trainer',
+  'unknown-student': 'You are not on the class list any more - see your trainer',
 };
 const st = { deviceId: '', sheetsUrl: '', profile: null, pendingLesson: null, syncing: false, storage: 'unknown' };
 
@@ -31,7 +31,7 @@ const ls = {
 let toastTimer;
 function toast(msg, kind = '') {
   const t = $('#toast'); t.textContent = msg; t.className = 'show ' + kind;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, kind === 'err' ? 6000 : 3000);
 }
 
 async function getLocal(id) {
@@ -130,7 +130,7 @@ async function restoreUnsent() {
 }
 
 async function api(method, params, body) {
-  if (!st.sheetsUrl) throw new Error('The app is not connected to the attendance server yet — open the student link from your trainer');
+  if (!st.sheetsUrl) throw new Error('The app is not connected to the attendance server yet - open the student link from your trainer');
   const url = new URL(st.sheetsUrl);
   for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
   const res = await fetch(url.toString(), method === 'GET' ? { redirect: 'follow' }
@@ -142,12 +142,12 @@ function showResult(kind, title, text, sub = '') {
   const box = $('#result');
   box.hidden = false;
   box.className = 'card result ' + kind;
-  $('#resultIcon').innerHTML = `<svg aria-hidden="true"><use href="#i-${kind === 'ok' ? 'ok' : 'no'}"/></svg>`;
+  $('#resultIcon').innerHTML = `<svg aria-hidden="true"><use href="#i-${kind === 'ok' ? 'ok' : kind === 'saved' ? 'sync' : 'no'}"/></svg>`;
   $('#resultTitle').textContent = title;
   $('#resultText').textContent = text;
   $('#resultSub').textContent = sub;
-  navigator.vibrate?.(kind === 'ok' ? 120 : [80, 60, 80]);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  navigator.vibrate?.(kind === 'ok' ? 120 : kind === 'saved' ? 60 : [80, 60, 80]);
+  window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
 /* ---------- first login: class and name dropdowns (online, once) ---------- */
@@ -249,8 +249,9 @@ async function handleLesson(l) {
   st.lastScan = id;
   await mirrorUnsent();
   queueOutbox();
-  showResult('ok', 'Attendance recorded', `${doc.unitName} - ${doc.period}${doc.trainer ? ' - ' + doc.trainer : ''}`,
-    navigator.onLine ? 'Sending…' : 'Saved safely on this device — it is sent automatically when you next have internet.');
+  const what = `${doc.unitName} - ${doc.period}${doc.trainer ? ' - ' + doc.trainer : ''}`;
+  if (navigator.onLine) showResult('ok', 'Attendance recorded', what, 'Sending…');
+  else showResult('saved', 'Saved on this phone', what, 'It is sent automatically when you next have internet.');
   await render();
   sync();
 }
@@ -305,7 +306,7 @@ async function renderAttendance() {
 
 async function sync({ manual = false } = {}) {
   if (!st.profile || !st.sheetsUrl || st.syncing) return;
-  if (!navigator.onLine) { if (manual) toast('No internet — your check-ins are safe on this device'); return; }
+  if (!navigator.onLine) { if (manual) toast('No internet - your check-ins are safe on this device'); return; }
   const docs = (await checkins()).filter((d) => d.status === 'saved' || d.status === 'pending');
   if (!docs.length) { if (manual) toast('Nothing waiting to send', 'ok'); return; }
   st.syncing = true;
@@ -338,7 +339,7 @@ async function sync({ manual = false } = {}) {
 /* ---------- camera ---------- */
 let stream = null, scanning = false;
 async function startScan() {
-  if (!navigator.mediaDevices?.getUserMedia) { toast('This browser cannot use the camera — use your camera app instead', 'err'); return; }
+  if (!navigator.mediaDevices?.getUserMedia) { toast('This browser cannot use the camera - use your camera app instead', 'err'); return; }
   try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }); }
   catch (e) { toast('Camera not available: ' + e.message, 'err'); return; }
   const video = $('#scanVideo');
@@ -406,7 +407,7 @@ async function render() {
   await renderAttendance();
   $('#history').innerHTML = list.map((d) => {
     const label = d.status === 'accepted' ? ['synced', 'Confirmed']
-      : d.status === 'pending' ? ['pending', 'Sent — waiting for trainer to sync']
+      : d.status === 'pending' ? ['pending', 'Sent - waiting for trainer to sync']
       : d.status === 'rejected' ? ['rejected', REASONS[d.reason] || 'Not accepted']
       : ['pending', 'Saved on device'];
     return `<li><div><b>${esc(d.unitName || d.classCode)}</b><span class="muted small">${esc(fmtDate(d.date))} - ${esc(d.period)} - ${esc(fmtTime(d.scannedAt))}</span>
@@ -416,10 +417,16 @@ async function render() {
   // Keep the "Attendance recorded" card in step with what happened to that scan.
   const last = st.lastScan && !$('#result').hidden && list.find((d) => d._id === st.lastScan);
   if (last) {
+    const box = $('#result');
+    if (box.classList.contains('saved') && (last.status === 'accepted' || last.status === 'pending')) {
+      box.className = 'card result ok';
+      $('#resultIcon').innerHTML = '<svg aria-hidden="true"><use href="#i-ok"/></svg>';
+      $('#resultTitle').textContent = 'Attendance recorded';
+    }
     $('#resultSub').textContent = last.status === 'accepted' ? 'Confirmed in your trainer\'s register.'
       : last.status === 'pending' ? 'Sent. It is confirmed once your trainer\'s device syncs.'
       : last.status === 'rejected' ? (REASONS[last.reason] || 'Not accepted')
-      : navigator.onLine ? 'Sending…' : 'Saved safely on this device. It is sent automatically when you next have internet.';
+      : navigator.onLine ? 'Sending…' : 'Saved on this phone. It is sent automatically when you next have internet.';
   }
   const unsent = list.filter((d) => d.status === 'saved');
   const el = $('#pendingCount'); el.textContent = unsent.length; el.classList.toggle('zero', unsent.length === 0);
@@ -430,7 +437,7 @@ async function render() {
   const warn = $('#warning');
   if (days >= 3) {
     warn.hidden = false;
-    warn.textContent = `${unsent.length} check-in(s) not sent for ${days} days. They are safe on this device — connect to the internet and tap Send.`;
+    warn.textContent = `${unsent.length} check-in(s) not sent for ${days} days. They are safe on this device - connect to the internet and tap Send.`;
   } else if (st.storage === 'not-protected' && list.length) {
     warn.hidden = false;
     warn.textContent = 'Add this app to your home screen (browser menu → Add to Home screen) so your device keeps your check-ins safely.';

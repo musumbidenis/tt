@@ -91,7 +91,7 @@
     <div id="emptyRoster" class="card notice" hidden>
       <img class="crest-big" src="icons/rvnp-logo.png" alt="" width="72" height="72">
       <h2>No classes for you yet</h2>
-      <p>Your classes come from the trainer loading the MIS Officer uploads. Connect to the internet and tap <a href="#" data-goto="me">Profile → Download class lists</a>. After that, marking works fully offline.</p>
+      <p>Your classes come from the trainer loading the MIS Officer uploads. Connect to the internet and tap <a href="#" data-goto="me">Profile - Download class lists</a>. After that, marking works fully offline.</p>
     </div>
 
     <form id="sessionForm" class="card session-form">
@@ -112,7 +112,7 @@
       <label id="repeatBox" class="repeat-row" hidden><input type="checkbox" id="repeatOn"> <span id="repeatText">Repeat this slot every week</span></label>
       <input type="hidden" id="fDate"><input type="hidden" id="fPeriod"><input type="hidden" id="fSlots" value="1">
       <button type="submit" class="btn primary" id="openBtn" disabled>Choose a slot on the timetable</button>
-      <button type="button" class="btn ghost small del-regs" id="delRegsBtn">Delete registers</button>
+      <button type="button" class="btn ghost small danger del-regs" id="delRegsBtn">Delete registers</button>
     </form>
 
     <div id="register" class="card register" hidden>
@@ -143,14 +143,14 @@
       <ul id="traineeList" class="trainee-list"></ul>
       <div id="registerPager"></div>
 
-      <label class="notes">Notes e.g content covered, remarks
+      <label class="notes">Notes - content covered, remarks
         <textarea id="regNotes" rows="2" placeholder="Optional"></textarea>
       </label>
 
       <div class="reg-actions">
         <button type="button" class="btn ghost danger" id="delReg">Delete</button>
         <button type="button" class="btn ghost" id="closeReg">Close</button>
-        <button type="button" class="btn primary" id="saveReg">Save register</button>
+        <button type="button" class="btn" id="saveReg">Save register</button>
       </div>
       <p id="editLogInfo" class="muted small"></p>
     </div>
@@ -282,7 +282,7 @@
   </section>
 </main>
 
-<dialog id="scanDialog" class="scan-dialog">
+<dialog id="scanDialog" class="scan-dialog" aria-label="Scan trainee ID cards">
   <div class="scan-head">
     <strong>Scan trainee ID cards</strong>
     <button type="button" class="btn small ghost" id="stopScan">Done</button>
@@ -294,7 +294,7 @@
   <p id="scanResult" class="scan-result">Point the camera at a card</p>
 </dialog>
 
-<dialog id="lessonQrDialog" class="qr-dialog">
+<dialog id="lessonQrDialog" class="qr-dialog" aria-label="Lesson QR code">
   <div class="qr-head">
     <div><strong id="lessonQrTitle"></strong><span id="lessonQrSub" class="muted small"></span></div>
     <button type="button" class="btn small" id="closeLessonQr">Close</button>
@@ -305,7 +305,7 @@
   <p class="qr-note">Scan with the check-in app. Internet is not a must; check-ins appear as soon as devices are online.</p>
 </dialog>
 
-<dialog id="studentLinkDialog" class="qr-dialog">
+<dialog id="studentLinkDialog" class="qr-dialog" aria-label="Student link">
   <div class="qr-head">
     <div><strong>Student app</strong><span class="muted small">Students open this once while online, choose their class and name, and they're set up.</span></div>
     <button type="button" class="btn small" id="closeStudentLink">Close</button>
@@ -314,7 +314,7 @@
   <div class="join-link"><input id="studentLink" readonly aria-label="Student app link"><button type="button" class="btn small" id="copyStudentLink">Copy link</button></div>
 </dialog>
 
-<dialog id="addStudentDialog" class="sheet-dialog">
+<dialog id="addStudentDialog" class="sheet-dialog" aria-label="Add a student">
   <form id="addStudentForm" method="dialog">
     <div class="scan-head"><strong>Add a student to this class</strong><button type="button" class="btn small ghost" id="cancelAddStudent">Cancel</button></div>
     <p class="muted small">For a student who is attending but not on the class list yet. You can mark them straight away; they show as <b>Pending</b> until the MIS Officer approves them.</p>
@@ -331,7 +331,7 @@
 
 <dialog id="poeDialog" class="sheet-dialog wide poe-dialog" aria-label="Evidence"><div id="poeDialogBody"></div></dialog>
 <dialog id="delRegsDialog" class="sheet-dialog wide" aria-label="Delete registers"><div id="delRegsBody"></div></dialog>
-<dialog id="adminDialog" class="sheet-dialog wide"><div id="adminDialogBody"></div></dialog>
+<dialog id="adminDialog" class="sheet-dialog wide" aria-label="Manage"><div id="adminDialogBody"></div></dialog>
 <dialog id="noticeDialog" class="sheet-dialog wide" aria-label="Messages"><div id="noticeBody"></div></dialog>
 
 <!-- Kept for one release: lets phones still running version 3.x start up on this page and update themselves. -->

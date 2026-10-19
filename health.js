@@ -4,7 +4,7 @@
 'use strict';
 
 const Health = (() => {
-  let last = null, busy = false;
+  let last = null, busy = false, err = '';
   const allowed = () => hasRole('MIS');
   // Plain names for what the phones ask the server; anything else shows as it is.
   const LABEL = {
@@ -48,7 +48,9 @@ const Health = (() => {
 
   function html() {
     const h = last;
-    if (!h) return '<p class="muted">Loading…</p>';
+    const refresh = `<button type="button" class="btn small" data-hrefresh${busy ? ' disabled' : ''}>${busy ? 'Refreshing…' : 'Refresh'}</button>`;
+    const errBlock = err ? `<div class="row-actions"><p class="err-text">${esc(err)}</p><button type="button" class="btn small" data-hrefresh${busy ? ' disabled' : ''}>${busy ? 'Trying…' : 'Try again'}</button></div>` : '';
+    if (!h) return err ? errBlock : '<p class="muted" aria-busy="true">Loading…</p>';
     const L = h.limits, t = h.today, g = h.google, todo = problems(h);
     const head = todo.length
       ? `<div class="h-status warn"><b>${todo.length} thing${todo.length === 1 ? '' : 's'} to look at</b><ul>${todo.map(([k, s]) => `<li class="${k}">${esc(s)}</li>`).join('')}</ul></div>`
@@ -56,8 +58,8 @@ const Health = (() => {
     const actions = Tables.slice('health', h.actions);
     const days = [...h.days].reverse();
     const errs = h.errors || [];
-    return `${head}
-      <p class="muted small">Today so far (since 3.00 am, when Cloudflare's daily limits start again) - checked ${esc(fmtTime(h.now))} - server ${esc(h.version)}${g.bridgeVersion ? ` - Drive bridge ${esc(g.bridgeVersion)}` : ''}</p>
+    return `<div class="row-actions">${refresh}</div>${errBlock}${head}
+      <p class="muted small">Today since 3.00 am - checked ${esc(fmtTime(h.now))} - server ${esc(h.version)}${g.bridgeVersion ? ` - Drive bridge ${esc(g.bridgeVersion)}` : ''}</p>
       <h3 class="h-sub">Daily limits</h3>
       <div class="h-gauges">
         ${gauge('Server requests', t.requests, L.requests, num, 'Over the limit, the apps stop reaching the server until 3.00 am.')}
@@ -68,12 +70,12 @@ const Health = (() => {
         ${g.mailLeft !== null && g.mailLeft !== undefined ? gauge('Emails today', Math.max(0, L.mail - g.mailLeft), L.mail, num, `${num(g.mailLeft)} left today${g.mailWaiting ? ` - ${num(g.mailWaiting)} waiting to go` : ''}.`) : ''}
       </div>
       <h3 class="h-sub">Speed</h3>
-      <div class="h-stats">
-        <div><b>${ms(t.avgMs)}</b><span>Average answer today</span></div>
-        <div><b>${num(t.requests)}</b><span>Requests today</span></div>
-        <div><b>${num(t.refused)}</b><span>Refused (wrong PIN, no permission…)</span></div>
-        <div><b>${num(t.errors)}</b><span>Server errors today</span></div>
-      </div>
+      <ul class="h-facts">
+        <li>Average answer today - ${ms(t.avgMs)}</li>
+        <li>Requests today - ${num(t.requests)}</li>
+        <li>Refused - wrong PIN or no permission - ${num(t.refused)}</li>
+        <li>Server errors today - ${num(t.errors)}</li>
+      </ul>
       ${h.actions.length ? `<div class="table-wrap"><table class="report-table h-table"><thead><tr><th>What</th><th class="num">Times</th><th class="num">Average</th><th class="num">Slowest</th><th class="num">Errors</th></tr></thead>
         <tbody>${actions.map((a) => `<tr${a.errors ? ' class="h-bad"' : ''}><td>${esc(LABEL[a.action] || a.action)}</td><td class="num">${num(a.n)}</td><td class="num">${ms(a.avgMs)}</td><td class="num${a.maxMs > 5000 ? ' warn-text' : ''}">${ms(a.maxMs)}</td><td class="num">${a.errors || ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('health', h.actions)}` : '<p class="muted">Nothing counted yet today.</p>'}
       ${days.length > 1 ? `<details class="fold"><summary>Last ${days.length} days</summary><div class="table-wrap"><table class="report-table h-table"><thead><tr><th>Day</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">Average</th><th class="num">Reads</th><th class="num">Writes</th></tr></thead>
@@ -89,16 +91,16 @@ const Health = (() => {
         <li>Phone notifications - ${num(h.push.phones)} phone${h.push.phones === 1 ? '' : 's'} signed up${h.push.failing ? ` - ${num(h.push.failing)} not answering` : ''}</li>
         <li>Stored - ${num(h.db.counts.registers)} registers - ${num(h.db.counts.students)} students - ${num(h.db.counts.staff)} staff - ${num(h.db.counts.evidence)} POE files - ${num(h.db.counts.phones)} student phones</li>
       </ul>
-      <div class="row-actions"><button type="button" class="btn small" data-hrefresh${busy ? ' disabled' : ''}>Refresh</button>
+      <div class="row-actions">
         <a class="btn small ghost" href="https://dash.cloudflare.com/" target="_blank" rel="noopener">Cloudflare dashboard</a></div>`;
   }
   const draw = () => { const s = $('#m-health'); if (s) { [...s.children].slice(1).forEach((c) => c.remove()); s.insertAdjacentHTML('beforeend', html()); } };
   async function load() {
     if (!allowed() || busy) return;
-    busy = true;
-    try { const r = await api('systemHealth'); if (!r.ok) throw new Error(r.error || 'Could not read the system health'); last = r; draw(); }
-    catch (e) { const s = $('#m-health'); if (s) { [...s.children].slice(1).forEach((c) => c.remove()); s.insertAdjacentHTML('beforeend', `<p class="err-text">${esc(e.message)}</p>`); } }
-    finally { busy = false; }
+    busy = true; err = ''; draw();
+    try { const r = await api('systemHealth'); if (!r.ok) throw new Error(r.error || 'Could not read the system health'); last = r; }
+    catch (e) { err = e.message || 'Could not read the system health'; }
+    finally { busy = false; draw(); }
   }
   /** How many things need a look (for the Manage badge). */
   const alerts = () => (last ? problems(last).length : 0);

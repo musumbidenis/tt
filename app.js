@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.53.0';
+const APP_VERSION = '4.54.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -93,12 +93,13 @@ const serverUrl = () => {
 };
 
 let toastTimer;
+const scrollBehavior = () => (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 function toast(msg, kind = '') {
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'show ' + kind;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.className = ''; }, 3500);
+  toastTimer = setTimeout(() => { t.className = ''; }, kind === 'err' ? 6000 : 3500);
 }
 
 /* ---------------- local (non-replicating) docs ---------------- */
@@ -617,7 +618,7 @@ function setCurrent(doc, isNew = false) {
   $('#regNotes').value = doc.notes || '';
   setSaveState(isNew ? 'Not saved yet' : 'Saved on this device', isNew ? '' : 'ok');
   renderRegister();
-  $('#register').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#register').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
   goLive();
 }
 
@@ -822,7 +823,7 @@ function renderRegister() {
   renderCounts();
   const log = s.editLog || [];
   $('#editLogInfo').textContent = log.length
-    ? `Edited after locking ${log.length} time(s). Last: ${fmtTime(log[log.length - 1].at)} by ${log[log.length - 1].by} — "${log[log.length - 1].reason}"`
+    ? `Edited after locking ${log.length} time(s). Last: ${fmtTime(log[log.length - 1].at)} by ${log[log.length - 1].by} - "${log[log.length - 1].reason}"`
     : '';
 }
 
@@ -1696,6 +1697,7 @@ function deletedToast(r) {
   toast(parts.join(' - '), r.failed.length || r.waiting ? 'err' : 'ok');
 }
 const DEL_WARN = 'Its marks go from this device, the server, the term register and Google Drive. This cannot be undone.';
+const DEL_WARN_MANY = 'Their marks go from this device, the server, the term register and Google Drive. This cannot be undone.';
 async function deleteOpenRegister() {
   const s = state.current; if (!s) return;
   const ids = (s._parts || [s]).filter((p) => p._rev).map((p) => p._id);
@@ -1732,9 +1734,9 @@ async function drawDeleteList() {
   }).join('');
   const n = delPicked.size;
   $('#delRegsBody').innerHTML = `<div class="scan-head"><strong>Delete registers - ${esc(cls)} - ${esc(unit)}</strong><button type="button" class="btn small ghost" data-delclose>Close</button></div>
-    <p class="muted small">${esc(uname)}. Tick the registers marked by mistake. ${DEL_WARN}</p>
+    <p class="muted small">${esc(uname)}. Tick the registers marked by mistake. ${DEL_WARN_MANY}</p>
     ${list.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-delall${n && n === list.length ? ' checked' : ''}><span>Select all ${list.length}</span></label>
-      <button type="button" class="btn small danger" data-delgo${n ? '' : ' disabled'}>Delete selected${n ? ` (${n})` : ''}</button></div>
+      <button type="button" class="btn small danger solid" data-delgo${n ? '' : ' disabled'}>Delete selected${n ? ` (${n})` : ''}</button></div>
       <ul class="del-list">${rows}</ul>` : '<p class="muted">No registers for this class and unit on this device.</p>'}`;
 }
 
@@ -2286,7 +2288,7 @@ async function renderDbInfo() {
   const el = $('#dbInfo');
   if (!el) return;
   const info = await db.info();
-  el.textContent = `Device ${state.deviceId} - ${info.doc_count} records stored - storage ${state.storage === 'protected' ? 'protected ✓' : state.storage === 'not-protected' ? 'not protected — add the app to your home screen' : 'status unknown'} - app v${APP_VERSION}`;
+  el.textContent = `Device ${state.deviceId} - ${info.doc_count} records stored - storage ${state.storage === 'protected' ? 'protected' : state.storage === 'not-protected' ? 'not protected - add the app to your home screen' : 'status unknown'} - app v${APP_VERSION}`;
 }
 
 /* ---------------- tabs, roles, network, wiring ---------------- */
@@ -2376,7 +2378,7 @@ function renderMe() {
   $('#meName').textContent = s?.name || 'Not signed in';
   $('#meRoles').textContent = s ? roleText(s) || 'No role yet' : '';
   const meta = $('#meMeta');
-  if (meta) meta.textContent = s ? `Staff code ${s.code} - ${roleText(s) || 'No role yet — ask the MIS Officer'}` : '';
+  if (meta) meta.textContent = s ? `Staff code ${s.code} - ${roleText(s) || 'No role yet - ask the MIS Officer'}` : '';
 }
 
 function fillSettingsForms() {
@@ -2465,7 +2467,7 @@ function wire() {
     if (e.target.closest('[data-delclose]')) { $('#delRegsDialog').close(); return; }
     const go = e.target.closest('[data-delgo]'); if (!go) return;
     const n = delPicked.size;
-    if (!n || !confirm(`Delete ${n} register${n === 1 ? '' : 's'}?\n\n${DEL_WARN}`)) return;
+    if (!n || !confirm(`Delete ${n} register${n === 1 ? '' : 's'}?\n\n${n === 1 ? DEL_WARN : DEL_WARN_MANY}`)) return;
     go.disabled = true;
     try { const r = await deleteRegisters([...delPicked]); deletedToast(r); delPicked.clear(); } catch (err) { toast(err.message, 'err'); }
     await drawDeleteList();

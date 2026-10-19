@@ -40,9 +40,9 @@ const Admin = (() => {
       parts.push(section('m-classes', 'Class lists', classesHtml()));
       parts.push(section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
+      if (window.Health?.allowed()) parts.push(section('m-health', 'System health', Health.html()));
       parts.push(section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
-      if (window.Health?.allowed()) parts.push(section('m-health', 'System health', Health.html()));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD') || hasRole('MIS')) parts.push(section('m-registers', 'Saved registers', regsHtml()));
     box().innerHTML = groupTabs(parts) + parts.join('');
@@ -139,10 +139,11 @@ const Admin = (() => {
   function regsHtml() {
     const classes = [...new Set([...state.classes.map((c) => c.code), ...state.units.map((u) => u.classCode)])].sort();
     const units = state.units.filter((u) => u.classCode === rg.cls).sort((a, b) => a.code.localeCompare(b.code));
-    return `<p class="muted small">This term's registers of a class. Tick the ones marked by mistake (wrong slot, marked twice, wrong class) and delete them. They go from the reports, the term register, Google Drive and the trainer's devices. A term register the HOD approved has to be returned first.</p>
+    return `<p class="muted small">Tick registers marked by mistake and delete them.</p>
+      ${fold('regsHow', 'How this works', `<p class="muted small">Use it for a wrong slot, a register marked twice or the wrong class. They go from the reports, the term register, Google Drive and the trainer's devices. A term register the HOD approved has to be returned first.</p>`)}
       <div class="list-tools"><select id="rgClass" aria-label="Class"><option value="">Choose a class</option>${classes.map((c) => `<option${c === rg.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
         <select id="rgUnit" aria-label="Unit"><option value="">All units</option>${units.map((u) => `<option value="${esc(u.code)}"${u.code === rg.unit ? ' selected' : ''}>${esc(u.code)} - ${esc(u.name)}</option>`).join('')}</select></div>
-      <div id="rgList">${rg.list ? regsList() : ''}</div>`;
+      <div id="rgList">${rg.list ? regsList() : rg.cls ? '' : '<p class="muted">Choose a class to see its registers.</p>'}</div>`;
   }
   const RG_DAY = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   function regsList() {
@@ -159,7 +160,7 @@ const Admin = (() => {
   const drawRegs = () => { const el = $('#rgList'); if (el) { el.innerHTML = regsList(); syncBar('reg'); } };
   async function loadRegs() {
     rg.list = null;
-    const el = $('#rgList'); if (!rg.cls || !el) { if (el) el.innerHTML = ''; return; }
+    const el = $('#rgList'); if (!rg.cls || !el) { if (el) el.innerHTML = '<p class="muted">Choose a class to see its registers.</p>'; return; }
     el.innerHTML = '<p class="muted">Loading…</p>';
     try { rg.list = need(await api('sessionList', { classCode: rg.cls, unitCode: rg.unit })).sessions; Tables.reset('regsDel'); drawRegs(); }
     catch (e) { el.innerHTML = `<p class="err-text">${esc(e.message)}</p>`; }
@@ -311,8 +312,8 @@ const Admin = (() => {
     const termPick = past.length ? `<label class="ov-term">Term <select id="ovTerm" aria-label="Term"><option value="">${esc(state.meta.term?.duration || state.meta.term?.name || 'Current')} (current)</option>${past.map((x) => `<option value="${esc(x.id)}"${x.id === ovTerm ? ' selected' : ''}>${esc(x.duration || x.name)}</option>`).join('')}</select></label>` : '';
     fill('m-overview', termPick + `<p class="muted">${esc(o.term.name)} - ${ovTerm ? 'ended' : `Week ${o.week} of 12`}${behind ? ` (<b class="warn-text">${behind} behind on registers</b>)` : ''}</p>`
       + fold('overview', `Show the class units (${rows.length})`, `<div class="table-wrap"><table class="report-table overview-table"><thead><tr>${th('classCode', 'Class')}${th('unitCode', 'Unit')}${th('trainerName', 'Trainer')}${th('lessons', 'Marked', 'num')}${th('due', 'Due', 'num')}${th('last', 'Last')}${th('pct', 'Att.', 'num')}${th('signoff', 'HOD')}</tr></thead>
-        <tbody>${page.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
-          <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}</td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
+        <tbody>${page.map((r) => `<tr class="${r.lessons < r.due - 1 ? 'behind' : ''}" tabindex="0" role="link" data-open="${esc(r.classCode)}|${esc(r.unitCode)}">
+          <td>${esc(r.classCode)}</td><td>${esc(r.unitCode)}<small class="sub-trainer muted">${esc(r.trainerName)}</small></td><td>${esc(r.trainerName)}</td><td class="num">${r.lessons}</td><td class="num">${r.due}</td>
           <td>${r.last ? fmtShort(r.last) : '–'}</td><td class="num">${r.pct === null ? '–' : r.pct + '%'}</td><td>${r.signoff ? esc(r.signoff) : ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('overview', rows)}`));
   }
 
@@ -335,8 +336,8 @@ const Admin = (() => {
           <small>${esc(r.classCode)} - added by ${esc(r.requestedBy)} ${r.requestedAt ? fmtShort(r.requestedAt) : ''}${r.reason ? ' - ' + esc(r.reason) : ''}</small>
           ${r.existing ? `<small class="warn-text">Already on the list of ${esc(r.existing.classCode)} as ${esc(r.existing.name)}${r.existing.active ? '' : ' (withdrawn)'}</small>` : ''}
           ${r.status !== 'pending' ? `<small>${esc(r.status)}${r.mergedInto ? ' into ' + esc(r.mergedInto) : ''}${r.note ? ' - ' + esc(r.note) : ''}</small>` : ''}</div>
-        ${canMove(r) && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small primary" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
-          ${can ? '<button type="button" class="btn small" data-decide="merge">Same as…</button>' : ''}<button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
+        ${canMove(r) && r.status === 'pending' ? `<div class="req-actions"><button type="button" class="btn small" data-decide="approve">${r.existing ? 'Move here' : 'Approve'}</button>
+          ${can ? '<button type="button" class="btn small" data-decide="merge">Same student as...</button>' : ''}<button type="button" class="btn small danger" data-decide="reject">Reject</button></div>` : ''}</li>`;
       const reqCan = pending.filter(canMove).length;
       fill('m-requests', (reqCan > 1 ? pickBar('req', reqCan, [['req-approve', 'Approve selected', 'primary'], ['req-reject', 'Reject selected', 'danger']]) : '') + (pending.length ? `<ul class="mlist reqs">${pending.map(item).join('')}</ul>` : '<p class="muted">No students are waiting. When a trainer adds a student while marking, they appear here.</p>')
         + (decided.length ? `<details class="mdone"><summary>Decided recently (${decided.length})</summary><ul class="mlist reqs">${decided.map(item).join('')}</ul></details>` : ''));
@@ -348,10 +349,10 @@ const Admin = (() => {
     const r = cache.requests.find((x) => x.id === id); if (!r) return;
     if (decision === 'merge') {
       const others = state.trainees.filter((t) => t.classCode === r.classCode && t.active !== false);
-      dialog(`<div class="scan-head"><strong>Same student as…</strong><button type="button" class="btn small ghost" data-close>Cancel</button></div>
+      dialog(`<div class="scan-head"><strong>Same student as...</strong><button type="button" class="btn small ghost" data-close>Cancel</button></div>
         <p class="muted small">Use this when ${esc(r.name)} (${esc(r.admNo)}) was a typo or duplicate. Their marks move to the student you choose.</p>
         <label>Student on the ${esc(r.classCode)} list<select id="mergeInto">${others.map((t) => `<option value="${esc(t.admNo)}">${esc(t.name)} - ${esc(t.admNo)}</option>`).join('')}</select></label>
-        <button type="button" class="btn primary big" id="mergeGo" data-id="${esc(id)}">Merge</button>`);
+        <button type="button" class="btn danger solid big" id="mergeGo" data-id="${esc(id)}">Merge</button>`);
       return;
     }
     if (decision === 'reject' && !confirm(`Reject ${r.name}? They will be left out of ${r.classCode}'s registers and reports.`)) return;
@@ -636,7 +637,7 @@ const Admin = (() => {
           ${pickBox('stu', s.admNo, s.name)}<span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}${s.email ? '' : ' - no college email yet'}</small>
           ${s.terms?.length ? `<small class="muted">Terms: ${s.terms.map((t) => esc(`${t.term}${t.classCode !== s.classCode ? ' (' + t.classCode + ')' : ''}`)).join(' - ')}</small>` : ''}</span>
           <span class="st-actions"><label class="check small"><input type="checkbox" data-rep="${esc(s.admNo)}"${s.rep ? ' checked' : ''}> Class rep</label><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-          <button type="button" class="btn small ${s.status === 'active' ? 'danger' : ''}" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button>
+          <button type="button" class="btn small" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button>
           ${hasRole('MIS') ? `<button type="button" class="btn small ghost danger-text" data-delstudent="${esc(s.admNo)}" data-name="${esc(s.name)}">Delete</button>` : ''}</span></li>`).join('')}</ul>`;
       if (hasRole('MIS')) {
         $('#adminDialogBody').insertAdjacentHTML('beforeend', `<div class="archive-row"><p class="muted small">Finished with this class? Archiving hides it, its students and its loading from day-to-day screens. Nothing is deleted, and it can be brought back.</p>
@@ -669,7 +670,7 @@ const Admin = (() => {
       <p>This removes ${esc(g.label)} from the database: its ${g.students} student(s), loading in every term, registers, QR check-ins, marks, sign-offs and evidence records.</p>
       <p><b>The Google Drive copies stay</b> (attendance sheets, marksheets and the students' evidence files). A file with everything being deleted is saved to this device first.</p>
       <label>Type <b>${esc(g.label)}</b> to confirm<input id="delConfirm" autocomplete="off"></label>
-      <button type="button" class="btn danger" data-delete-go="${esc(g.label)}">Save a copy and delete</button>`);
+      <button type="button" class="btn danger solid" data-delete-go="${esc(g.label)}">Save a copy and delete</button>`);
   }
   async function deleteGroup(label) {
     const g = archivedGroups().find((x) => x.label === label); if (!g) return;
@@ -691,7 +692,7 @@ const Admin = (() => {
     try {
       need(await api('updateStudent', { admNo: li.dataset.adm, ...patch }));
       toast(patch.classCode ? `Moved to ${patch.classCode}` : patch.status === 'withdrawn' ? 'Withdrawn from the class' : 'Back on the class list', 'ok');
-      if (patch.status) { li.classList.toggle('gone', patch.status !== 'active'); const b = li.querySelector('[data-status]'); b.dataset.status = patch.status === 'active' ? 'withdrawn' : 'active'; b.textContent = patch.status === 'active' ? 'Withdraw' : 'Restore'; b.classList.toggle('danger', patch.status === 'active'); }
+      if (patch.status) { li.classList.toggle('gone', patch.status !== 'active'); const b = li.querySelector('[data-status]'); b.dataset.status = patch.status === 'active' ? 'withdrawn' : 'active'; b.textContent = patch.status === 'active' ? 'Withdraw' : 'Restore' }
       pullRoster({ silent: true });
     } catch (e) { toast(e.message, 'err'); }
   }
@@ -718,9 +719,9 @@ const Admin = (() => {
     if (!list.length) { box.innerHTML = `<p class="muted">${q ? 'Nothing matches that search.' : 'No student phones are registered yet.'}</p>`; return; }
     const page = Tables.slice('phones', list), first = list.indexOf(page[0]);
     for (const id of [...picks.phone]) if (!(cache.phones || []).some((p) => p.admNo === id)) picks.phone.delete(id);
-    box.innerHTML = `${pickBar('phone', page.length, [['phone-reset', 'Reset selected', 'danger']])}<div class="table-wrap"><table class="report-table phone-table"><thead><tr><th class="pick"><span class="sr">Select</span></th><th class="num">S/N</th>${Tables.th('phones', 'name', 'Student')}<th></th>${Tables.th('phones', 'cls', 'Class')}${Tables.th('phones', 'seen', 'Last used')}</tr></thead>
+    box.innerHTML = `${pickBar('phone', page.length, [['phone-reset', 'Reset selected', 'danger']])}<div class="table-wrap"><table class="report-table phone-table"><thead><tr><th class="pick"><span class="sr">Select</span></th><th class="num">S/N</th>${Tables.th('phones', 'name', 'Student')}<th><span class="sr">Reset</span></th>${Tables.th('phones', 'cls', 'Class')}${Tables.th('phones', 'seen', 'Last used')}</tr></thead>
       <tbody>${page.map((p, i) => `<tr data-adm="${esc(p.admNo)}"><td class="pick">${pickBox('phone', p.admNo, p.name)}</td><td class="num">${first + i + 1}</td><td><b>${esc(p.name)}</b><br><small class="muted">${esc(p.admNo)}</small></td>
-        <td><button type="button" class="btn small danger" data-resetphone>Reset phone</button></td><td>${esc(p.classCode)}</td>
+        <td><button type="button" class="btn small" data-resetphone>Reset phone</button></td><td>${esc(p.classCode)}</td>
         <td class="small" title="Set up ${esc(fmtShort(p.registeredAt))}">${esc(fmtShort(p.lastSeen))}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('phones', list)}`;
     syncBar('phone');
   }
@@ -749,10 +750,11 @@ const Admin = (() => {
   }
   function drawBackup(b) {
     const r = b.report || {}, who = r.email || b.archiveEmail || 'the backup account', pct = r.limit ? Math.round((r.used / r.limit) * 100) : 0;
-    const advice = `Ask IT to give <b>${esc(who)}</b> more Google Drive space, or switch the backup to another college account: set up the Drive bridge under that account (Technical Documentation, 4.3) and change the <b>Backup account</b> in Manage → Google Drive. Copies already made stay where they are.`;
+    const advice = `Ask IT to give <b>${esc(who)}</b> more Google Drive space, or switch the backup to another college account: set up the Drive bridge under that account (Technical Documentation, 4.3) and change the <b>Backup account</b> in Manage - Google Drive. Copies already made stay where they are.`;
     const banner = b.level === 'full' ? `<div class="backup-alert full"><b>The backup account's Drive is ${pct}% full, so backups have stopped.</b> ${advice}</div>`
       : b.level === 'warn' ? `<div class="backup-alert"><b>The backup account's Drive is ${pct}% full.</b> Backups stop at ${Math.round(b.stopAt * 100)}%. ${advice}</div>` : '';
-    const gauge = r.limit ? `<div class="gauge ${b.level}" role="img" aria-label="${pct}% used"><span style="width:${Math.min(100, pct)}%"></span></div>
+    // Until the Drive bridge reports the account's storage, there is no figure to show (not 0%).
+    const gauge = r.limit && Number.isFinite(Number(r.used)) && r.used !== undefined ? `<div class="gauge ${b.level}" role="img" aria-label="${pct}% used"><span style="width:${Math.min(100, pct)}%"></span></div>
       <p class="small">${esc(who)}: <b>${gb(r.used)}</b> of ${gb(r.limit)} used (${pct}%)${r.checkedAt ? ` <span class="muted">- checked ${esc(fmtTime(r.checkedAt))}</span>` : ''}</p>`
       : '<p class="muted small">The Drive bridge has not reported the backup account\'s storage yet. It does on its next hourly run.</p>';
     const last = r.running ? `<p><b>Backing up now…</b> ${r.copied || 0} copied so far.</p>`
@@ -769,7 +771,7 @@ const Admin = (() => {
     fill('m-backup', `${banner}
       <p class="muted">Approved POE documents that students keep in their own Drive are copied into <b>The ARK - Archive</b> in ${esc(who)}'s Drive, so the college keeps them after a student leaves.</p>
       ${gauge}
-      ${r.wrongAccount ? `<p class="err-text small">The Drive bridge runs as ${esc(r.email)}, but students share their files with ${esc(r.wrongAccount)}. Make them the same account (Manage → Google Drive → Backup account).</p>` : ''}
+      ${r.wrongAccount ? `<p class="err-text small">The Drive bridge runs as ${esc(r.email)}, but students share their files with ${esc(r.wrongAccount)}. Make them the same account (Manage - Google Drive - Backup account).</p>` : ''}
       ${r.lastError && !r.wrongAccount ? `<p class="err-text small">${esc(r.lastError)}</p>` : ''}
       ${last}
       <p class="small">${b.waiting ? `<b>${b.waiting}</b> approved document(s) waiting for the next backup.` : 'Every approved document is backed up.'}</p>
@@ -824,7 +826,7 @@ const Admin = (() => {
           <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
             ${s.roles.includes('EAO') ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
-          <button type="button" class="btn small ${s.active ? 'danger' : ''}" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button>
+          <button type="button" class="btn small" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button>
           ${lower(s.code) === lower(me()?.code || '') ? '' : `<button type="button" class="btn small ghost danger-text" data-delstaff="${esc(s.code)}" data-name="${esc(s.name)}">Delete</button>`}</span></li>`).join('')}</ul>`)}
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
@@ -883,7 +885,7 @@ const Admin = (() => {
         <label class="narrow">Space (GB)<input type="number" id="archiveQuota" min="1" max="100000" step="1" value="${esc(quotaGb || 50)}"></label><button class="btn">Save</button></form>` : '';
       if (!r) {
         fill('m-drive', `<p class="muted">Not connected yet. Each trainer's attendance sheet and the students' POE files go to the college Google Drive through a small Apps Script in the school account. The README has the steps (about 10 minutes, once).</p>
-          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare → the Worker → Settings → Variables).</p>'}${archiveBox}`);
+          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare - the Worker - Settings - Variables).</p>'}${archiveBox}`);
         return;
       }
       const opts = (sel) => `<option value="">Choose their folder…</option>${(r.folders || []).sort((a, b) => a.name.localeCompare(b.name)).map((f) => `<option value="${esc(f.id)}"${f.id === sel ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}`;
@@ -1084,7 +1086,7 @@ const Admin = (() => {
   Tables.defaults('signoffsDone', 30);
   Tables.on('classes', () => { const el = $('#m-classes'); if (el) replaceBody(el, classesHtml()); });
   document.addEventListener('keydown', (e) => {
-    const row = e.target.closest?.('tr[data-group]');
+    const row = e.target.closest?.('tr[data-group], tr[data-open]');
     if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click(); }
   });
   document.addEventListener('submit', (e) => {

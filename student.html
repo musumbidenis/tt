@@ -4,13 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Student-POE - The ARK</title>
-<meta name="description" content="Scan your trainer's lesson QR to record attendance — works offline">
+<meta name="description" content="Scan your trainer's lesson QR to record attendance - works offline">
 <meta name="theme-color" content="#0b5d33">
 <link rel="manifest" href="manifest-student.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/lexend.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
+<style>
+  .result.saved { border-color: var(--line-strong, var(--line)); background: var(--surface); }
+  .result.saved .result-icon { background: var(--muted); }
+</style>
 </head>
 <body class="student">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">

@@ -37,7 +37,7 @@ const Bulk = (() => {
         <label class="check small"><input type="checkbox" id="bkPdf" checked> PDF</label>
         <label class="check small"><input type="checkbox" id="bkDrive" checked> Save in Google Drive too</label>
       </div>
-      <div class="row-actions"><button type="button" class="btn small primary" id="bkGo"${n && !bs.busy ? '' : ' disabled'}>Make ${n} class unit${n === 1 ? '' : 's'}' reports</button></div>
+      <div class="row-actions"><button type="button" class="btn small primary" id="bkGo"${n && !bs.busy ? '' : ' disabled'}>Make reports for ${n} class unit${n === 1 ? '' : 's'}</button>${n ? '' : ' <span class="muted small">Pick at least one.</span>'}</div>
       <div id="bkOut" aria-live="polite">${bs.last || ''}</div>`;
   }
   const redraw = () => { const s = $('#m-bulk'); if (s) { [...s.children].slice(1).forEach((c) => c.remove()); s.insertAdjacentHTML('beforeend', html()); } };
@@ -56,6 +56,7 @@ const Bulk = (() => {
     if (!navigator.onLine) { toast('Making reports in bulk needs internet (the latest registers and marks come from the server)', 'err'); return; }
     const jobs = groups().filter((g) => bs.picked.has(g.key)).flatMap((g) => g.items.map((u) => ({ g, u })));
     if (!jobs.length) return;
+    if (jobs.length > 12 && !confirm(`This makes about ${jobs.length * 4} files and may be slow on a phone. Continue?`)) return;
     bs.busy = true; btn.disabled = true;
     const out = $('#bkOut'), zip = new JSZip(), run = `${todayISO()} ${new Date().toTimeString().slice(0, 5).replace(':', '.')} - ${bs.by === 'class' ? 'by class' : bs.by === 'unit' ? 'by unit' : 'by trainer'}`;
     let ticket = null, driveUrl = '', folderUrl = '', files = 0;
@@ -69,6 +70,7 @@ const Bulk = (() => {
       for (let i = 0; i < jobs.length; i++) {
         const { g, u } = jobs[i], tag = `${u.classCode} ${u.code}`;
         out.innerHTML = `<div class="bk-prog"><progress max="${jobs.length}" value="${i}"></progress><span>${i + 1} of ${jobs.length} - ${esc(tag)}</span></div>`;
+        await new Promise((res) => setTimeout(res));
         const made = [];
         try {
           if (want.reg) {

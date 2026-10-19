@@ -7,9 +7,9 @@
 <meta name="description" content="Check that a document approved in The ARK is genuine.">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <style>
-  :root { --bg: #f4f5f2; --card: #fff; --ink: #18211c; --muted: #5d6a62; --line: #dfe3dd; --ok: #10773c; --ok-bg: #e3f3e9; --warn: #a35f00; --warn-bg: #fcefd8; --bad: #c42830; --bad-bg: #fbe4e5; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0f1411; --card: #18201b; --ink: #e8ede9; --muted: #9aa79f; --line: #2c372f; --ok: #5ee08f; --ok-bg: #12301f; --warn: #f5b450; --warn-bg: #33270f; --bad: #ff8a8f; --bad-bg: #3a1618; } }
-  :root[data-theme="dark"] { --bg: #0f1411; --card: #18201b; --ink: #e8ede9; --muted: #9aa79f; --line: #2c372f; --ok: #5ee08f; --ok-bg: #12301f; --warn: #f5b450; --warn-bg: #33270f; --bad: #ff8a8f; --bad-bg: #3a1618; }
+  :root { --bg: #f4f5f2; --card: #fff; --ink: #18211c; --muted: #5d6a62; --line: #dfe3dd; --ok: #10773c; --ok-bg: #e3f3e9; --warn: #a35f00; --warn-bg: #fcefd8; --bad: #c42830; --bad-bg: #fbe4e5; --btn: #0b5d33; --btn-ink: #fff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0f1411; --card: #18201b; --ink: #e8ede9; --muted: #9aa79f; --line: #2c372f; --ok: #5ee08f; --ok-bg: #12301f; --warn: #f5b450; --warn-bg: #33270f; --bad: #ff8a8f; --bad-bg: #3a1618; --btn: #5ee08f; --btn-ink: #08200f; } }
+  :root[data-theme="dark"] { --bg: #0f1411; --card: #18201b; --ink: #e8ede9; --muted: #9aa79f; --line: #2c372f; --ok: #5ee08f; --ok-bg: #12301f; --warn: #f5b450; --warn-bg: #33270f; --bad: #ff8a8f; --bad-bg: #3a1618; --btn: #5ee08f; --btn-ink: #08200f; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 34rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
@@ -24,14 +24,15 @@
   dt { color: var(--muted); } dd { margin: 0; }
   form { display: flex; gap: .5rem; margin-top: 1rem; }
   input { flex: 1; min-width: 0; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; text-transform: uppercase; }
-  button { padding: .6rem 1rem; border: 0; border-radius: 8px; background: #0b5d33; color: #fff; font: 600 1rem system-ui, sans-serif; cursor: pointer; }
+  button { padding: .6rem 1rem; border: 0; border-radius: 8px; min-height: 44px; background: var(--btn); color: var(--btn-ink); font: 600 1rem system-ui, sans-serif; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--ok); outline-offset: 2px; }
   p.small { color: var(--muted); font-size: .875rem; }
 </style>
 </head>
 <body>
 <main>
   <header><img src="icons/rvnp-logo.png" alt="RVNP crest"><div><b>Check a document</b><span>Rift Valley National Polytechnic - Department of Computing and Informatics</span></div></header>
-  <div class="card" id="out"><p>Checking…</p></div>
+  <div class="card" id="out" role="status" aria-live="polite"><p>Checking…</p></div>
   <form id="f"><input id="ref" placeholder="ARK-26-XXXXXX" aria-label="Reference on the document" maxlength="20"><button>Check</button></form>
   <p class="small">The reference and QR code are printed beside the approval stamp. This page shows only what was approved, by whom and when.</p>
 </main>
@@ -62,7 +63,10 @@
         ${d.item ? `<dt>Item</dt><dd>${esc(d.item)}${d.version ? ' (version ' + esc(d.version) + ')' : ''}</dd>` : ''}
         <dt>Approved by</dt><dd>${esc(r.by)} (${esc(r.role)})</dd><dt>On</dt><dd>${esc(when(r.at))}</dd><dt>Reference</dt><dd>${esc(r.ref)}</dd>
         ${r.replacedBy ? `<dt>Newer approval</dt><dd>${esc(r.replacedBy)}</dd>` : ''}</dl>`;
-    } catch (e) { out.innerHTML = `<div class="verdict bad">Could not check</div><p>${esc(e.message)}. Check your internet connection and try again.</p>`; }
+    } catch (e) {
+      const server = e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(String(e && e.message));
+      out.innerHTML = `<div class="verdict bad">Could not check</div><p>${server || !e.message ? 'Could not reach the college server. Check your internet and try again.' : esc(e.message) + '. Try again in a moment.'}</p>`;
+    }
   }
   const ref = (new URLSearchParams(location.search).get('r') || '').trim().toUpperCase();
   document.getElementById('ref').value = ref;
