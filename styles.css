@@ -1099,6 +1099,14 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 /* Approving: ready comments, ticking several, the PIN, signatures as initials */
 .says { display: flex; flex-wrap: wrap; gap: .35rem; margin: -.25rem 0 .6rem; }
 .says .chipbtn { font-size: .8rem; padding: .2rem .6rem; }
+.del-regs { align-self: flex-start; margin-top: .25rem; }
+.del-list { list-style: none; margin: .25rem 0 0; padding: 0; max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.del-list li { display: flex; align-items: center; gap: .6rem; padding: .55rem .25rem; border-bottom: 1px solid var(--line); }
+.del-list label { display: flex; align-items: center; gap: .6rem; flex: 1; min-width: 0; cursor: pointer; margin: 0; }
+.del-list input { flex: none; width: 1rem; height: 1rem; margin: 0; }
+.del-list b { font-weight: 600; }
+.del-list small { display: block; color: var(--muted); }
+.del-list .pill { flex: none; }
 .batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem .25rem .75rem; }
 .mlist li.pickable { display: flex; align-items: center; gap: .5rem; }
 .mlist li.pickable .mrow { flex: 1; min-width: 0; }

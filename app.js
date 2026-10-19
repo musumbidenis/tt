@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.50.2';
+const APP_VERSION = '4.51.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -1631,10 +1631,19 @@ async function pullMine({ force = false } = {}) {
   if (!force && Date.now() - (pullMine.at || 0) < 2 * 60e3) return 0;
   pullMine.at = Date.now();
   const key = `${serverUrl()}|${me()?.code || ''}`;
-  let cursor = (await getLocal('pullLog')).cursors?.[key] || null, changed = 0;
+  const log0 = await getLocal('pullLog');
+  let cursor = log0.cursors?.[key] || null, delSince = log0.delSince?.[key] || '', changed = 0;
   for (let page = 0; page < 60; page++) {
-    const res = await api('mySessions', { cursor });
+    const res = await api('mySessions', { cursor, delSince });
     if (!res.ok) throw new Error(res.error || 'Could not fetch your registers');
+    // Deleted elsewhere: this copy goes too, unless it was made again here after the deletion.
+    const drop = [];
+    for (const g of res.deleted || []) {
+      try { const d = await db.get(g.id); if (!(String(d.createdAt || '') > g.at)) drop.push(g.id); } catch { /* not on this device */ }
+    }
+    if (drop.length) changed += await dropLocal(drop);
+    delSince = res.delSince || delSince;
+    await updateLocal('pullLog', (d) => { d.delSince = { ...(d.delSince || {}), [key]: delSince }; });
     for (const raw of res.sessions || []) {
       let x; try { x = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { continue; }
       if (await takeServerCopy(x)) changed++;
@@ -1645,6 +1654,88 @@ async function pullMine({ force = false } = {}) {
   }
   if (changed) renderTimetable();
   return changed;
+}
+
+/* ---------- deleting registers ----------
+ * A register marked by mistake (wrong slot, marked twice, wrong class) can be deleted, one or many at once. Online, the
+ * server removes it (from reports, the term register and Drive) and tells this trainer's other devices. Offline, only
+ * registers that never left this device can go; the rest wait for internet. */
+async function dropLocal(ids) {
+  const docs = [];
+  for (const id of ids) { try { docs.push(await db.get(id)); } catch { /* not here */ } }
+  if (docs.length) await db.bulkDocs(docs.map((d) => ({ _id: d._id, _rev: d._rev, _deleted: true })));
+  await markSent((m) => { for (const id of ids) delete m[id]; });
+  if (state.current && ids.some((id) => isOnScreen(id))) { state.dirty = false; state.current = null; renderRegister(); }
+  return docs.length;
+}
+async function deleteRegisters(ids) {
+  ids = [...new Set(ids)];
+  const out = { deleted: 0, failed: [], waiting: 0 };
+  if (!ids.length) return out;
+  if (state.dirty) await saveCurrent();
+  let gone = [];
+  if (navigator.onLine) {
+    for (const part of chunk(ids, 100)) {
+      const r = await api('deleteSessions', { ids: part });
+      if (!r.ok) throw new Error(r.error || 'The server refused that');
+      gone.push(...(r.deleted || [])); out.failed.push(...(r.failed || []));
+    }
+  } else {
+    const map = await sheetsSyncMap();
+    gone = ids.filter((id) => !map[id]);
+    out.waiting = ids.length - gone.length;
+  }
+  out.deleted = await dropLocal(gone);
+  renderTimetable(); refreshPending();
+  return out;
+}
+function deletedToast(r) {
+  const parts = [`Deleted ${r.deleted} register${r.deleted === 1 ? '' : 's'}`];
+  if (r.waiting) parts.push(`${r.waiting} already sent - deleting them needs internet`);
+  if (r.failed.length) parts.push(`${r.failed.length} not deleted: ${r.failed[0].error}`);
+  toast(parts.join(' - '), r.failed.length || r.waiting ? 'err' : 'ok');
+}
+const DEL_WARN = 'Its marks go from this device, the server, the term register and Google Drive. This cannot be undone.';
+async function deleteOpenRegister() {
+  const s = state.current; if (!s) return;
+  const ids = (s._parts || [s]).filter((p) => p._rev).map((p) => p._id);
+  if (!ids.length) { state.dirty = false; closeRegister(); return; }   // never saved: nothing to delete
+  const what = `${s.classCode} - ${s.unitCode} - ${fmtShort(s.date)} ${sessionLabel(s)}`;
+  if (!confirm(`Delete this register?
+
+${what}${ids.length > 1 ? `
+(all ${ids.length} streams)` : ''}
+
+${DEL_WARN}`)) return;
+  try { deletedToast(await deleteRegisters(ids)); } catch (e) { toast(e.message, 'err'); }
+}
+/** The registers on this device for the chosen class and unit, newest first, to tick and delete together. */
+const delPicked = new Set();
+async function openDeleteList() {
+  const cls = $('#fClass').value, unit = $('#fUnit').value;
+  if (!cls || !unit) { toast('Choose the class and unit first', 'err'); return; }
+  if (state.dirty) await saveCurrent();
+  delPicked.clear();
+  await drawDeleteList();
+  $('#delRegsDialog').showModal();
+}
+async function drawDeleteList() {
+  const cls = $('#fClass').value, unit = $('#fUnit').value;
+  const list = (await byPrefix('session:')).filter((s) => s.classCode === cls && s.unitCode === unit)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || slotNo(a.period) - slotNo(b.period));
+  const uname = (unitsFor(cls).find((u) => u.code === unit) || {}).name || unit;
+  const day = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  const rows = list.map((s) => {
+    const c = countMarks(s), wk = s.week ? `Week ${s.week} - ` : '';
+    return `<li><label><input type="checkbox" data-delpick="${esc(s._id)}"${delPicked.has(s._id) ? ' checked' : ''}>
+      <span><b>${esc(wk + day(s.date))} - ${esc(sessionLabel(s))}</b><small>${c.P + c.L}/${c.P + c.L + c.A + c.E} present${termLocked(s) ? ' - term ended' : ''}</small></span></label></li>`;
+  }).join('');
+  const n = delPicked.size;
+  $('#delRegsBody').innerHTML = `<div class="scan-head"><strong>Delete registers - ${esc(cls)} - ${esc(unit)}</strong><button type="button" class="btn small ghost" data-delclose>Close</button></div>
+    <p class="muted small">${esc(uname)}. Tick the registers marked by mistake. ${DEL_WARN}</p>
+    ${list.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-delall${n && n === list.length ? ' checked' : ''}><span>Select all ${list.length}</span></label>
+      <button type="button" class="btn small danger" data-delgo${n ? '' : ' disabled'}>Delete selected${n ? ` (${n})` : ''}</button></div>
+      <ul class="del-list">${rows}</ul>` : '<p class="muted">No registers for this class and unit on this device.</p>'}`;
 }
 
 async function pendingSessions() {
@@ -1744,6 +1835,7 @@ async function syncSheets({ silent = false, pull = true, force = !silent } = {})
         for (const s of batch) qrSentAt[s._id] = Date.now();
       } }).catch((e) => { sent += e.partial?.registers || 0; wakeOutbox(); throw e; });
     locked += out.locked; sent += out.registers;
+    if (out.deleted) renderTimetable();
   };
   try {
     // Registers this trainer made on another device come down first, so nothing here is sent over them.
@@ -2357,6 +2449,27 @@ function wire() {
   $('#cancelAddStudent').addEventListener('click', () => $('#addStudentDialog').close());
   $('#saveReg').addEventListener('click', async () => { state.dirty = true; await saveCurrent(); toast('Register saved on this device', 'ok'); });
   $('#closeReg').addEventListener('click', closeRegister);
+  $('#delReg').addEventListener('click', deleteOpenRegister);
+  $('#delRegsBtn').addEventListener('click', openDeleteList);
+  $('#delRegsDialog').addEventListener('change', (e) => {
+    const t = e.target;
+    const boxes = $$('#delRegsBody [data-delpick]');
+    if (t.matches('[data-delpick]')) { if (t.checked) delPicked.add(t.dataset.delpick); else delPicked.delete(t.dataset.delpick); }
+    if (t.matches('[data-delall]')) { delPicked.clear(); boxes.forEach((i) => { i.checked = t.checked; if (t.checked) delPicked.add(i.dataset.delpick); }); }
+    // The ticks stay as they are (no redraw); only the button and "Select all" follow them.
+    const n = delPicked.size, go = $('#delRegsBody [data-delgo]'), all = $('#delRegsBody [data-delall]');
+    if (go) { go.disabled = !n; go.textContent = n ? `Delete selected (${n})` : 'Delete selected'; }
+    if (all) all.checked = boxes.length > 0 && n === boxes.length;
+  });
+  $('#delRegsDialog').addEventListener('click', async (e) => {
+    if (e.target.closest('[data-delclose]')) { $('#delRegsDialog').close(); return; }
+    const go = e.target.closest('[data-delgo]'); if (!go) return;
+    const n = delPicked.size;
+    if (!n || !confirm(`Delete ${n} register${n === 1 ? '' : 's'}?\n\n${DEL_WARN}`)) return;
+    go.disabled = true;
+    try { const r = await deleteRegisters([...delPicked]); deletedToast(r); delPicked.clear(); } catch (err) { toast(err.message, 'err'); }
+    await drawDeleteList();
+  });
   $('#scanBtn').addEventListener('click', startScan);
   $('#lessonQrBtn').addEventListener('click', openLessonQR);
   $('#closeLessonQr').addEventListener('click', closeLessonQR);

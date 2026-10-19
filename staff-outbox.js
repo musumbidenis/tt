@@ -86,7 +86,7 @@
 
   async function runLocked(opts) {
     const db = opts.db;
-    const out = { registers: 0, marks: 0, locked: 0, held: 0, merged: [], authError: false, authMessage: '', busy: false, skipped: '' };
+    const out = { registers: 0, marks: 0, locked: 0, deleted: 0, held: 0, merged: [], authError: false, authMessage: '', busy: false, skipped: '' };
     const auth = await getLocal(db, 'auth');
     if (!auth.token || auth.mustChange) { out.skipped = 'no sign-in'; return out; }
     const settings = await getLocal(db, 'settings');
@@ -126,6 +126,12 @@
       for (const r of res.results || []) {
         if (r.status === 'merged' && r.session) out.merged.push(r.session);
         if (r.status === 'locked') out.locked++;
+        // Deleted on the server (on another device, or by the HOD or MIS Officer): this copy goes too.
+        if (r.status === 'deleted') {
+          try { const d = await db.get(r.sessionId); await db.remove(d); } catch { /* already gone */ }
+          await markSent((m) => { delete m[r.sessionId]; });
+          out.deleted++;
+        }
       }
       out.registers += batch.length;
       if (opts.onBatch) { try { await opts.onBatch(batch, res); } catch (e) { console.warn('outbox onBatch', e); } }

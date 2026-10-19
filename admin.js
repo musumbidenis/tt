@@ -43,6 +43,7 @@ const Admin = (() => {
       parts.push(section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
+    if (hasRole('HOD') || hasRole('MIS')) parts.push(section('m-registers', 'Saved registers', regsHtml()));
     box().innerHTML = groupTabs(parts) + parts.join('');
     showGroup_();
     const jobs = [];
@@ -56,7 +57,7 @@ const Admin = (() => {
 
   /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
   const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
-    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-classes']], ['people', 'People', ['m-staff', 'm-phones']], ['system', 'Backup and Drive', ['m-backup', 'm-drive']]];
+    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-classes', 'm-registers']], ['people', 'People', ['m-staff', 'm-phones']], ['system', 'Backup and Drive', ['m-backup', 'm-drive']]];
   let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
   function groupTabs(parts) {
     const html = parts.join(''), have = GROUPS.filter(([, , ids]) => ids.some((id) => html.includes(`id="${id}"`)));
@@ -82,7 +83,7 @@ const Admin = (() => {
   }
 
   /* ---------- tick boxes and "act on the ticked ones" bars (requests, class list, staff, phones) ---------- */
-  const picks = { req: new Set(), stu: new Set(), staff: new Set(), phone: new Set() };
+  const picks = { req: new Set(), stu: new Set(), staff: new Set(), phone: new Set(), reg: new Set() };
   const pickBox = (kind, id, label) => `<input type="checkbox" class="bpick" data-bpick="${kind}" value="${esc(id)}"${picks[kind].has(id) ? ' checked' : ''} aria-label="Select ${esc(label)}">`;
   /** The bar: "Select all N shown" and one button per action, each showing how many are ticked. */
   const pickBar = (kind, n, actions) => `<div class="batch-bar" data-bar="${kind}"><label class="kchip"><input type="checkbox" data-bpickall="${kind}"><span>Select all ${n} shown</span></label>
@@ -107,6 +108,7 @@ const Admin = (() => {
     const act = btn.dataset.bact, kind = act.split('-')[0], ids = [...picks[kind]];
     if (!ids.length) return;
     const n = ids.length, plural = n === 1 ? '' : 's';
+    if (act === 'reg-delete') { await deleteRegs(ids); return; }
     if (act === 'req-reject' && !confirm(`Reject ${n} student${plural}? They will be left out of the registers and reports.`)) return;
     if (act === 'stu-delete' && !confirm(`Delete ${n} student${plural} from the class lists? Use this for people added by mistake; Withdraw keeps their record.`)) return;
     if (act === 'staff-delete' && !confirm(`Delete ${n} staff member${plural}? They can no longer sign in. Their registers and marks stay under their name.`)) return;
@@ -129,6 +131,62 @@ const Admin = (() => {
     else await loadPhones();
     syncBar(kind);
   }
+
+  /* ---------- HOD and MIS: saved registers of a class, to delete those marked by mistake (several at once) ---------- */
+  const rg = { cls: '', unit: '', list: null };
+  function regsHtml() {
+    const classes = [...new Set([...state.classes.map((c) => c.code), ...state.units.map((u) => u.classCode)])].sort();
+    const units = state.units.filter((u) => u.classCode === rg.cls).sort((a, b) => a.code.localeCompare(b.code));
+    return `<p class="muted small">This term's registers of a class. Tick the ones marked by mistake (wrong slot, marked twice, wrong class) and delete them. They go from the reports, the term register, Google Drive and the trainer's devices. A term register the HOD approved has to be returned first.</p>
+      <div class="list-tools"><select id="rgClass" aria-label="Class"><option value="">Choose a class</option>${classes.map((c) => `<option${c === rg.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select id="rgUnit" aria-label="Unit"><option value="">All units</option>${units.map((u) => `<option value="${esc(u.code)}"${u.code === rg.unit ? ' selected' : ''}>${esc(u.code)} - ${esc(u.name)}</option>`).join('')}</select></div>
+      <div id="rgList">${rg.list ? regsList() : ''}</div>`;
+  }
+  const RG_DAY = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  function regsList() {
+    const list = rg.list || [];
+    if (!list.length) return '<p class="muted">No registers for this class this term.</p>';
+    for (const id of [...picks.reg]) if (!list.some((r) => r.id === id)) picks.reg.delete(id);
+    const shown = Tables.slice('regsDel', list), off = Tables.offset('regsDel');
+    return `${pickBar('reg', shown.length, [['reg-delete', 'Delete', 'danger']])}
+      <ul class="mlist">${shown.map((r, i) => `<li class="pickable">${r.signoff === 'approved' ? '<span class="bpick"></span>' : pickBox('reg', r.id, `${r.unitCode} ${r.date}`)}
+        <span class="mrow"><span><b>${off + i + 1}. ${esc(r.unitCode)} - ${esc(RG_DAY(r.date))} - ${esc(r.kind === 'lesson' ? r.period : `${r.kind === 'cat' ? 'CAT' : 'Extra'} - ${r.period}`)}</b>
+        <small>${esc(r.trainerName)} - ${r.present}/${r.total} present</small></span>
+        ${r.signoff === 'approved' ? '<span class="pill synced">Approved</span>' : r.signoff === 'submitted' ? '<span class="pill pending">With the HOD</span>' : ''}</span></li>`).join('')}</ul>${Tables.bar('regsDel', list)}`;
+  }
+  const drawRegs = () => { const el = $('#rgList'); if (el) { el.innerHTML = regsList(); syncBar('reg'); } };
+  async function loadRegs() {
+    rg.list = null;
+    const el = $('#rgList'); if (!rg.cls || !el) { if (el) el.innerHTML = ''; return; }
+    el.innerHTML = '<p class="muted">Loading…</p>';
+    try { rg.list = need(await api('sessionList', { classCode: rg.cls, unitCode: rg.unit })).sessions; Tables.reset('regsDel'); drawRegs(); }
+    catch (e) { el.innerHTML = `<p class="err-text">${esc(e.message)}</p>`; }
+  }
+  async function deleteRegs(ids) {
+    const n = ids.length;
+    if (!confirm(`Delete ${n} register${n === 1 ? '' : 's'} of ${rg.cls}?\n\nTheir marks go from the reports, the term register, Google Drive and the trainer's devices. This cannot be undone.`)) return;
+    $$('[data-bar="reg"] button').forEach((b) => { b.disabled = true; });
+    let done = 0; const failed = [];
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        const r = need(await api('deleteSessions', { ids: ids.slice(i, i + 100) }));
+        done += r.deleted.length; failed.push(...r.failed);
+        r.deleted.forEach((id) => picks.reg.delete(id));
+      }
+    } catch (e) { failed.push({ error: e.message }); }
+    toast(`Deleted ${done} register${done === 1 ? '' : 's'}${failed.length ? ` - ${failed.length} not deleted: ${failed[0].error}` : ''}`, failed.length ? 'err' : 'ok');
+    await loadRegs();
+  }
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.id === 'rgClass') { rg.cls = t.value; rg.unit = ''; picks.reg.clear(); const s = $('#m-registers'); if (s) replaceBody(s, regsHtml()); loadRegs(); }
+    else if (t.id === 'rgUnit') { rg.unit = t.value; picks.reg.clear(); loadRegs(); }
+  });
+  // Opened before the class lists arrived: the class box fills in when it is tapped.
+  document.addEventListener('focusin', (e) => {
+    if (e.target.id === 'rgClass' && e.target.options.length <= 1 && state.classes.length) { const s = $('#m-registers'); if (s) replaceBody(s, regsHtml()); }
+  });
+  Tables.on('regsDel', drawRegs);
 
   /* ---------- HOD: registers to approve ---------- */
   let soQuery = '', soSort = 'new', staffSort = 'name';

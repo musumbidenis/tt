@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.20.1';
-const SCHEMA_VERSION = '20';
+export const VERSION = '7.21.0';
+const SCHEMA_VERSION = '21';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -76,6 +76,8 @@ CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
 CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
 CREATE TABLE IF NOT EXISTS mail_groups (key TEXT PRIMARY KEY, email TEXT, name TEXT, group_name TEXT, added TEXT, want_hash TEXT, synced_at TEXT, error TEXT, failed TEXT);
 CREATE TABLE IF NOT EXISTS mail_out (id TEXT PRIMARY KEY, notice_id TEXT, bcc TEXT, reply_to TEXT, subject TEXT, body TEXT, status TEXT, tries INTEGER DEFAULT 0, error TEXT, at TEXT, sent_at TEXT);
+CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, trainer_id TEXT COLLATE NOCASE, class_code TEXT, unit_code TEXT, by_code TEXT, at TEXT);
+CREATE INDEX IF NOT EXISTS deleted_sessions_trainer ON deleted_sessions (trainer_id, at);
 CREATE TABLE IF NOT EXISTS verify_checks (verification_id TEXT, adm_no TEXT COLLATE NOCASE, who TEXT, valid INTEGER, authentic INTEGER, current INTEGER, sufficient INTEGER, agree INTEGER, comment TEXT, by_code TEXT, at TEXT, PRIMARY KEY (verification_id, adm_no, who));`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
@@ -312,6 +314,8 @@ const ACTIONS = {
   pulse: { fn: async (env, b, me, pre) => ({ ok: true, last: pre.meta.last_change || '' }) },
   push: { role: ['TRAINER', 'HOD'], pre: (b) => pushPre(b.sessions || []), fn: (env, b, me, pre) => pushSessions(env, b.sessions || [], me, pre) },
   mySessions: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => mySessions(env, b, me) },
+  deleteSessions: { role: ['TRAINER', 'HOD', 'MIS'], fn: (env, b, me) => deleteSessions(env, b, me) },
+  sessionList: { role: ['HOD', 'MIS'], fn: (env, b) => sessionList(env, b) },
   checkins: { role: ['TRAINER', 'HOD'], pre: (b) => [checkinsQuery(b.sessionIds || [], b.since || '')], fn: (env, b, me, pre) => acceptedCheckins(b.sessionIds || [], pre.rows[0]) },
   addStudents: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => addStudents(env, b.students || [], me) },
   mySettings: { fn: (env, b, me) => saveMySettings(env, b, me) },
@@ -394,7 +398,7 @@ const ACTIONS = {
 
 /* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
-const NUDGE_ACTIONS = new Set(['push', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
+const NUDGE_ACTIONS = new Set(['push', 'deleteSessions', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
   'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep']);
 
@@ -1036,16 +1040,23 @@ function pushPre(sessions) {
   const J = JSON.stringify(pushList(sessions).map((s) => s.sessionId));
   return [[`SELECT id, updated_at, term_id, data FROM sessions WHERE id IN ${IN}`, J], [TERM_SQL],
     [`SELECT * FROM checkins WHERE session_id IN ${IN} AND status IN ('accepted','pending')`, J],
-    [`SELECT term_id, class_code, unit_code FROM unlocks WHERE ${UNLOCK_LIVE}`]];
+    [`SELECT term_id, class_code, unit_code FROM unlocks WHERE ${UNLOCK_LIVE}`], [`SELECT id, at FROM deleted_sessions WHERE id IN ${IN}`, J]];
 }
 async function pushSessions(env, sessions, me, pre) {
   sessions = pushList(sessions);
-  const [old, termRows, cis, unlockRows] = pre.rows;
+  const [old, termRows, cis, unlockRows, gone] = pre.rows;
+  const dead = new Map((gone || []).map((r) => [r.id, r.at]));
   const prev = new Map(old.map((r) => [r.id, r]));
   const activeId = termRows[0]?.id || '';
   const open = new Set(unlockRows.map((r) => `${r.term_id}|${r.class_code}|${r.unit_code}`));
   const results = [], fresh = [];
+  const revived = [];
   for (const s of sessions) {
+    // A deleted register comes back only when it was made again after the deletion (the same slot marked afresh).
+    if (dead.has(s.sessionId)) {
+      if (!(String(s.createdAt || '') > dead.get(s.sessionId))) { results.push({ sessionId: s.sessionId, status: 'deleted' }); continue; }
+      revived.push(s.sessionId);
+    }
     const had = prev.get(s.sessionId);
     // A register from a term that has ended stays as it was, unless the HOD or MIS Officer unlocked it. One the
     // server has never seen (a device that was offline when the term ended) is still taken in: that is not a change.
@@ -1075,7 +1086,8 @@ async function pushSessions(env, sessions, me, pre) {
   const accepted = acceptedOf(cis.filter((r) => r.status === 'accepted'));
   const term = termOut(termRows[0]);
   await many(env, ...upsertStmts('sessions', SCOLS, fresh.map((s) => sessionRow(s, accepted[s.sessionId], term, now)), ['id']),
-    ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY), ciWrites.some((r) => r.status === 'accepted') && changedStmt());
+    ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY), ciWrites.some((r) => r.status === 'accepted') && changedStmt(),
+    revived.length && [`DELETE FROM deleted_sessions WHERE id IN ${IN}`, JSON.stringify(revived)]);
   return { ok: true, results };
 }
 
@@ -1109,7 +1121,63 @@ async function mySessions(env, b, me) {
   const rows = await all(env, `SELECT id, data, synced_at FROM sessions WHERE trainer_id=? AND (synced_at > ? OR (synced_at = ? AND id > ?))
     ORDER BY synced_at, id LIMIT ${PULL_PAGE}`, me.code, at, at, id);
   const last = rows[rows.length - 1];
-  return { ok: true, sessions: rows.map((r) => r.data), cursor: last ? { at: last.synced_at, id: last.id } : { at, id }, more: rows.length === PULL_PAGE };
+  // This trainer's registers deleted since the device last asked (on another device, or by the HOD or MIS Officer).
+  const delSince = String(b.delSince || '');
+  const gone = await all(env, 'SELECT id, at FROM deleted_sessions WHERE trainer_id=? AND at > ? ORDER BY at LIMIT 500', me.code, delSince);
+  return { ok: true, sessions: rows.map((r) => r.data), cursor: last ? { at: last.synced_at, id: last.id } : { at, id }, more: rows.length === PULL_PAGE,
+    deleted: gone.map((r) => ({ id: r.id, at: r.at })), delSince: gone.length ? gone[gone.length - 1].at : delSince };
+}
+
+/* ---------- deleting registers (a lesson marked by mistake, twice, or in the wrong slot) ----------
+ * A trainer deletes their own; the HOD and the MIS Officer any. Never one in a term register the HOD has approved (it is
+ * returned first). A trainer cannot delete one waiting for the HOD, or from a term that has ended (unless unlocked).
+ * The id is remembered so the trainer's other devices drop their copy and do not send it back. */
+const DEL_MAX = 100;
+async function deleteSessions(env, b, me) {
+  const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(String).filter((x) => x.startsWith('session:')))].slice(0, DEL_MAX);
+  if (!ids.length) fail('Choose the registers to delete');
+  const J = JSON.stringify(ids), boss = me.roles.includes('HOD') || me.roles.includes('MIS');
+  const [rows, termRows, unlockRows, so] = await many(env,
+    [`SELECT id, date, class_code, unit_code, trainer_id, term_id FROM sessions WHERE id IN ${IN}`, J], [TERM_SQL],
+    [`SELECT term_id, class_code, unit_code FROM unlocks WHERE ${UNLOCK_LIVE}`],
+    [`SELECT term_id, class_code, unit_code, status FROM signoffs WHERE status IN ('approved','submitted') AND class_code IN (SELECT class_code FROM sessions WHERE id IN ${IN})`, J]);
+  const byId = new Map(rows.map((r) => [r.id, r])), activeId = termRows[0]?.id || '';
+  const open = new Set(unlockRows.map((r) => `${r.term_id}|${r.class_code}|${r.unit_code}`));
+  const signed = new Map(so.map((r) => [`${r.term_id}|${r.class_code}|${r.unit_code}`, r.status]));
+  const ok = [], failed = [], now = nowIso();
+  for (const id of ids) {
+    const r = byId.get(id);
+    // Never reached the server (or already deleted): nothing to remove here, but other devices still drop it.
+    if (!r) { const p = id.split(':'); ok.push({ id, trainer_id: me.code, class_code: p[2] || '', unit_code: p[3] || '', date: p[1] || '' }); continue; }
+    const key = `${r.term_id}|${r.class_code}|${r.unit_code}`, st = signed.get(key);
+    if (!boss && lower(r.trainer_id) !== lower(me.code)) failed.push({ id, error: 'This register belongs to another trainer' });
+    else if (st === 'approved') failed.push({ id, error: 'The HOD approved this term register - it has to be returned first' });
+    else if (st === 'submitted' && !boss) failed.push({ id, error: 'This term register is waiting for the HOD - ask for it back first' });
+    else if (!boss && r.term_id && activeId && r.term_id !== activeId && !open.has(key)) failed.push({ id, error: 'The term has ended - the HOD or MIS Officer can unlock it' });
+    else ok.push(r);
+  }
+  if (ok.length) {
+    const D = JSON.stringify(ok.map((r) => r.id));
+    await many(env, [`DELETE FROM checkins WHERE session_id IN ${IN}`, D], [`DELETE FROM sessions WHERE id IN ${IN}`, D],
+      ...upsertStmts('deleted_sessions', ['id', 'trainer_id', 'class_code', 'unit_code', 'by_code', 'at'],
+        ok.map((r) => ({ id: r.id, trainer_id: r.trainer_id || me.code, class_code: r.class_code, unit_code: r.unit_code, by_code: me.code, at: now })), ['id']),
+      changedStmt());
+    const what = ok.map((r) => `${r.class_code} ${r.unit_code} ${r.date}`);
+    await audit(env, me, 'registers deleted', `${ok.length}: ${what.slice(0, 40).join(', ')}${what.length > 40 ? ' and more' : ''}`);
+  }
+  return { ok: true, deleted: ok.map((r) => r.id), failed };
+}
+/** HOD and MIS: the registers of one class (one unit, or all its units) in a term, newest first, for deleting. */
+async function sessionList(env, b) {
+  const cls = String(b.classCode || '').trim(), unit = String(b.unitCode || '').trim();
+  if (!cls) fail('Choose a class');
+  const termId = String(b.termId || '') || (await one(env, TERM_SQL))?.id || '';
+  const rows = await all(env, `SELECT s.id, s.date, s.class_code, s.unit_code, s.unit_name, s.period, s.kind, s.trainer_name, s.present, s.late, s.total, g.status AS signoff
+    FROM sessions s LEFT JOIN signoffs g ON g.term_id=s.term_id AND g.class_code=s.class_code AND g.unit_code=s.unit_code
+    WHERE s.class_code=? AND (?='' OR s.unit_code=?) AND s.term_id=? ORDER BY s.date DESC, s.period LIMIT 2000`, cls, unit, unit, termId);
+  return { ok: true, termId, sessions: rows.map((r) => ({ id: r.id, date: r.date, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name || '',
+    period: r.period || '', kind: r.kind || 'lesson', trainerName: r.trainer_name || '', present: (r.present || 0) + (r.late || 0), total: r.total || 0,
+    signoff: r.signoff || '' })) };
 }
 const PULL_PAGE = 120;
 
@@ -1685,7 +1753,7 @@ async function bridgeFeed(env, q) {
   let keys;
   if (!since) keys = loading.map(unitKey);
   else {
-    const [sess, tr, rq, so, st, ld, tm, mk] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM sessions WHERE synced_at > ?', since],
+    const [sess, tr, rq, so, st, ld, tm, mk] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM sessions WHERE synced_at > ? UNION SELECT class_code, unit_code FROM deleted_sessions WHERE at > ?', since, since],
       ['SELECT DISTINCT class_code FROM trainees WHERE updated_at > ? OR added_at > ?', since, since],
       ['SELECT DISTINCT class_code FROM requests WHERE requested_at > ? OR decided_at > ?', since, since],
       ['SELECT DISTINCT class_code, unit_code FROM signoffs WHERE submitted_at > ? OR decided_at > ?', since, since],

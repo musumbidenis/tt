@@ -112,6 +112,7 @@
       <label id="repeatBox" class="repeat-row" hidden><input type="checkbox" id="repeatOn"> <span id="repeatText">Repeat this slot every week</span></label>
       <input type="hidden" id="fDate"><input type="hidden" id="fPeriod"><input type="hidden" id="fSlots" value="1">
       <button type="submit" class="btn primary" id="openBtn" disabled>Choose a slot on the timetable</button>
+      <button type="button" class="btn ghost small del-regs" id="delRegsBtn">Delete registers</button>
     </form>
 
     <div id="register" class="card register" hidden>
@@ -147,6 +148,7 @@
       </label>
 
       <div class="reg-actions">
+        <button type="button" class="btn ghost danger" id="delReg">Delete</button>
         <button type="button" class="btn ghost" id="closeReg">Close</button>
         <button type="button" class="btn primary" id="saveReg">Save register</button>
       </div>
@@ -328,6 +330,7 @@
 </dialog>
 
 <dialog id="poeDialog" class="sheet-dialog wide poe-dialog" aria-label="Evidence"><div id="poeDialogBody"></div></dialog>
+<dialog id="delRegsDialog" class="sheet-dialog wide" aria-label="Delete registers"><div id="delRegsBody"></div></dialog>
 <dialog id="adminDialog" class="sheet-dialog wide"><div id="adminDialogBody"></div></dialog>
 <dialog id="noticeDialog" class="sheet-dialog wide" aria-label="Messages"><div id="noticeBody"></div></dialog>
 
