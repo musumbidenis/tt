@@ -60,7 +60,8 @@ body {
   font: 16px/1.5 var(--text);
   -webkit-font-smoothing: antialiased;
 }
-h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; text-wrap: balance; }
+p, li { text-wrap: pretty; }
 h2 { font-size: 1.125rem; margin: 0 0 .5rem; }
 p { margin: .25rem 0 .75rem; }
 code { font-size: .875em; background: var(--sunk); padding: .05em .35em; border-radius: 4px; }
@@ -154,10 +155,10 @@ label.check input { width: auto; height: auto; margin: 0; }
   min-height: 44px; padding: .5rem 1rem; border-radius: var(--r-sm);
   font: 600 .9375rem/1.2 var(--display); cursor: pointer; white-space: nowrap; text-decoration: none;
   border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
-  transition: background-color .15s, border-color .15s;
+  transition: background-color .15s, border-color .15s, transform .1s ease-out;
 }
 .btn:hover { border-color: var(--ink-2); }
-.btn:active { transform: translateY(1px); }
+.btn:active { transform: scale(.96); }
 .btn:disabled { opacity: .5; cursor: default; transform: none; }
 .btn.primary { background: var(--btn-bg); border-color: var(--btn-bg); color: var(--btn-ink); }
 .btn.primary:hover { background: color-mix(in srgb, var(--btn-bg) 82%, var(--forest)); }
@@ -382,7 +383,8 @@ tr.below .bar i { background: var(--a); }
 .qr-box { background: #fff; border-radius: 10px; padding: .5rem; display: flex; justify-content: center; border: 1px solid var(--line); }
 .qr-box svg { width: min(88vw, 480px); height: auto; display: block; }
 .qr-timer { height: 8px; border-radius: 4px; background: var(--sunk); margin: .875rem 0 .75rem; overflow: hidden; }
-.qr-timer i { display: block; height: 100%; background: var(--crest-green); transition: width .25s linear; }
+/* The bar shrinks with transform: scaleX (no layout work each second). */
+.qr-timer i { display: block; height: 100%; width: 100%; background: var(--crest-green); transform-origin: left center; transition: transform .25s linear; }
 .qr-live { text-align: center; margin: .25rem 0; font: 500 1.0625rem var(--display); }
 .qr-live b { font-size: 2.5rem; font-weight: 700; letter-spacing: -.03em; color: var(--p); margin-right: .2rem; font-variant-numeric: tabular-nums; vertical-align: -.1em; }
 .qr-live span { display: block; color: var(--muted); font: 400 .9375rem var(--text); margin-top: .1rem; }
@@ -675,7 +677,7 @@ fieldset .more[open] summary { flex-basis: 100%; }
 
 /* ---------- student app: evidence (POE) ---------- */
 .view-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding: 4px; margin-bottom: 1rem; background: var(--sunk); border-radius: var(--r-lg); }
-.view-tabs button { appearance: none; border: 0; border-radius: 9px; padding: .65rem .5rem; background: none; color: var(--ink-2); font: 600 .9375rem var(--display); cursor: pointer; }
+.view-tabs button { appearance: none; border: 0; border-radius: calc(var(--r-lg) - 4px); padding: .65rem .5rem; background: none; color: var(--ink-2); font: 600 .9375rem var(--display); cursor: pointer; }
 .view-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
 body.student .view-checkin, body.student .view-poe, body.student .view-subs, body.student .view-msgs { display: none; }
 body.student[data-view="msgs"] .view-msgs { display: block; }
@@ -691,7 +693,9 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-doc-head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; margin-bottom: .5rem; }
 .poe-pages { list-style: none; margin: 0 0 .5rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: .5rem; }
 .poe-pages li { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.poe-pages img { display: block; width: 100%; aspect-ratio: 210 / 297; object-fit: cover; background: var(--sunk); }
+.poe-pages img { display: block; width: 100%; aspect-ratio: 210 / 297; object-fit: cover; background: var(--sunk); outline: 1px solid oklch(0 0 0 / .1); outline-offset: -1px; }
+.poe-img, .poe-pages-view .poe-page { outline: 1px solid oklch(0 0 0 / .1); outline-offset: -1px; }
+@media (prefers-color-scheme: dark) { .poe-pages img, .poe-img, .poe-pages-view .poe-page { outline-color: oklch(1 0 0 / .1); } }
 .poe-pages img.f-document { filter: grayscale(1) contrast(1.6) brightness(1.08); }
 .poe-pages img.f-grey { filter: grayscale(1); }
 .poe-pages li > span:not(.pg-tools) { position: absolute; top: 4px; left: 4px; background: rgba(0, 0, 0, .65); color: #fff; font-size: .75rem; font-weight: 700; border-radius: 99px; padding: 0 .4rem; }
@@ -992,7 +996,8 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .doc-video .page-frame { position: absolute; inset: 6% 8%; border: 2px dashed rgba(255, 255, 255, .85); border-radius: 6px; pointer-events: none; }
 .cam-actions { display: flex; justify-content: center; padding: .5rem 0 .25rem; }
 .shutter { width: 68px; height: 68px; border-radius: 50%; border: 4px solid var(--surface); background: var(--p); box-shadow: 0 0 0 3px var(--p); cursor: pointer; }
-.shutter:active { transform: scale(.94); }
+.shutter { transition: transform .1s ease-out; }
+.shutter:active { transform: scale(.96); }
 .shutter:disabled { opacity: .5; }
 
 /* ---------- 4.13.2: smaller text on phones, in both apps ----------

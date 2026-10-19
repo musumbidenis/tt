@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.54.0';
+const APP_VERSION = '4.54.1';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -2057,7 +2057,7 @@ async function openLessonQR() {
       box.dataset.url = url;
     }
     const left = QR_WINDOW - ((Date.now() / 1000) % QR_WINDOW);
-    $('#lessonQrBar').style.width = `${(left / QR_WINDOW) * 100}%`;
+    $('#lessonQrBar').style.transform = `scaleX(${left / QR_WINDOW})`;
   };
   await tick();
   lessonQrTimer = setInterval(tick, 250);
