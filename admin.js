@@ -758,14 +758,22 @@ const Admin = (() => {
     const last = r.running ? `<p><b>Backing up now…</b> ${r.copied || 0} copied so far.</p>`
       : r.finishedAt ? `<p>Last backup ${esc(fmtTime(r.finishedAt))}: <b>${r.copied || 0}</b> copied${r.changed ? `, ${r.changed} changed after sending` : ''}${r.failed ? `, <span class="err-text">${r.failed} could not be copied</span>` : ''}.</p>`
         : r.paused ? '<p class="err-text">The last backup stopped because the Drive is nearly full.</p>' : '<p class="muted">No backup yet.</p>';
+    // Trainers' folders (their sheets and anything they keep there) and the Reports folder, copied at the same times.
+    const t = r.trainers || {};
+    const tline = t.running ? `<b>Copying now…</b> ${t.copied || 0} copied so far.`
+      : t.finishedAt ? `Last copied ${esc(fmtTime(t.finishedAt))} - <b>${t.copied || 0}</b> new or changed${t.same ? ` - ${t.same} unchanged` : ''}${t.failed ? ` - <span class="err-text">${t.failed} could not be copied</span>` : ''}.`
+        : t.paused ? '<span class="err-text">Stopped because the Drive is nearly full.</span>' : 'Not copied yet - they go with the next backup.';
+    const trainersBox = `<h3 class="h-sub">Trainers' files</h3><p class="muted small">Each trainer's Drive folder (attendance and marks sheets, and anything they keep there) and the Reports folder are copied into <b>The ARK - Archive</b> too. A file is copied again only after it changes.</p>
+      <p class="small">${tline}</p>${t.errors?.length ? fold('trainerBackupErr', `${t.errors.length} problem${t.errors.length === 1 ? '' : 's'}`, `<ul class="h-facts">${t.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : ''}`;
     const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}"${h === Number(b.plan.hour) ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
     fill('m-backup', `${banner}
-      <p class="muted">Approved documents that students keep in their own Drive are copied into <b>The ARK - Archive</b> in ${esc(who)}'s Drive, so the college keeps them after a student leaves.</p>
+      <p class="muted">Approved POE documents that students keep in their own Drive are copied into <b>The ARK - Archive</b> in ${esc(who)}'s Drive, so the college keeps them after a student leaves.</p>
       ${gauge}
       ${r.wrongAccount ? `<p class="err-text small">The Drive bridge runs as ${esc(r.email)}, but students share their files with ${esc(r.wrongAccount)}. Make them the same account (Manage → Google Drive → Backup account).</p>` : ''}
       ${r.lastError && !r.wrongAccount ? `<p class="err-text small">${esc(r.lastError)}</p>` : ''}
       ${last}
       <p class="small">${b.waiting ? `<b>${b.waiting}</b> approved document(s) waiting for the next backup.` : 'Every approved document is backed up.'}</p>
+      ${trainersBox}
       ${b.gaveUp.length ? fold('backupFailed', `${b.gaveUp.length} could not be copied`, `<ul class="mlist">${b.gaveUp.map((g) => `<li><span><b>${esc(g.name)}</b><small>${esc(g.admNo)} - ${esc(g.what)} - ${esc(g.error)}</small></span></li>`).join('')}</ul>
         <p class="muted small">Usually the student deleted the file or stopped sharing it.</p><button type="button" class="btn small" data-act="backupRetry">Try these again</button>`) : ''}
       <form id="backupForm" class="inline-form">

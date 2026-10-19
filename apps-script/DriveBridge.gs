@@ -14,6 +14,8 @@
  *   4. Backup (from 1.4.0): approved documents that students keep in their own Drive (shared with this account) are
  *      copied into "The ARK - Archive / <Class> / <Adm No - Name>" in this account's Drive, when the HOD or MIS
  *      Officer asks or on their repeat setting. It stops before this account's Drive is 95% full.
+ *   5. Trainers' files (from 1.9.0): at the same times, every trainer's folder (their sheets and anything they keep there)
+ *      and the Reports folder are mirrored into "The ARK - Archive / Trainers / <folder>" and "/ Reports".
  * Every upload and preview needs a ticket signed by the database with the shared SECRET, so the open
  * web app address cannot be used to read or write anything else.
  *
@@ -26,7 +28,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.8.2';
+var BRIDGE_VERSION = '1.9.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -265,6 +267,7 @@ function sync() {
     try { if (mailAndGroups_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('groups and email: ' + e); problems.push('Email and groups: ' + (e && e.message || e)); }
     // Backups use whatever time this run has left; unfinished ones carry on in the next run.
     try { if (backup_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('backup: ' + e); problems.push('Backup: ' + (e && e.message || e)); }
+    try { if (backupTrainers_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('trainer backup: ' + e); problems.push("Trainers' files backup: " + (e && e.message || e)); }
   } catch (e) { problems.push('Drive update: ' + (e && e.message || e)); throw e; }
   finally {
     lock.releaseLock();
@@ -279,6 +282,69 @@ function sync() {
     try { scheduleSync_(); } catch (e) { Logger.log('could not book the next update: ' + e); }
   }
 }
+/* ---------- backup of trainers' files (from 1.9.0) ----------
+ * Each trainer's folder and the Reports folder are mirrored into the archive. A file is copied again only when it changed
+ * since its last copy: the copy remembers the original's id and modified time (appProperties arkSrc / arkMod), and the
+ * older copy is deleted. Files deleted at the source keep their last copy. A run that runs out of time carries on next
+ * run (unchanged files are only listed, not copied). */
+var FOLDER_MIME = 'application/vnd.google-apps.folder';
+function listChildren_(folderId, token) {
+  var out = [], page = '';
+  do {
+    var r = driveApi_('get', '/drive/v3/files?pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true&fields='
+      + encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,size,appProperties)')
+      + '&q=' + encodeURIComponent("'" + folderId + "' in parents and trashed=false") + (page ? '&pageToken=' + encodeURIComponent(page) : ''), null, token);
+    out = out.concat(r.files || []); page = r.nextPageToken || '';
+  } while (page);
+  return out;
+}
+function mirror_(srcId, dest, ctx) {
+  var have = {};
+  listChildren_(dest.getId(), ctx.token).forEach(function (c) { var s = c.appProperties && c.appProperties.arkSrc; if (s) have[s] = c; });
+  var items = listChildren_(srcId, ctx.token);
+  for (var i = 0; i < items.length; i++) {
+    if (Date.now() - ctx.started > TIME_BUDGET_MS) { ctx.more = true; return; }
+    var f = items[i];
+    if (f.mimeType === FOLDER_MIME) { mirror_(f.id, childFolder_(dest, f.name), ctx); if (ctx.more || ctx.paused) return; continue; }
+    if (f.mimeType === 'application/vnd.google-apps.shortcut' || f.mimeType === 'application/vnd.google-apps.form') continue;
+    var old = have[f.id];
+    if (old && old.appProperties.arkMod === f.modifiedTime) { ctx.same++; continue; }
+    var size = Number(f.size) || 0;
+    if (ctx.limit > 0 && (ctx.used + size) / ctx.limit >= ctx.stopAt) { ctx.paused = true; return; }   // stop before the Drive fills up
+    try {
+      driveApi_('post', '/drive/v3/files/' + encodeURIComponent(f.id) + '/copy?fields=id&supportsAllDrives=true',
+        { name: f.name, parents: [dest.getId()], appProperties: { arkSrc: f.id, arkMod: f.modifiedTime }, description: 'Backup copy made by The ARK' }, ctx.token);
+      if (old) { try { driveApi_('delete', '/drive/v3/files/' + encodeURIComponent(old.id) + '?supportsAllDrives=true', null, ctx.token); } catch (e) { /* the old copy stays */ } }
+      ctx.used += size; ctx.copied++;
+    } catch (e) { ctx.failed++; if (ctx.errors.length < 10) ctx.errors.push(f.name + ': ' + (e && e.message || e)); }
+  }
+}
+/** Returns true when the copying is still going (the next run carries on). */
+function backupTrainers_(started) {
+  if (Date.now() - started > TIME_BUDGET_MS) return true;
+  var p = PropertiesService.getScriptProperties();
+  var job = callWorker_('trainerBackupJob', {});
+  if (!job.due) return false;
+  var root = archiveRoot_(p), ctx = { token: ScriptApp.getOAuthToken(), started: started, used: DriveApp.getStorageUsed(), limit: Number(job.limit) || 0,
+    stopAt: Number(job.stopAt) || 0.95, copied: 0, same: 0, failed: 0, errors: [], more: false, paused: false };
+  var tdest = childFolder_(root, 'Trainers'), folders = trainerFolders_();
+  for (var i = 0; i < folders.length && !ctx.more && !ctx.paused; i++) {
+    try { mirror_(folders[i].id, childFolder_(tdest, folders[i].name), ctx); }
+    catch (e) { ctx.failed++; if (ctx.errors.length < 10) ctx.errors.push(folders[i].name + ': ' + (e && e.message || e)); }
+  }
+  if (!ctx.more && !ctx.paused) {
+    var trainers = DriveApp.getFolderById(p.getProperty('TRAINERS_FOLDER_ID')), parents = trainers.getParents();
+    var base = parents.hasNext() ? parents.next() : DriveApp.getRootFolder(), reports = base.getFoldersByName('Reports');
+    if (reports.hasNext()) {
+      try { mirror_(reports.next().getId(), childFolder_(root, 'Reports'), ctx); }
+      catch (e) { ctx.failed++; if (ctx.errors.length < 10) ctx.errors.push('Reports: ' + (e && e.message || e)); }
+    }
+  }
+  callWorker_('trainerBackupDone', { copied: ctx.copied, same: ctx.same, failed: ctx.failed, errors: ctx.errors, used: ctx.used,
+    finished: !ctx.more && !ctx.paused, paused: ctx.paused });
+  return ctx.more;
+}
+
 /* ---------- backup of approved evidence into this account's Drive ---------- */
 var ARCHIVE_ROOT = 'The ARK - Archive';
 function driveApi_(method, path, body, token) {

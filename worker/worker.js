@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.22.0';
+export const VERSION = '7.23.0';
 const SCHEMA_VERSION = '22';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -1730,6 +1730,8 @@ const BRIDGE_ACTIONS = {
   },
   backupJob: async (env, b) => backupJob(env, await verifyBridge(env, b)),
   backupDone: async (env, b) => backupDone(env, await verifyBridge(env, b)),
+  trainerBackupJob: async (env, b) => { await verifyBridge(env, b); return trainerBackupJob(env); },
+  trainerBackupDone: async (env, b) => trainerBackupDone(env, await verifyBridge(env, b)),
   groupsJob: async (env, b) => { await verifyBridge(env, b); return groupsJob(env); },
   groupsDone: async (env, b) => groupsDone(env, await verifyBridge(env, b)),
   /** After each run: how long it took, what went wrong, and the email allowance left today. */
@@ -1815,6 +1817,35 @@ async function backupDone(env, q) {
   if (q.paused) Object.assign(rep, { paused: true, running: false });
   if (q.finished && !q.paused) Object.assign(rep, { running: false, finishedAt: now });
   await many(env, ...stmts, metaStmt('backup_report', JSON.stringify(rep)));
+  return { ok: true };
+}
+/* Trainers' files (each trainer's Drive folder and the Reports folder) are copied at the same times as the evidence:
+ * the same plan and "Back up now", with their own progress in backup_report.trainers. */
+async function trainerBackupJob(env) {
+  const [planRow, repRow, quota] = await many(env, ["SELECT value FROM meta WHERE key='backup_plan'"], ["SELECT value FROM meta WHERE key='backup_report'"],
+    ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
+  const plan = readJson(planRow[0]?.value, {}), rep = readJson(repRow[0]?.value, {}), t = rep.trainers || {};
+  const limit = (Number(quota[0]?.value) || 50) * 1024 ** 3;
+  if (!backupDue(plan, t)) return { ok: true, due: false };
+  if (rep.used && rep.used / limit >= BACKUP_STOP) {
+    if (t.running || !t.paused) { rep.trainers = { ...t, running: false, paused: true }; await setMeta(env, 'backup_report', JSON.stringify(rep)); }
+    return { ok: true, due: false, full: true };
+  }
+  if (!t.running) {
+    rep.trainers = { running: true, startedAt: nowIso(), finishedAt: '', copied: 0, same: 0, failed: 0, errors: [], paused: false, lastAt: t.finishedAt || t.lastAt || '' };
+    await setMeta(env, 'backup_report', JSON.stringify(rep));
+  }
+  return { ok: true, due: true, limit, stopAt: BACKUP_STOP };
+}
+async function trainerBackupDone(env, q) {
+  const rep = readJson(await getMeta(env, 'backup_report'), {}), t = rep.trainers || {}, now = nowIso();
+  const errors = [...(t.errors || []), ...(Array.isArray(q.errors) ? q.errors : []).map((e) => String(e).slice(0, 300))].slice(-10);
+  Object.assign(t, { copied: (t.copied || 0) + (Number(q.copied) || 0), same: Number(q.same) || t.same || 0, failed: (t.failed || 0) + (Number(q.failed) || 0), errors, checkedAt: now });
+  if (q.paused) Object.assign(t, { paused: true, running: false });
+  else if (q.finished) Object.assign(t, { running: false, paused: false, finishedAt: now });
+  rep.trainers = t;
+  if (Number(q.used)) rep.used = Number(q.used);
+  await setMeta(env, 'backup_report', JSON.stringify(rep));
   return { ok: true };
 }
 async function backupStatus(env) {
