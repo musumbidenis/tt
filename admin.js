@@ -42,6 +42,7 @@ const Admin = (() => {
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
       parts.push(section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
+      if (window.Health?.allowed()) parts.push(section('m-health', 'System health', Health.html()));
     } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD') || hasRole('MIS')) parts.push(section('m-registers', 'Saved registers', regsHtml()));
     box().innerHTML = groupTabs(parts) + parts.join('');
@@ -51,13 +52,14 @@ const Admin = (() => {
     if (hasRole('HOD') || hasRole('IAO')) jobs.push(loadMarksheets());
     if (hasRole('HOD') || hasRole('MIS')) jobs.push(loadRequests(), loadPhones(), loadBackup());
     if (hasRole('MIS')) jobs.push(loadStaff().then(loadDrive));
+    if (window.Health?.allowed()) jobs.push(Health.load());
     await Promise.allSettled(jobs);
     refreshBadge();
   }
 
   /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
   const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
-    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-classes', 'm-registers']], ['people', 'People', ['m-staff', 'm-phones']], ['system', 'Backup and Drive', ['m-backup', 'm-drive']]];
+    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-classes', 'm-registers']], ['people', 'People', ['m-staff', 'm-phones']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
   let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
   function groupTabs(parts) {
     const html = parts.join(''), have = GROUPS.filter(([, , ids]) => ids.some((id) => html.includes(`id="${id}"`)));

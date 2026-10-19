@@ -527,3 +527,21 @@ async function init() {
 }
 
 init().catch((e) => { console.error(e); toast('Start-up error: ' + e.message, 'err'); });
+
+/* Errors this app runs into go to the MIS Officer's System health list (a few per page load, each one once). */
+(() => {
+  const seen = new Set();
+  function report(message, detail, where) {
+    const key = String(message).slice(0, 120);
+    if (/Failed to fetch|NetworkError|Load failed|No connection|AbortError|took too long|ResizeObserver/i.test(key)) return;
+    if (seen.has(key) || seen.size >= 5 || !navigator.onLine || !st.sheetsUrl) return;
+    seen.add(key);
+    try {
+      fetch(st.sheetsUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
+        body: JSON.stringify({ action: 'appError', app: 'student', where, message: key, detail: String(detail || '').slice(0, 1500), who: st.profile?.admNo || '' }) }).catch(() => {});
+    } catch { /* never let reporting break the app */ }
+  }
+  window.addEventListener('error', (e) => report(e.message || 'Error', `${e.filename || ''}:${e.lineno || ''}
+${e.error?.stack || ''}`, 'page'));
+  window.addEventListener('unhandledrejection', (e) => report(e.reason?.message || String(e.reason), e.reason?.stack || '', 'promise'));
+})();

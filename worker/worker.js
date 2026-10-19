@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.21.0';
-const SCHEMA_VERSION = '21';
+export const VERSION = '7.22.0';
+const SCHEMA_VERSION = '22';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS mail_groups (key TEXT PRIMARY KEY, email TEXT, name T
 CREATE TABLE IF NOT EXISTS mail_out (id TEXT PRIMARY KEY, notice_id TEXT, bcc TEXT, reply_to TEXT, subject TEXT, body TEXT, status TEXT, tries INTEGER DEFAULT 0, error TEXT, at TEXT, sent_at TEXT);
 CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, trainer_id TEXT COLLATE NOCASE, class_code TEXT, unit_code TEXT, by_code TEXT, at TEXT);
 CREATE INDEX IF NOT EXISTS deleted_sessions_trainer ON deleted_sessions (trainer_id, at);
+CREATE TABLE IF NOT EXISTS sys_stats (day TEXT, action TEXT, n INTEGER DEFAULT 0, refused INTEGER DEFAULT 0, errors INTEGER DEFAULT 0, ms INTEGER DEFAULT 0, max_ms INTEGER DEFAULT 0, reads INTEGER DEFAULT 0, writes INTEGER DEFAULT 0, PRIMARY KEY (day, action)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS sys_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, source TEXT, action TEXT, message TEXT, detail TEXT, who TEXT);
 CREATE TABLE IF NOT EXISTS verify_checks (verification_id TEXT, adm_no TEXT COLLATE NOCASE, who TEXT, valid INTEGER, authentic INTEGER, current INTEGER, sufficient INTEGER, agree INTEGER, comment TEXT, by_code TEXT, at TEXT, PRIMARY KEY (verification_id, adm_no, who));`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
@@ -156,15 +158,16 @@ const reply = (obj) => new Response(JSON.stringify(obj), { headers: JSONH });
 
 /* ---------- database helpers ---------- */
 const q = (env, sql, ...p) => env.DB.prepare(sql).bind(...p);
-const all = async (env, sql, ...p) => (await q(env, sql, ...p).all()).results || [];
-const one = (env, sql, ...p) => q(env, sql, ...p).first();
-const run = (env, sql, ...p) => q(env, sql, ...p).run();
+const all = async (env, sql, ...p) => { const r = await q(env, sql, ...p).all(); dbMeta(r.meta); return r.results || []; };
+const one = async (env, sql, ...p) => (await all(env, sql, ...p))[0] ?? null;
+const run = async (env, sql, ...p) => { const r = await q(env, sql, ...p).run(); dbMeta(r.meta); return r; };
 const IN = '(SELECT value FROM json_each(?))';
 /** Several statements in ONE trip to the database (each item: [sql, ...params]); returns each one's rows. */
 async function many(env, ...items) {
   items = items.filter(Boolean);
   if (!items.length) return [];
   const res = await env.DB.batch(items.map(([sql, ...p]) => env.DB.prepare(sql).bind(...p)));
+  res.forEach((r) => dbMeta(r.meta));
   return res.map((r) => r.results || []);
 }
 const ACTIVE_TERM = "(SELECT id FROM terms WHERE status='active' ORDER BY updated_at DESC LIMIT 1)";
@@ -263,12 +266,25 @@ async function authSecret(env) {
 /* ---------- web requests ---------- */
 export default {
   async fetch(request, env, ctx) {
+    const t0 = Date.now(), info = { action: '', kind: '' };
+    const res = await handle(request, env, ctx, info);
+    if (info.action) {
+      countRequest(info.action, Date.now() - t0, info.kind);
+      if (info.error && ctx?.waitUntil) ctx.waitUntil(logError(env, 'server', info.action, info.error, info.stack || '', info.who || '').catch(() => {}));
+      if (env.DB && Date.now() - STATS.flushedAt > STATS_EVERY && ctx?.waitUntil) ctx.waitUntil(flushStats(env).catch((e) => console.error('stats', e)));
+    }
+    return res;
+  },
+};
+async function handle(request, env, ctx, info) {
+  {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
     try {
       if (!env.DB) fail('The database is not connected: add a D1 binding called DB to this Worker (Settings → Bindings).');
       await ready(env);
       if (request.method === 'GET') {
         const p = Object.fromEntries(new URL(request.url).searchParams);
+        info.action = 'GET ' + String(p.action || '').slice(0, 30);
         if (p.action === 'classes') return reply(await publicClasses(env));
         if (p.action === 'check') return reply(await checkApproval(env, p.ref));
         if (p.action === 'classlist') return reply(await classList(env, p.class));
@@ -277,6 +293,8 @@ export default {
         return reply({ ok: false, error: 'Unknown action' });
       }
       const b = JSON.parse((await request.text()) || '{}');
+      info.action = String(b.action || '?').slice(0, 40);
+      if (b.action === 'appError') return reply(await appError(env, b));
       if (b.action === 'checkin') return reply(await receiveCheckins(env, b.checkins || []));
       if (b.action === 'register') return reply(await registerDevice(env, b));
       if (b.action === 'login') return reply(await login(env, b));
@@ -289,6 +307,7 @@ export default {
       const h = ACTIONS[b.action];
       // The sign-in check and the action's first reads go to the database together, in one trip.
       const [me, pre] = await auth(env, b.auth, h && h.pre ? h.pre(b) : []);
+      info.who = me?.code || '';
       if (!h) return reply({ ok: false, error: 'Unknown action' });
       if (h.role && !me.roles.some((r) => h.role.includes(r))) fail(`This needs the ${h.role.join(' or ')} role. Ask the MIS Officer.`);
       if (me.mustChange && b.action !== 'setPin') fail('Choose a new PIN first', { mustChange: true });
@@ -301,11 +320,12 @@ export default {
       if (err && err.authError) out.authError = true;
       if (err && err.mustChange) out.mustChange = true;
       if (err && err.needPin) out.needPin = true;
-      if (!(err instanceof Fail)) console.error(err);
+      if (!(err instanceof Fail)) { console.error(err); info.kind = 'error'; info.error = out.error; info.stack = String(err?.stack || '').slice(0, 1500); }
+      else info.kind = 'refused';
       return reply(out);
     }
-  },
-};
+  }
+}
 
 const ACTIONS = {
   setPin: { fn: (env, b, me) => setPin(env, b, me) },
@@ -394,7 +414,111 @@ const ACTIONS = {
   setDefaultPin: { role: ['MIS'], fn: (env, b, me) => setDefaultPin(env, b, me) },
   absences: { role: ['HOD', 'MIS'], fn: (env, b, me) => absences(env, b, me) },
   setAbsenceLimit: { role: ['HOD', 'MIS'], fn: (env, b, me) => setAbsenceLimit(env, b, me) },
+  systemHealth: { role: ['MIS'], fn: (env) => systemHealth(env) },
+  clearErrors: { role: ['MIS'], fn: async (env, b, me) => { await run(env, 'DELETE FROM sys_errors'); await audit(env, me, 'errors cleared', ''); return { ok: true }; } },
 };
+
+/* ---------- system health (MIS Officer only): requests, speed, errors and the free-plan limits ----------
+ * Each running copy of the Worker counts its requests in memory and adds them to sys_stats about once a minute (one
+ * database write then, not one per request). Rows read and written come from D1's own figures on every query.
+ * Days are UTC days: Cloudflare's daily limits reset at 00:00 UTC (03:00 in Nairobi). On the Free plan D1 refuses
+ * queries once a daily limit is passed, so the gauges warn well before. */
+const LIMITS = { requests: 100000, reads: 5000000, writes: 100000, dbBytes: 500 * 1024 ** 2, mail: 1500 };
+const STATS_EVERY = 60e3;
+const STATS = { acts: new Map(), reads: 0, writes: 0, size: 0, flushedAt: Date.now(), errorsAt: [] };
+const utcDay = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+function dbMeta(m) {
+  if (!m) return;
+  STATS.reads += Number(m.rows_read) || 0; STATS.writes += Number(m.rows_written) || 0;
+  if (Number(m.size_after)) STATS.size = Number(m.size_after);
+}
+function countRequest(action, ms, kind) {
+  const k = utcDay() + '|' + action;
+  let a = STATS.acts.get(k);
+  if (!a) STATS.acts.set(k, (a = { n: 0, refused: 0, errors: 0, ms: 0, max: 0 }));
+  a.n++; a.ms += ms; if (ms > a.max) a.max = ms;
+  if (kind === 'error') a.errors++; else if (kind === 'refused') a.refused++;
+}
+async function flushStats(env) {
+  STATS.flushedAt = Date.now();
+  const rows = [...STATS.acts].map(([k, a]) => { const [day, action] = k.split('|'); return [day, action, a.n, a.refused, a.errors, a.ms, a.max, 0, 0]; });
+  const reads = STATS.reads, writes = STATS.writes, size = STATS.size;
+  STATS.acts = new Map(); STATS.reads = 0; STATS.writes = 0;
+  if (reads || writes) rows.push([utcDay(), '_db', 0, 0, 0, 0, 0, reads, writes]);
+  if (!rows.length) return;
+  const cols = ['day', 'action', 'n', 'refused', 'errors', 'ms', 'max_ms', 'reads', 'writes'];
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO sys_stats (${cols.join(',')}) SELECT ${cols.map((_, j) => `json_extract(value,'$[${j}]')`).join(',')} FROM json_each(?) WHERE true
+        ON CONFLICT(day, action) DO UPDATE SET n=n+excluded.n, refused=refused+excluded.refused, errors=errors+excluded.errors, ms=ms+excluded.ms,
+        max_ms=MAX(max_ms, excluded.max_ms), reads=reads+excluded.reads, writes=writes+excluded.writes`).bind(JSON.stringify(rows)),
+      ...(size ? [env.DB.prepare(metaStmt('db_size', size)[0]).bind(...metaStmt('db_size', size).slice(1))] : []),
+      // Kept for 90 days; the error list keeps the last 1,000.
+      ...(Math.random() < 0.05 ? [env.DB.prepare('DELETE FROM sys_stats WHERE day < ?').bind(utcDay(Date.now() - 90 * 864e5)),
+        env.DB.prepare('DELETE FROM sys_errors WHERE id <= (SELECT MAX(id) - 1000 FROM sys_errors)')] : []),
+    ]);
+  } catch (e) {
+    // Not saved (the database is busy or over its limit): the counts are kept for the next try.
+    for (const r of rows) {
+      if (r[1] === '_db') { STATS.reads += r[7]; STATS.writes += r[8]; continue; }
+      countMerge(r);
+    }
+    throw e;
+  }
+}
+function countMerge([day, action, n, refused, errors, ms, max]) {
+  const k = day + '|' + action, a = STATS.acts.get(k) || { n: 0, refused: 0, errors: 0, ms: 0, max: 0 };
+  Object.assign(a, { n: a.n + n, refused: a.refused + refused, errors: a.errors + errors, ms: a.ms + ms, max: Math.max(a.max, max) });
+  STATS.acts.set(k, a);
+}
+/** One error in the list. At most 30 a minute from one copy of the Worker, so a fault that repeats cannot flood it. */
+async function logError(env, source, action, message, detail, who) {
+  const now = Date.now();
+  STATS.errorsAt = STATS.errorsAt.filter((t) => now - t < 60e3);
+  if (STATS.errorsAt.length >= 30) return;
+  STATS.errorsAt.push(now);
+  await env.DB.prepare('INSERT INTO sys_errors (at, source, action, message, detail, who) VALUES (?,?,?,?,?,?)')
+    .bind(nowIso(), source, String(action || '').slice(0, 60), String(message || '').slice(0, 400), String(detail || '').slice(0, 1500), String(who || '').slice(0, 80)).run();
+}
+/** A phone reports an error the app ran into (staff or student app). Anyone can send one, so it is short and capped. */
+async function appError(env, b) {
+  const today = utcDay();
+  const n = (await one(env, "SELECT COUNT(*) AS n FROM sys_errors WHERE at >= ? AND source IN ('app','student')", today))?.n || 0;
+  if (n >= 300) return { ok: true, kept: false };
+  const src = b.app === 'student' ? 'student' : 'app';
+  await logError(env, src, `${src} ${String(b.version || '').slice(0, 12)} ${String(b.where || '').slice(0, 30)}`.trim(), b.message, b.detail, b.who);
+  return { ok: true, kept: true };
+}
+async function systemHealth(env) {
+  await flushStats(env).catch(() => {});
+  const day = utcDay(), from = utcDay(Date.now() - 13 * 864e5);
+  const [stats, errs, metaRows, counts, mail, push] = await many(env,
+    ['SELECT * FROM sys_stats WHERE day >= ? ORDER BY day', from],
+    ['SELECT at, source, action, message, detail, who FROM sys_errors ORDER BY id DESC LIMIT 60'],
+    ["SELECT key, value FROM meta WHERE key IN ('db_size','drive_report','backup_report','backup_quota_gb','bridge_health')"],
+    ['SELECT (SELECT COUNT(*) FROM sessions) AS registers, (SELECT COUNT(*) FROM trainees) AS students, (SELECT COUNT(*) FROM staff) AS staff, (SELECT COUNT(*) FROM evidence) AS evidence, (SELECT COUNT(*) FROM devices) AS phones'],
+    ["SELECT SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) AS today, SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) AS waiting, SUM(CASE WHEN status NOT IN ('queued','sent') THEN 1 ELSE 0 END) AS failed FROM mail_out", day],
+    ['SELECT COUNT(*) AS n, SUM(CASE WHEN fail_count > 0 THEN 1 ELSE 0 END) AS failing FROM push_subs']);
+  const meta = Object.fromEntries(metaRows.map((r) => [r.key, r.value]));
+  const byDay = new Map();
+  for (const r of stats) {
+    const d = byDay.get(r.day) || { day: r.day, requests: 0, refused: 0, errors: 0, ms: 0, reads: 0, writes: 0 };
+    d.requests += r.n; d.refused += r.refused; d.errors += r.errors; d.ms += r.ms; d.reads += r.reads; d.writes += r.writes;
+    byDay.set(r.day, d);
+  }
+  const days = [...byDay.values()].map((d) => ({ ...d, avgMs: d.requests ? Math.round(d.ms / d.requests) : 0 }));
+  const today = days.find((d) => d.day === day) || { day, requests: 0, refused: 0, errors: 0, avgMs: 0, reads: 0, writes: 0 };
+  const actions = stats.filter((r) => r.day === day && r.action !== '_db')
+    .map((r) => ({ action: r.action, n: r.n, avgMs: r.n ? Math.round(r.ms / r.n) : 0, maxMs: r.max_ms, errors: r.errors, refused: r.refused }))
+    .sort((a, b) => b.n - a.n);
+  const drive = readJson(meta.drive_report, null), backup = readJson(meta.backup_report, {}), bridge = readJson(meta.bridge_health, null);
+  return { ok: true, now: nowIso(), day, version: VERSION, limits: LIMITS, today, days, actions,
+    errors: errs, db: { bytes: Number(meta.db_size) || 0, counts: counts[0] || {} },
+    google: { driveUsed: Number(backup.used) || 0, driveLimit: (Number(meta.backup_quota_gb) || 50) * 1024 ** 3, driveAt: backup.checkedAt || '',
+      bridgeAt: drive?.at || '', bridgeVersion: drive?.bridge || '', bridgeMs: bridge?.ms || 0, bridgeErrors: bridge?.errors || [], mailLeft: bridge?.mailLeft ?? null,
+      mailToday: mail[0]?.today || 0, mailWaiting: mail[0]?.waiting || 0, mailFailed: mail[0]?.failed || 0 },
+    push: { phones: push[0]?.n || 0, failing: push[0]?.failing || 0 } };
+}
 
 /* Changes the Google Drive bridge needs to see: registers, marks, evidence, sign-offs, and anything
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
@@ -1608,6 +1732,13 @@ const BRIDGE_ACTIONS = {
   backupDone: async (env, b) => backupDone(env, await verifyBridge(env, b)),
   groupsJob: async (env, b) => { await verifyBridge(env, b); return groupsJob(env); },
   groupsDone: async (env, b) => groupsDone(env, await verifyBridge(env, b)),
+  /** After each run: how long it took, what went wrong, and the email allowance left today. */
+  bridgeHealth: async (env, b) => {
+    const r = await verifyBridge(env, b), errors = (Array.isArray(r.errors) ? r.errors : []).slice(0, 10).map((e) => String(e).slice(0, 400));
+    await setMeta(env, 'bridge_health', JSON.stringify({ at: nowIso(), ms: Number(r.ms) || 0, errors, mailLeft: r.mailLeft ?? null }));
+    for (const e of errors) await logError(env, 'bridge', 'Drive bridge ' + String(r.bridge || ''), e, '', '');
+    return { ok: true };
+  },
 };
 
 /* ---------- backup: approved documents copied into the backup account's Drive ----------

@@ -26,7 +26,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.8.1';
+var BRIDGE_VERSION = '1.8.2';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -217,7 +217,7 @@ function sync() {
     PropertiesService.getScriptProperties().setProperty('NUDGE_WANTED', '1');
     return;
   }
-  var started = Date.now(), p = PropertiesService.getScriptProperties();
+  var started = Date.now(), p = PropertiesService.getScriptProperties(), problems = [];
   try {
     // A traversal of the changes can span several runs: PENDING keeps where it got to.
     var pend = JSON.parse(p.getProperty('PENDING') || 'null');
@@ -262,10 +262,16 @@ function sync() {
     report.bridge = BRIDGE_VERSION;
     callWorker_('bridgeReport', report);
     // The app's messages and class groups (Groups.gs) go first: people are waiting for them.
-    try { if (mailAndGroups_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('groups and email: ' + e); }
+    try { if (mailAndGroups_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('groups and email: ' + e); problems.push('Email and groups: ' + (e && e.message || e)); }
     // Backups use whatever time this run has left; unfinished ones carry on in the next run.
-    try { if (backup_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('backup: ' + e); }
-  } finally { lock.releaseLock(); }
+    try { if (backup_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('backup: ' + e); problems.push('Backup: ' + (e && e.message || e)); }
+  } catch (e) { problems.push('Drive update: ' + (e && e.message || e)); throw e; }
+  finally {
+    lock.releaseLock();
+    // For the MIS Officer's System health: how long this run took, what went wrong, the email allowance left today.
+    try { callWorker_('bridgeHealth', { ms: Date.now() - started, errors: problems, mailLeft: MailApp.getRemainingDailyQuota(), bridge: BRIDGE_VERSION }); }
+    catch (e) { Logger.log('health report: ' + e); }
+  }
   // Anything that changed while this run was going, or a page of changes still to work through,
   // gets its own update in two minutes instead of waiting for the hour.
   if (p.getProperty('NUDGE_WANTED') || p.getProperty('PENDING')) {
