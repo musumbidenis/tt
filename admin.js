@@ -877,7 +877,11 @@ const Admin = (() => {
   /* ---------- MIS: the Google Drive bridge (attendance sheets per trainer, POE files) ---------- */
   async function loadDrive() {
     try {
-      const { secret, report: r, archiveEmail, quotaGb } = need(await api('driveStatus'));
+      const d = need(await api('driveStatus')), { secret, report: r, archiveEmail, quotaGb } = d;
+      // Students connect their college Google account before the app lets them do anything (MIS can switch this off).
+      const st2 = d.students || { total: 0, connected: 0 };
+      const gateBox = d.googleReady ? `<div class="gate-setting"><label class="check"><input type="checkbox" id="requireGoogle"${d.requireGoogle ? ' checked' : ''}> Students must connect their college Google account before using the app</label>
+        <p class="muted small">${st2.connected} of ${st2.total} students connected${d.requireGoogle && st2.connected < st2.total ? ' - the others see only the Connect Google step until they do it (once, with internet)' : ''}. QR check-ins already saved on phones are still accepted.</p></div>` : '';
       // The backup account sees every document students save in their own Drive, and holds the backup copies.
       // Its space is typed in: with the college's pooled storage, Google reports only the whole college's limit.
       const archiveBox = typeof Google !== 'undefined' && Google.on() ? `<p class="muted small">The backup account sees every POE document students save in their own Drive, and keeps the backup copies.</p>
@@ -885,7 +889,7 @@ const Admin = (() => {
         <label class="narrow">Space (GB)<input type="number" id="archiveQuota" min="1" max="100000" step="1" value="${esc(quotaGb || 50)}"></label><button class="btn">Save</button></form>` : '';
       if (!r) {
         fill('m-drive', `<p class="muted">Not connected yet. Each trainer's attendance sheet and the students' POE files go to the college Google Drive through a small Apps Script in the school account. The README has the steps (about 10 minutes, once).</p>
-          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare - the Worker - Settings - Variables).</p>'}${archiveBox}`);
+          ${secret ? '' : '<p class="warn-text small">The database does not have the BRIDGE_SECRET setting yet (Cloudflare - the Worker - Settings - Variables).</p>'}${gateBox}${archiveBox}`);
         return;
       }
       const opts = (sel) => `<option value="">Choose their folder…</option>${(r.folders || []).sort((a, b) => a.name.localeCompare(b.name)).map((f) => `<option value="${esc(f.id)}"${f.id === sel ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}`;
@@ -900,7 +904,7 @@ const Admin = (() => {
         <ul class="mlist drive-list">${r.unmatched.map((u) => `<li data-code="${esc(u.code)}"><span><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span></span>
           <span class="drive-pick">${(r.folders || []).length ? `<select data-drivefolder aria-label="Drive folder for ${esc(u.name)}">${opts(staff.get(lower(u.code))?.driveFolder || '')}</select>` : ''}
           <input type="text" data-drivelink placeholder="or paste folder link" aria-label="Folder link for ${esc(u.name)}"></span></li>`).join('')}</ul>` : ''}
-        ${archiveBox}`);
+        ${gateBox}${archiveBox}`);
     } catch (e) { fill('m-drive', `<p class="err-text">${esc(e.message)}</p>`); }
   }
 
@@ -914,6 +918,15 @@ const Admin = (() => {
     catch (e) { toast(e.message, 'err'); }
     finally { input.disabled = false; }
   }
+
+  document.addEventListener('change', async (e) => {
+    if (e.target.id !== 'requireGoogle') return;
+    const on = e.target.checked;
+    if (!on && !confirm('Let students use the app without connecting Google?')) { e.target.checked = true; return; }
+    e.target.disabled = true;
+    try { need(await api('setRequireGoogle', { on })); toast(on ? 'Students must connect Google first' : 'Students can use the app without Google', 'ok'); await loadDrive(); }
+    catch (err) { toast(err.message, 'err'); e.target.checked = !on; e.target.disabled = false; }
+  });
 
   /* ---------- badge on the Manage tab ---------- */
   /** Is this request a move from one stream of a class to another? */

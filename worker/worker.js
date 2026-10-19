@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.23.0';
+export const VERSION = '7.24.0';
 const SCHEMA_VERSION = '22';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -289,7 +289,7 @@ async function handle(request, env, ctx, info) {
         if (p.action === 'check') return reply(await checkApproval(env, p.ref));
         if (p.action === 'classlist') return reply(await classList(env, p.class));
         if (p.action === 'units') return reply(await classUnits(env, p.class));
-        if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso(), push: !!env.VAPID_PRIVATE_KEY, googleConnect: googleReady(env) });
+        if (p.action === 'ping') return reply({ ok: true, version: VERSION, server: 'cloudflare', time: nowIso(), push: !!env.VAPID_PRIVATE_KEY, googleConnect: googleReady(env), requireGoogle: await requireGoogle(env) });
         return reply({ ok: false, error: 'Unknown action' });
       }
       const b = JSON.parse((await request.text()) || '{}');
@@ -320,6 +320,7 @@ async function handle(request, env, ctx, info) {
       if (err && err.authError) out.authError = true;
       if (err && err.mustChange) out.mustChange = true;
       if (err && err.needPin) out.needPin = true;
+      if (err && err.needGoogle) out.needGoogle = true;
       if (!(err instanceof Fail)) { console.error(err); info.kind = 'error'; info.error = out.error; info.stack = String(err?.stack || '').slice(0, 1500); }
       else info.kind = 'refused';
       return reply(out);
@@ -415,6 +416,7 @@ const ACTIONS = {
   absences: { role: ['HOD', 'MIS'], fn: (env, b, me) => absences(env, b, me) },
   setAbsenceLimit: { role: ['HOD', 'MIS'], fn: (env, b, me) => setAbsenceLimit(env, b, me) },
   systemHealth: { role: ['MIS'], fn: (env) => systemHealth(env) },
+  setRequireGoogle: { role: ['MIS'], fn: async (env, b, me) => { await setMeta(env, 'require_google', b.on ? '1' : '0'); await audit(env, me, 'students must connect Google', b.on ? 'on' : 'off'); return driveStatus(env); } },
   clearErrors: { role: ['MIS'], fn: async (env, b, me) => { await run(env, 'DELETE FROM sys_errors'); await audit(env, me, 'errors cleared', ''); return { ok: true }; } },
 };
 
@@ -851,7 +853,8 @@ async function registerDevice(env, b) {
   const now = nowIso();
   await run(env, 'INSERT INTO devices (device_id,adm_no,name,class_code,registered_at,last_seen) VALUES (?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET last_seen=excluded.last_seen',
     b.deviceId, t.adm_no, t.name, t.class_code, now, now);
-  return { ok: true, admNo: t.adm_no, name: t.name, classCode: t.class_code, className: t.class_name || t.class_code };
+  return { ok: true, admNo: t.adm_no, name: t.name, classCode: t.class_code, className: t.class_name || t.class_code,
+    needGoogle: !t.g_refresh && (await requireGoogle(env)) };
 }
 
 /** HOD and MIS: the students whose phone is registered (classes not archived), newest first. */
@@ -2140,13 +2143,19 @@ const noticeOut = (r) => ({ kind: 'evidence', id: r.id, item: r.item, unitCode: 
   version: r.version, status: r.status, comment: r.comment || '', decidedName: r.decided_name || '', decidedAt: r.decided_at || '' });
 
 /* ---------- the student phone: units, upload tickets, my evidence ---------- */
-async function studentOf(env, b) {
-  const [tRows, dRows] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim()], ['SELECT * FROM devices WHERE device_id=?', String(b.deviceId || '')]);
+/** The student this registered phone belongs to. Unless `google` is false, the student must have connected their college
+ *  Google account first (when the MIS Officer requires it): the server keeps their Google permission (g_refresh). */
+async function studentOf(env, b, { google = true } = {}) {
+  const [tRows, dRows, req] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', String(b.admNo || '').trim()], ['SELECT * FROM devices WHERE device_id=?', String(b.deviceId || '')],
+    ["SELECT value FROM meta WHERE key='require_google'"]);
   const t = tRows[0], d = dRows[0];
   if (!t || !active(t)) fail('That student is not on the class list');
   if (!d || lower(d.adm_no) !== lower(t.adm_no)) fail('This phone is not registered to that student. Set up the phone first.');
+  if (google && !t.g_refresh && googleReady(env) && req[0]?.value !== '0') fail('Connect your college Google account to use the app. You do this once.', { needGoogle: true });
   return t;
 }
+/** Students must connect Google before using the app: on unless the MIS Officer switched it off (and only when the server can keep Google sign-ins). */
+const requireGoogle = async (env) => googleReady(env) && (await getMeta(env, 'require_google')) !== '0';
 const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class_code).includes(cls) || u.class_code === cls);
 async function classUnits(env, cls) {
   if (!cls) fail('Choose a class');
@@ -2258,8 +2267,8 @@ async function shareTargets(env, classCode, unitCode, ctx = {}) {
 }
 const sharedOf = (r) => { try { return JSON.parse(r.shared || '[]') || []; } catch { return []; } };
 const STUDENT_ACTIONS = {
-  async googleConnect(env, b) { const t = await studentOf(env, b); return googleConnect(env, 'trainees', t.adm_no, b.code); },
-  async googleToken(env, b) { const t = await studentOf(env, b); return googleToken(env, 'trainees', t.adm_no); },
+  async googleConnect(env, b) { const t = await studentOf(env, b, { google: false }); return googleConnect(env, 'trainees', t.adm_no, b.code); },
+  async googleToken(env, b) { const t = await studentOf(env, b, { google: false }); return googleToken(env, 'trainees', t.adm_no); },
   /** Every lesson of this student's class with their mark, so the student keeps a copy of their own attendance. */
   async myAttendance(env, b) {
     const t = await studentOf(env, b);
@@ -3472,8 +3481,10 @@ async function deleteStudent(env, b, me) {
 }
 
 async function driveStatus(env) {
-  const [r, archive, quota] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"]);
-  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', quotaGb: Number(quota[0]?.value) || 50, domain: env.GOOGLE_DOMAIN || '' };
+  const [r, archive, quota, req, conn] = await many(env, ["SELECT value FROM meta WHERE key='drive_report'"], ["SELECT value FROM meta WHERE key='archive_email'"], ["SELECT value FROM meta WHERE key='backup_quota_gb'"],
+    ["SELECT value FROM meta WHERE key='require_google'"], [`SELECT COUNT(*) AS total, SUM(CASE WHEN g_refresh IS NOT NULL THEN 1 ELSE 0 END) AS connected FROM trainees WHERE COALESCE(status,'active') NOT IN ${GONE}`]);
+  return { ok: true, secret: !!env.BRIDGE_SECRET, report: r[0] ? JSON.parse(r[0].value) : null, archiveEmail: archive[0]?.value || '', quotaGb: Number(quota[0]?.value) || 50, domain: env.GOOGLE_DOMAIN || '',
+    googleReady: googleReady(env), requireGoogle: googleReady(env) && req[0]?.value !== '0', students: { total: conn[0]?.total || 0, connected: conn[0]?.connected || 0 } };
 }
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */

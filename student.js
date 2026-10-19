@@ -135,7 +135,10 @@ async function api(method, params, body) {
   for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
   const res = await fetch(url.toString(), method === 'GET' ? { redirect: 'follow' }
     : { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
-  return res.json();
+  const out = await res.json();
+  // The server holds this phone at the Connect Google step (its permission was never given, or was taken back).
+  if (out && out.needGoogle && st.profile && !st.needGoogle) { st.needGoogle = true; renderGate(); }
+  return out;
 }
 
 function showResult(kind, title, text, sub = '') {
@@ -193,6 +196,64 @@ async function loadNames() {
   }
 }
 
+/* ---------- the college Google account comes first ----------
+ * When the MIS Officer requires it, a registered phone does nothing else (check-ins, attendance, POE, messages) until its
+ * student has connected their college Google account: once, with internet. The server refuses the same requests
+ * (needGoogle), so the step cannot be skipped. A lesson QR opened meanwhile waits and is checked in right after. */
+const REQ_GOOGLE = 'rvnp_require_google';
+st.requireGoogle = ls.get(REQ_GOOGLE) === '1';
+st.needGoogle = false;
+const googleOn = () => typeof Google !== 'undefined' && Google.on();
+async function checkRequireGoogle() {
+  if (!st.sheetsUrl || !navigator.onLine) return;
+  try {
+    const j = await api('GET', { action: 'ping' });
+    if (j && typeof j.requireGoogle === 'boolean') { st.requireGoogle = j.requireGoogle; ls.set(REQ_GOOGLE, j.requireGoogle ? '1' : ''); }
+  } catch { /* offline: the last answer stays */ }
+}
+function setGoogleServer() {
+  if (!googleOn()) return;
+  const call = (body) => api('POST', null, { ...body, deviceId: st.deviceId, admNo: st.profile?.admNo });
+  Google.setServer('student', { connect: (code) => call({ action: 'googleConnect', code }), token: () => call({ action: 'googleToken' }), supported: () => Google.supports() });
+}
+const gated = () => !!st.profile && googleOn() && (st.needGoogle || (st.requireGoogle && !Google.connected('student')));
+/** Shows the Connect Google step when it is needed; returns true while the phone is held at it. */
+function renderGate() {
+  const on = gated(), box = $('#googleGate'), setup = !$('#setupCard').hidden;
+  document.body.classList.toggle('gated', on && !setup);
+  if (!box) return on;
+  box.hidden = !on || setup;
+  if (!on) return false;
+  if (navigator.onLine) Google.preload();
+  const dom = window.ATTENDANCE_CONFIG?.googleDomain || '';
+  box.innerHTML = `<div class="setup-intro"><img src="icons/rvnp-logo.png" alt="" width="64" height="64"><div>
+      <h2>Connect your college Google account</h2>
+      <p class="muted">Before you check in, see your attendance or send POE, connect your college Google account${dom ? ` (@${esc(dom)})` : ''}. You do this once.</p></div></div>
+    ${navigator.onLine ? '<button type="button" class="btn primary big" data-gate-connect>Connect Google</button>' : '<p class="warn-text">Connect to the internet to continue. You need it only this once.</p>'}
+    <p id="gateMsg" class="small err-text" role="alert"></p>
+    <p class="small muted">${esc(st.profile.name)} - ${esc(st.profile.admNo)} <button type="button" class="linkish" data-gate-reset>Not you? Set up again</button></p>`;
+  return true;
+}
+async function connectFromGate(btn) {
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  $('#gateMsg').textContent = '';
+  try {
+    setGoogleServer();
+    await Google.probe(st.sheetsUrl);
+    await Google.connect('student');
+    st.needGoogle = false;
+    toast('Google connected', 'ok');
+    renderGate();
+    await render();
+    sync(); syncAttendance({ force: true }); POE.render?.();
+    const l = st.pendingLesson; st.pendingLesson = null;
+    if (l) await handleLesson(l);
+  } catch (e) {
+    $('#gateMsg').textContent = e.message;
+    btn.disabled = false; btn.textContent = 'Connect Google';
+  }
+}
+
 async function register() {
   const classCode = $('#setupClass').value, admNo = $('#setupName').value;
   if (!classCode || !admNo) return;
@@ -204,6 +265,8 @@ async function register() {
     if (!res.ok) throw new Error(res.error || 'Registration failed');
     await saveProfile({ admNo: res.admNo, name: res.name, classCode: res.classCode, className: res.className, registeredAt: nowISO() });
     $('#setupCard').hidden = true;
+    if (res.needGoogle) { st.needGoogle = true; st.requireGoogle = true; ls.set(REQ_GOOGLE, '1'); }
+    if (renderGate()) { await render(); return; }   // a lesson waiting (if any) is checked in once Google is connected
     showResult('ok', 'Device registered', `${res.name} - ${res.classCode}`, 'You can now scan your trainer\'s lesson QR, even without internet.');
     const l = st.pendingLesson;
     st.pendingLesson = null;
@@ -219,6 +282,7 @@ async function register() {
 async function handleLesson(l) {
   if (!l || !l.s || !l.c || l.w === undefined || !l.t) { showResult('err', 'Not a lesson code', 'Scan the QR on your trainer\'s screen.'); return; }
   if (l.u) await saveSheetsUrl(l.u);
+  if (renderGate()) { st.pendingLesson = l; return; }
   const p = st.profile;
   if (!p) {
     st.pendingLesson = l; // recorded automatically as soon as setup is done
@@ -379,6 +443,7 @@ function stopScan() {
 
 /* ---------- screen ---------- */
 async function render() {
+  renderGate();
   const p = st.profile;
   $('#who').textContent = p ? `${p.name} - ${p.classCode}` : 'Not set up';
   $('#profileCard').hidden = !p;
@@ -487,6 +552,11 @@ async function init() {
   if (restored) toast(`Recovered ${restored} unsent check-in(s)`, 'ok');
   updateNet();
 
+  setGoogleServer();
+  document.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-gate-connect]'); if (c) { connectFromGate(c); return; }
+    if (e.target.closest('[data-gate-reset]')) { $('#googleGate').hidden = true; document.body.classList.remove('gated'); openSetup('Choose your class and name again. If this phone is registered to someone else, your trainer must reset it first.'); }
+  });
   $('#setupClass').addEventListener('change', loadNames);
   $('#setupName').addEventListener('change', () => { $('#setupSave').disabled = !$('#setupName').value; });
   $('#setupSave').addEventListener('click', register);
@@ -496,7 +566,8 @@ async function init() {
   $('#scanDialog').addEventListener('close', stopScan);
   $('#syncBtn').addEventListener('click', () => sync({ manual: true }));
   window.addEventListener('hashchange', consumeHash);
-  window.addEventListener('online', () => { updateNet(); if (!st.profile && !$('#setupCard').hidden) openSetup(); sync(); syncAttendance(); });
+  window.addEventListener('online', () => { updateNet(); if (!st.profile && !$('#setupCard').hidden) openSetup(); checkRequireGoogle().then(() => renderGate()); sync(); syncAttendance(); });
+  window.addEventListener('offline', () => renderGate());
   $('#histSort').addEventListener('change', () => render());
   $('#attSearch').addEventListener('input', () => { Tables.reset('attMine'); renderAttendance(); });
   $('#attUnit').addEventListener('change', () => { Tables.reset('attMine'); renderAttendance(); });
@@ -509,6 +580,7 @@ async function init() {
   setInterval(() => sync(), 60 * 1000);
 
   await protectStorage();
+  await checkRequireGoogle();
   await consumeHash();
   if (!st.profile && $('#setupCard').hidden) await openSetup();
   await render();

@@ -14,6 +14,10 @@
 <style>
   .result.saved { border-color: var(--line-strong, var(--line)); background: var(--surface); }
   .result.saved .result-icon { background: var(--muted); }
+  /* Until the college Google account is connected, the phone shows only that step (and set-up, if chosen again). */
+  body.gated main > :not(#googleGate):not(#setupCard):not(#warning) { display: none !important; }
+  body.gated #syncBtn { display: none !important; }
+  #googleGate .btn.big { width: 100%; margin-top: .75rem; }
 </style>
 </head>
 <body class="student">
@@ -41,6 +45,8 @@
 
 <main>
   <div id="warning" class="card warn-banner" hidden></div>
+
+  <section id="googleGate" class="card" hidden aria-live="polite"></section>
 
   <section id="setupCard" class="card" hidden>
     <div class="setup-intro">
