@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.27.0';
-const SCHEMA_VERSION = '24';
+export const VERSION = '7.28.0';
+const SCHEMA_VERSION = '25';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS sys_stats (day TEXT, action TEXT, n INTEGER DEFAULT 0
 CREATE TABLE IF NOT EXISTS sys_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, source TEXT, action TEXT, message TEXT, detail TEXT, who TEXT);
 CREATE TABLE IF NOT EXISTS verify_checks (verification_id TEXT, adm_no TEXT COLLATE NOCASE, who TEXT, valid INTEGER, authentic INTEGER, current INTEGER, sufficient INTEGER, agree INTEGER, comment TEXT, by_code TEXT, at TEXT, PRIMARY KEY (verification_id, adm_no, who));
 CREATE TABLE IF NOT EXISTS trainer_poe (id TEXT PRIMARY KEY, term_id TEXT, trainer_code TEXT COLLATE NOCASE, trainer_name TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, slot TEXT, file_id TEXT, file_name TEXT, mime TEXT, bytes INTEGER, version INTEGER, uploaded_by TEXT, uploaded_name TEXT, uploaded_at TEXT, status TEXT, note TEXT, decided_by TEXT, decided_name TEXT, decided_at TEXT, replaced_at TEXT, updated_at TEXT);
-CREATE INDEX IF NOT EXISTS trainer_poe_t ON trainer_poe (term_id, trainer_code);`;
+CREATE INDEX IF NOT EXISTS trainer_poe_t ON trainer_poe (term_id, trainer_code);
+CREATE TABLE IF NOT EXISTS trainer_poe_signoff (term_id TEXT, trainer_code TEXT COLLATE NOCASE, status TEXT, hod_code TEXT, hod_name TEXT, note TEXT, at TEXT, PRIMARY KEY (term_id, trainer_code));
+CREATE TABLE IF NOT EXISTS tpoe_grant (id TEXT PRIMARY KEY, eao_code TEXT COLLATE NOCASE, eao_name TEXT, trainers TEXT, granted_by TEXT, granted_name TEXT, at TEXT, expires TEXT, revoked_at TEXT, note TEXT);`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
   'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT',
@@ -385,11 +387,15 @@ const ACTIONS = {
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
   poeClass: { role: ['MIS', 'HOD', 'IAO'], fn: (env, b) => poeClass(env, b) },
-  tpoeList: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => tpoeList(env, b, me) },
+  tpoeList: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tpoeList(env, b, me) },
   tpoeTicket: { role: ['TRAINER'], fn: (env, b, me) => tpoeTicket(env, b, me) },
   tpoeDone: { role: ['TRAINER'], fn: (env, b, me) => tpoeDone(env, b, me) },
-  tpoeView: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => tpoeView(env, b, me) },
+  tpoeView: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tpoeView(env, b, me) },
   tpoeDelete: { role: ['TRAINER'], fn: (env, b, me) => tpoeDelete(env, b, me) },
+  tpoeSign: { role: ['HOD'], fn: (env, b, me) => tpoeSign(env, b, me) },
+  tpoeGrant: { role: ['HOD', 'MIS'], fn: (env, b, me) => tpoeGrant(env, b, me) },
+  tpoeGrants: { role: ['HOD', 'MIS'], fn: (env, b, me) => tpoeGrants(env, b, me) },
+  tpoeRevoke: { role: ['HOD', 'MIS'], fn: (env, b, me) => tpoeRevoke(env, b, me) },
   verifyData: { fn: (env, b, me) => verifyData(env, b, me) },
   savePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => savePanel(env, b, me) },
   assignVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => assignVerification(env, b, me) },
@@ -2539,22 +2545,59 @@ const tpoeExt = (name) => (String(name || '').match(/\.[A-Za-z0-9]{1,5}$/) || ['
 const tpoeOut = (r) => (r ? { id: r.id, slot: r.slot, classCode: r.class_code || '', unitCode: r.unit_code || '', fileName: r.file_name,
   version: r.version, uploadedBy: r.uploaded_name || r.uploaded_by || '', uploadedAt: r.uploaded_at, status: r.status || 'uploaded', note: r.note || '' } : null);
 const tpoeCanSeeAll = (me) => seesAll(me);
+/** The grants that still let an External Assessment Officer in: not revoked, not past their day. */
+async function tpoeGrantsActive(env, eaoCode) {
+  return all(env, 'SELECT * FROM tpoe_grant WHERE lower(eao_code)=lower(?) AND revoked_at IS NULL AND expires > ?', eaoCode, nowIso());
+}
+/** Which trainers those grants cover: {all} for the whole department, else a set of codes. */
+function tpoeGrantTrainers(grants) {
+  const set = new Set(); let all = false;
+  for (const g of grants) for (const c of JSON.parse(g.trainers || '[]')) { if (c === '*') all = true; else set.add(lower(c)); }
+  return { all, set };
+}
+/** Who may see one trainer's portfolio, and whether they may upload: the trainer themselves, the office, or an
+ *  External Assessment Officer while a grant for them is still live. */
+async function tpoeAccess(env, me, trainer) {
+  if (tpoeCanSeeAll(me)) return { view: true, upload: false };
+  if (me.roles.includes('TRAINER') && lower(me.code) === lower(trainer)) return { view: true, upload: true };
+  if (me.roles.includes('EAO')) { const g = tpoeGrantTrainers(await tpoeGrantsActive(env, me.code)); if (g.all || g.set.has(lower(trainer))) return { view: true, upload: false, assessor: true }; }
+  return { view: false, upload: false };
+}
+/** This term's sign-off for one trainer's portfolio, or null. */
+async function tpoeSignoffOf(env, termId, trainer) {
+  const r = await one(env, 'SELECT * FROM trainer_poe_signoff WHERE term_id=? AND lower(trainer_code)=lower(?)', termId, trainer);
+  return r && r.status === 'signed' ? { by: r.hod_name || r.hod_code, at: r.at, note: r.note || '' } : null;
+}
+/** A change to the portfolio after the HOD signed it off takes the sign-off back (the record says why). */
+async function tpoeWithdrawSignoff(env, termId, trainer, why) {
+  const had = await one(env, "SELECT 1 FROM trainer_poe_signoff WHERE term_id=? AND lower(trainer_code)=lower(?) AND status='signed'", termId, trainer);
+  if (had) await run(env, "UPDATE trainer_poe_signoff SET status='withdrawn', note=?, at=? WHERE term_id=? AND lower(trainer_code)=lower(?)", why, nowIso(), termId, trainer);
+}
 
 /** The trainer POE page for one trainer: the fixed checklist, each slot's current file, and what the app has gathered. */
 async function tpoeList(env, b, me) {
-  const trainer = tpoeCanSeeAll(me) ? String(b.trainer || '') : me.code;
-  if (!tpoeCanSeeAll(me) && !me.roles.includes('TRAINER')) fail('Only your trainers and the office can open the trainer POE');
   const term = await activeTerm(env);
   const slots = { unit: TPOE_UNIT_SLOTS.map(([k, l]) => ({ slot: k, label: l })), term: TPOE_TERM_SLOTS.map(([k, l]) => ({ slot: k, label: l })) };
+  // Who this person may look at: the office sees everyone; a trainer, only themselves; an assessor, the trainers granted.
+  const assessorOnly = me.roles.includes('EAO') && !tpoeCanSeeAll(me) && !me.roles.includes('TRAINER');
+  let picker = null;
   if (tpoeCanSeeAll(me)) {
+    picker = (await all(env, "SELECT code, name FROM staff WHERE active=1 AND roles LIKE '%TRAINER%' ORDER BY name")).map((s) => ({ code: s.code, name: s.name }));
+  } else if (assessorOnly) {
+    const g = tpoeGrantTrainers(await tpoeGrantsActive(env, me.code));
     const staff = await all(env, "SELECT code, name FROM staff WHERE active=1 AND roles LIKE '%TRAINER%' ORDER BY name");
-    const trainers = staff.map((s) => ({ code: s.code, name: s.name }));
-    if (!trainer) return { ok: true, slots, trainers, canUpload: false, term: term ? { id: term.id, name: term.name } : null };
+    picker = staff.filter((s) => g.all || g.set.has(lower(s.code))).map((s) => ({ code: s.code, name: s.name }));
+    if (!picker.length) fail('Your assessor access has ended or covers no trainers. Ask the HOD or MIS Officer.');
   }
+  const trainer = (tpoeCanSeeAll(me) || assessorOnly) ? String(b.trainer || '') : me.code;
+  if (picker && !trainer) return { ok: true, slots, trainers: picker, canUpload: false, assessor: assessorOnly, term: term ? { id: term.id, name: term.name } : null };
+  const access = await tpoeAccess(env, me, trainer);
+  if (!access.view) fail('You do not have access to this trainer\'s POE');
   const who = await getStaff(env, trainer);
   if (!who) fail('No such trainer');
-  const canUpload = lower(me.code) === lower(trainer) && me.roles.includes('TRAINER');
-  if (!term) return { ok: true, slots, trainer: { code: who.code, name: who.name }, canUpload, term: null, units: [], termFiles: {}, complete: { done: 0, total: 0, pct: 0 } };
+  const canUpload = access.upload;
+  if (access.assessor) await audit(env, me, 'assessor viewed POE', `${who.name} (${who.code})`);
+  if (!term) return { ok: true, slots, trainer: { code: who.code, name: who.name }, canUpload, assessor: !!access.assessor, term: null, units: [], termFiles: {}, signoff: null, complete: { done: 0, total: 0, pct: 0 } };
   // The trainer's units this term, each as its own checklist; a class taught jointly is one row.
   const loading = await all(env, 'SELECT DISTINCT class_code, unit_code, unit_name FROM loading WHERE term_id=? AND lower(trainer_code)=lower(?) ORDER BY class_code, unit_name', term.id, trainer);
   const files = await all(env, 'SELECT * FROM trainer_poe WHERE term_id=? AND lower(trainer_code)=lower(?) AND replaced_at IS NULL', term.id, trainer);
@@ -2576,8 +2619,61 @@ async function tpoeList(env, b, me) {
   const done = units.reduce((n, u) => n + Object.values(u.files).filter(Boolean).length, 0) + Object.values(termFiles).filter(Boolean).length;
   const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
   const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(trainer))?.[1] || '';
-  return { ok: true, slots, trainer: { code: who.code, name: who.name }, canUpload, term: { id: term.id, name: term.name },
-    units, termFiles, sheetUrl, complete: { done, total, pct: total ? Math.round((done / total) * 100) : 0 } };
+  const signoff = await tpoeSignoffOf(env, term.id, trainer);
+  return { ok: true, slots, trainer: { code: who.code, name: who.name }, canUpload, assessor: !!access.assessor, term: { id: term.id, name: term.name },
+    units, termFiles, sheetUrl, signoff, complete: { done, total, pct: total ? Math.round((done / total) * 100) : 0 } };
+}
+/** The HOD signs off a trainer's portfolio for the term (name and date kept). An empty checklist cannot be signed. */
+async function tpoeSign(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('There is no active term');
+  const trainer = String(b.trainer || '');
+  const who = await getStaff(env, trainer);
+  if (!who) fail('No such trainer');
+  if (b.undo) { await run(env, 'DELETE FROM trainer_poe_signoff WHERE term_id=? AND lower(trainer_code)=lower(?)', term.id, trainer);
+    await audit(env, me, 'POE sign-off removed', `${who.name} (${who.code})`); return { ok: true, signoff: null }; }
+  const n = await one(env, 'SELECT COUNT(*) c FROM trainer_poe WHERE term_id=? AND lower(trainer_code)=lower(?) AND replaced_at IS NULL', term.id, trainer);
+  if (!Number(n?.c)) fail('There is nothing uploaded to sign off yet');
+  const now = nowIso();
+  await run(env, `INSERT INTO trainer_poe_signoff (term_id,trainer_code,status,hod_code,hod_name,note,at) VALUES (?,?,'signed',?,?,?,?)
+    ON CONFLICT(term_id,trainer_code) DO UPDATE SET status='signed', hod_code=excluded.hod_code, hod_name=excluded.hod_name, note=excluded.note, at=excluded.at`,
+  term.id, trainer, me.code, me.name, String(b.note || '').slice(0, 500), now);
+  await audit(env, me, 'POE signed off', `${who.name} (${who.code})`);
+  return { ok: true, signoff: { by: me.name, at: now, note: String(b.note || '') } };
+}
+/** HOD or MIS Officer: give an External Assessment Officer time-limited access to one, some or all trainers' POE. */
+async function tpoeGrant(env, b, me) {
+  const eao = await getStaff(env, String(b.eao || ''));
+  if (!eao || !hasRole(eao.roles, 'EAO')) fail('Choose an External Assessment Officer');
+  const all0 = b.allTrainers || (Array.isArray(b.trainers) && b.trainers.includes('*'));
+  const trainers = all0 ? ['*'] : [...new Set((b.trainers || []).map(String).filter(Boolean))];
+  if (!trainers.length) fail('Choose at least one trainer, or all of them');
+  const days = Math.min(30, Math.max(1, Number(b.days) || 2));
+  const expires = new Date(Date.now() + days * 864e5).toISOString();
+  const id = crypto.randomUUID();
+  await run(env, 'INSERT INTO tpoe_grant (id,eao_code,eao_name,trainers,granted_by,granted_name,at,expires) VALUES (?,?,?,?,?,?,?,?)',
+    id, eao.code, eao.name, JSON.stringify(trainers), me.code, me.name, nowIso(), expires);
+  await audit(env, me, 'assessor access granted', `${eao.name} (${eao.code}) - ${all0 ? 'all trainers' : trainers.join(', ')} - until ${expires.slice(0, 10)}`);
+  return { ok: true, grant: tpoeGrantOut({ id, eao_code: eao.code, eao_name: eao.name, trainers: JSON.stringify(trainers), granted_name: me.name, at: nowIso(), expires }) };
+}
+const tpoeGrantOut = (g) => ({ id: g.id, eao: g.eao_code, eaoName: g.eao_name, trainers: JSON.parse(g.trainers || '[]'), by: g.granted_name || g.granted_by || '',
+  at: g.at, expires: g.expires, active: !g.revoked_at && g.expires > nowIso(), revokedAt: g.revoked_at || '' });
+/** The assessor-access panel: who can be given access, the trainers to choose, and the grants in force. */
+async function tpoeGrants(env, b, me) {
+  const [eaos, trainers, grants] = await many(env,
+    ["SELECT code, name FROM staff WHERE active=1 AND roles LIKE '%EAO%' ORDER BY name"],
+    ["SELECT code, name FROM staff WHERE active=1 AND roles LIKE '%TRAINER%' ORDER BY name"],
+    ['SELECT * FROM tpoe_grant ORDER BY at DESC LIMIT 100']);
+  return { ok: true, eaos: eaos.map((s) => ({ code: s.code, name: s.name })), trainers: trainers.map((s) => ({ code: s.code, name: s.name })),
+    grants: grants.map(tpoeGrantOut) };
+}
+/** HOD or MIS Officer ends an assessor's access early. */
+async function tpoeRevoke(env, b, me) {
+  const g = await one(env, 'SELECT * FROM tpoe_grant WHERE id=?', String(b.id || ''));
+  if (!g) fail('That access grant no longer exists');
+  await run(env, 'UPDATE tpoe_grant SET revoked_at=? WHERE id=?', nowIso(), g.id);
+  await audit(env, me, 'assessor access revoked', `${g.eao_name} (${g.eao_code})`);
+  return { ok: true };
 }
 /** A trainer asks for a ticket to upload one checklist item to their own Drive folder, through the bridge. */
 async function tpoeTicket(env, b, me) {
@@ -2617,14 +2713,16 @@ async function tpoeDone(env, b, me) {
   t.id, t.term, t.trainer.code, t.trainer.name, t.cls, t.unit, t.unitName, t.slot, String(b.fileId), String(b.fileName), String(b.mime || ''), t.bytes, v, me.code, me.name, now, now);
   await run(env, 'UPDATE trainer_poe SET replaced_at=?, updated_at=? WHERE term_id=? AND lower(trainer_code)=lower(?) AND class_code=? AND unit_code=? AND slot=? AND version<? AND replaced_at IS NULL',
     now, now, t.term, t.trainer.code, t.cls, t.unit, t.slot, v);
+  await tpoeWithdrawSignoff(env, t.term, t.trainer.code, `${me.name} changed the portfolio after sign-off (${t.slot}${t.unit ? ' ' + t.unit : ''})`);
   await audit(env, me, 'trainer POE upload', `${t.slot}${t.unit ? ' ' + t.unit : ''} v${v}`);
   return { ok: true, file: tpoeOut(await one(env, 'SELECT * FROM trainer_poe WHERE id=?', t.id)) };
 }
-/** A view ticket for one trainer POE file: the trainer who owns it, or the office. */
+/** A view ticket for one trainer POE file: the trainer who owns it, the office, or a granted assessor. */
 async function tpoeView(env, b, me) {
   const r = await one(env, 'SELECT * FROM trainer_poe WHERE id=?', String(b.id || ''));
   if (!r || r.replaced_at) fail('That file is no longer the current one');
-  if (!tpoeCanSeeAll(me) && lower(r.trainer_code) !== lower(me.code)) fail('Only this trainer or the office can open it');
+  const access = await tpoeAccess(env, me, r.trainer_code);
+  if (!access.view) fail('Only this trainer, the office or a granted assessor can open it');
   const url = await getMeta(env, 'drive_url');
   if (!url) fail('The Google Drive link is not set up yet');
   return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
@@ -2636,6 +2734,7 @@ async function tpoeDelete(env, b, me) {
   if (lower(r.trainer_code) !== lower(me.code)) fail('Only the trainer who uploaded it can remove it');
   const now = nowIso();
   await run(env, 'UPDATE trainer_poe SET replaced_at=?, updated_at=? WHERE id=?', now, now, r.id);
+  await tpoeWithdrawSignoff(env, r.term_id, r.trainer_code, `${me.name} removed ${r.slot}${r.unit_code ? ' ' + r.unit_code : ''} after sign-off`);
   await audit(env, me, 'trainer POE removed', `${r.slot}${r.unit_code ? ' ' + r.unit_code : ''} v${r.version}`);
   return { ok: true };
 }

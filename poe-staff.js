@@ -17,7 +17,7 @@ const PoeStaff = (() => {
   const visitorOnly = () => hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   const canDecide = () => hasRole('TRAINER') || hasRole('HOD');
   const byStudentAllowed = () => hasRole('MIS') || hasRole('HOD') || hasRole('IAO');
-  const trainerPoeAllowed = () => hasRole('TRAINER') || hasRole('HOD') || hasRole('MIS') || hasRole('IAO');
+  const trainerPoeAllowed = () => hasRole('TRAINER') || hasRole('HOD') || hasRole('MIS') || hasRole('IAO') || hasRole('EAO');
 
   /** Until this person has connected Google (once), a card at the top of the tab: students' documents open with it. */
   const connectCard = () => (typeof Google !== 'undefined' && Google.on() && !Google.connected('staff')
@@ -39,7 +39,7 @@ const PoeStaff = (() => {
   async function render() {
     if (!me()) return;
     if (!ps.status) ps.status = 'submitted';
-    if (visitorOnly()) ps.mode = 'verify';
+    if (visitorOnly() && ps.mode !== 'trainer') ps.mode = 'verify';
     if (!navigator.onLine) {
       box().innerHTML = '<div class="card notice"><h2>Evidence needs internet</h2><p>The students\' files are in the college Google Drive. Connect to review them.</p></div>';
       return;
@@ -62,7 +62,11 @@ const PoeStaff = (() => {
       && (!ps.cls || e.classCode === ps.cls) && (!ps.unit || e.unitCode === ps.unit)
       && (!q || e.name.toLowerCase().includes(q) || e.admNo.toLowerCase().includes(q)));
   }
-  const modeToggle = () => (visitorOnly() ? '' : `<div class="view-tabs poe-mode" role="group" aria-label="View">
+  const modeToggle = () => (visitorOnly()
+    ? `<div class="view-tabs poe-mode" role="group" aria-label="View">
+      <button type="button" data-mode="verify" aria-pressed="${ps.mode === 'verify'}">Verification</button>
+      <button type="button" data-mode="trainer" aria-pressed="${ps.mode === 'trainer'}">Trainer POE</button></div>`
+    : `<div class="view-tabs poe-mode" role="group" aria-label="View">
       <button type="button" data-mode="unit" aria-pressed="${ps.mode === 'unit'}">By unit</button>
       ${byStudentAllowed() ? `<button type="button" data-mode="student" aria-pressed="${ps.mode === 'student'}">By student</button>` : ''}
       ${trainerPoeAllowed() ? `<button type="button" data-mode="trainer" aria-pressed="${ps.mode === 'trainer'}">Trainer POE</button>` : ''}

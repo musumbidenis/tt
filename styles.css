@@ -1327,3 +1327,12 @@ details.vcard > :last-child { margin-bottom: 1rem; }
 .tpoe-slot-body { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .tpoe-file { font-size: .85rem; word-break: break-word; }
 @media (max-width: 560px) { .tpoe-slot { grid-template-columns: 1fr; gap: .25rem; } }
+
+/* Trainer POE: sign-off line, bundle actions and the assessor-access form. */
+.tpoe-signoff { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
+.tpoe-so-actions { margin-left: auto; }
+.tpoe-head-actions { margin-top: .5rem; }
+.tpoe-grant-form { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: flex-end; margin: .5rem 0 1rem; }
+.tpoe-grant-form label { display: flex; flex-direction: column; font-size: .85rem; gap: .2rem; }
+.tpoe-grant-form label.check { flex-direction: row; align-items: center; gap: .35rem; }
+.tpoe-grant-form select[multiple] { min-width: 14rem; }
