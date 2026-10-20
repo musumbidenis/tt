@@ -17,6 +17,7 @@ const PoeStaff = (() => {
   const visitorOnly = () => hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   const canDecide = () => hasRole('TRAINER') || hasRole('HOD');
   const byStudentAllowed = () => hasRole('MIS') || hasRole('HOD') || hasRole('IAO');
+  const trainerPoeAllowed = () => hasRole('TRAINER') || hasRole('HOD') || hasRole('MIS') || hasRole('IAO');
 
   /** Until this person has connected Google (once), a card at the top of the tab: students' documents open with it. */
   const connectCard = () => (typeof Google !== 'undefined' && Google.on() && !Google.connected('staff')
@@ -49,21 +50,29 @@ const PoeStaff = (() => {
     if (seq === ps.seq) draw();
   }
 
+  /** Only the latest version of each student's item: an older one sent again is not reviewed (an approved one stays on the server). */
+  function latestOnly() {
+    const top = new Map();
+    for (const e of ps.list) { const k = lower(e.admNo) + '|' + e.unitCode + '|' + e.item; if (!(top.get(k)?.version >= e.version)) top.set(k, e); }
+    return ps.list.filter((e) => top.get(lower(e.admNo) + '|' + e.unitCode + '|' + e.item) === e);
+  }
   function filtered() {
     const q = ps.q.trim().toLowerCase();
-    return ps.list.filter((e) => (!ps.status || e.status === ps.status)
+    return latestOnly().filter((e) => (!ps.status || e.status === ps.status)
       && (!ps.cls || e.classCode === ps.cls) && (!ps.unit || e.unitCode === ps.unit)
       && (!q || e.name.toLowerCase().includes(q) || e.admNo.toLowerCase().includes(q)));
   }
   const modeToggle = () => (visitorOnly() ? '' : `<div class="view-tabs poe-mode" role="group" aria-label="View">
       <button type="button" data-mode="unit" aria-pressed="${ps.mode === 'unit'}">By unit</button>
       ${byStudentAllowed() ? `<button type="button" data-mode="student" aria-pressed="${ps.mode === 'student'}">By student</button>` : ''}
+      ${trainerPoeAllowed() ? `<button type="button" data-mode="trainer" aria-pressed="${ps.mode === 'trainer'}">Trainer POE</button>` : ''}
       <button type="button" data-mode="verify" aria-pressed="${ps.mode === 'verify'}">Verification</button></div>`);
   function draw() {
     if (ps.mode === 'verify') return Verify.render(box(), modeToggle());
+    if (ps.mode === 'trainer' && trainerPoeAllowed()) return PoeTrainer.render(box(), modeToggle());
     if (ps.mode === 'student' && byStudentAllowed()) return drawStudents();
     const all = ps.list, counts = { submitted: 0, approved: 0, returned: 0 };
-    for (const e of all) counts[e.status] = (counts[e.status] || 0) + 1;
+    for (const e of latestOnly()) counts[e.status] = (counts[e.status] || 0) + 1;
     const chips = [['submitted', canDecide() ? 'To review' : 'With trainers'], ['approved', 'Approved'], ['returned', 'Returned'], ['', 'All']]
       .map(([k, l]) => `<button type="button" class="chipbtn${ps.status === k ? ' on' : ''}" data-status="${k}">${l}${k && counts[k] ? ` <span class="n">${counts[k]}</span>` : ''}</button>`).join('');
     const classes = [...new Set(all.map((e) => e.classCode))].sort();
@@ -462,6 +471,7 @@ const PoeStaff = (() => {
       if (!e.target.closest('#poe, #poeDialog')) return;
       const t = e.target;
       if (ps.mode === 'verify' && t.closest('#poe') && !t.closest('[data-mode]')) { Verify.onClick(t); return; }
+      if (ps.mode === 'trainer' && t.closest('#poe') && !t.closest('[data-mode]')) { PoeTrainer.onClick(t); return; }
       const s = t.closest('[data-status]'); if (s && t.closest('#poe')) { ps.status = s.dataset.status; Tables.reset('poeUnit'); draw(); return; }
       const m = t.closest('[data-mode]'); if (m && t.closest('#poe')) { ps.mode = m.dataset.mode; ps.q = ''; ps.seq++; draw(); return; }
       const sf = t.closest('[data-sfilter]'); if (sf) { ps.sFilter = sf.dataset.sfilter; Tables.reset('poeStu'); draw(); return; }
@@ -505,6 +515,7 @@ const PoeStaff = (() => {
     document.addEventListener('change', (e) => {
       const t = e.target;
       if (ps.mode === 'verify' && t.closest('#poe')) { Verify.onChange(t); return; }
+      if (ps.mode === 'trainer' && t.closest('#poe')) { PoeTrainer.onChange(t); return; }
       if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; Tables.reset('poeUnit'); draw(); }
       if (t.id === 'poeUnitF') { ps.unit = t.value; Tables.reset('poeUnit'); draw(); }
       if (t.id === 'poeSClass') { ps.sCls = t.value; ps.openStu = ''; ps.seq++; Tables.reset('poeStu'); draw(); }
@@ -532,6 +543,6 @@ const PoeStaff = (() => {
     ps.badgeAt = Date.now();
     try { await load(); } catch { /* shown when the tab opens */ }
   }
-  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '' }); ps.roster.clear(); ps.files.clear(); ps.marks.clear(); Verify.reset(); badge(); }
+  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '' }); ps.roster.clear(); ps.files.clear(); ps.marks.clear(); Verify.reset(); PoeTrainer.reset(); badge(); }
   return { render, wire, refreshBadge, reset, state: ps, open: (id, order) => openViewer(id, order), redraw: () => draw() };
 })();

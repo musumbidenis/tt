@@ -1312,3 +1312,18 @@ details.vcard > :last-child { margin-bottom: 1rem; }
 /* Department overview: on a phone the trainer shows under the unit (its own column is off screen). */
 .overview-table .sub-trainer { display: none; }
 @media (max-width: 560px) { .overview-table .sub-trainer { display: block; } }
+
+/* Trainer POE: a trainer's portfolio — the checklist of documents, with what the app gathered. */
+.tpoe-head-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-top: .5rem; }
+.tpoe-head-row > div { flex: 1 1 auto; }
+.tpoe-pct { font-size: .9rem; color: var(--muted); white-space: nowrap; }
+.tpoe-pct b { color: var(--ink); font-size: 1.05rem; }
+.tpoe-card h3 { margin: 0 0 .5rem; font-size: 1rem; }
+.tpoe-unit-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+.tpoe-auto { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-size: .82rem; color: var(--muted); margin-bottom: .6rem; padding-bottom: .5rem; border-bottom: 1px solid var(--line); }
+.tpoe-slots { display: flex; flex-direction: column; gap: .4rem; }
+.tpoe-slot { display: grid; grid-template-columns: minmax(8rem, 14rem) 1fr; gap: .5rem 1rem; align-items: center; padding: .3rem 0; }
+.tpoe-slot-name { font-weight: 600; font-size: .9rem; }
+.tpoe-slot-body { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.tpoe-file { font-size: .85rem; word-break: break-word; }
+@media (max-width: 560px) { .tpoe-slot { grid-template-columns: 1fr; gap: .25rem; } }

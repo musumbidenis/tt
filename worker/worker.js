@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.24.0';
-const SCHEMA_VERSION = '22';
+export const VERSION = '7.26.0';
+const SCHEMA_VERSION = '24';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -80,7 +80,9 @@ CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, trainer_id TEX
 CREATE INDEX IF NOT EXISTS deleted_sessions_trainer ON deleted_sessions (trainer_id, at);
 CREATE TABLE IF NOT EXISTS sys_stats (day TEXT, action TEXT, n INTEGER DEFAULT 0, refused INTEGER DEFAULT 0, errors INTEGER DEFAULT 0, ms INTEGER DEFAULT 0, max_ms INTEGER DEFAULT 0, reads INTEGER DEFAULT 0, writes INTEGER DEFAULT 0, PRIMARY KEY (day, action)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS sys_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, source TEXT, action TEXT, message TEXT, detail TEXT, who TEXT);
-CREATE TABLE IF NOT EXISTS verify_checks (verification_id TEXT, adm_no TEXT COLLATE NOCASE, who TEXT, valid INTEGER, authentic INTEGER, current INTEGER, sufficient INTEGER, agree INTEGER, comment TEXT, by_code TEXT, at TEXT, PRIMARY KEY (verification_id, adm_no, who));`;
+CREATE TABLE IF NOT EXISTS verify_checks (verification_id TEXT, adm_no TEXT COLLATE NOCASE, who TEXT, valid INTEGER, authentic INTEGER, current INTEGER, sufficient INTEGER, agree INTEGER, comment TEXT, by_code TEXT, at TEXT, PRIMARY KEY (verification_id, adm_no, who));
+CREATE TABLE IF NOT EXISTS trainer_poe (id TEXT PRIMARY KEY, term_id TEXT, trainer_code TEXT COLLATE NOCASE, trainer_name TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, slot TEXT, file_id TEXT, file_name TEXT, mime TEXT, bytes INTEGER, version INTEGER, uploaded_by TEXT, uploaded_name TEXT, uploaded_at TEXT, status TEXT, note TEXT, decided_by TEXT, decided_name TEXT, decided_at TEXT, replaced_at TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS trainer_poe_t ON trainer_poe (term_id, trainer_code);`;
 
 const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE sessions ADD COLUMN kind TEXT', 'ALTER TABLE sessions ADD COLUMN slots INTEGER',
   'ALTER TABLE staff ADD COLUMN drive_folder TEXT', 'ALTER TABLE trainees ADD COLUMN reg_code TEXT', 'ALTER TABLE terms ADD COLUMN series TEXT',
@@ -108,7 +110,9 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // Panels are numbered; the name follows ("Term 3 2026 - Panel 1").
   'ALTER TABLE panels ADD COLUMN number INTEGER',
   // Google connected once: the long-lived permission Google gives (kept encrypted), so nobody signs in again.
-  'ALTER TABLE trainees ADD COLUMN g_refresh TEXT', 'ALTER TABLE staff ADD COLUMN g_refresh TEXT'];
+  'ALTER TABLE trainees ADD COLUMN g_refresh TEXT', 'ALTER TABLE staff ADD COLUMN g_refresh TEXT',
+  // A newer version of the same item was sent: this one leaves the lists and can no longer be decided.
+  'ALTER TABLE evidence ADD COLUMN replaced_at TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -121,6 +125,10 @@ const DATA_MIGRATIONS = [
    json_object(${MARK_CELLS.map((c) => `'${c}', json((SELECT json_object('term', x.term_id, 'by', x.updated_by, 'at', x.updated_at) FROM marks x WHERE ${SAME_ROW} AND x.${c} IS NOT NULL ORDER BY x.updated_at DESC LIMIT 1))`).join(', ')}),
    MAX(m.updated_at), (SELECT x.updated_by FROM marks x WHERE ${SAME_ROW} ORDER BY x.updated_at DESC LIMIT 1), MAX(m.synced_at)
    FROM marks m GROUP BY m.class_code, m.unit_code, m.adm_no`,
+  // Older versions sent before replacing came in: any not approved is replaced by the newest one (its file stays in Drive).
+  `UPDATE evidence SET replaced_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE replaced_at IS NULL AND status<>'approved' AND EXISTS (SELECT 1 FROM evidence n WHERE n.adm_no=evidence.adm_no
+   AND n.unit_code=evidence.unit_code AND n.item=evidence.item AND n.version>evidence.version)`,
 ];
 
 /* ---------- small helpers ---------- */
@@ -377,6 +385,11 @@ const ACTIONS = {
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
   poeClass: { role: ['MIS', 'HOD', 'IAO'], fn: (env, b) => poeClass(env, b) },
+  tpoeList: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => tpoeList(env, b, me) },
+  tpoeTicket: { role: ['TRAINER'], fn: (env, b, me) => tpoeTicket(env, b, me) },
+  tpoeDone: { role: ['TRAINER'], fn: (env, b, me) => tpoeDone(env, b, me) },
+  tpoeView: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => tpoeView(env, b, me) },
+  tpoeDelete: { role: ['TRAINER'], fn: (env, b, me) => tpoeDelete(env, b, me) },
   verifyData: { fn: (env, b, me) => verifyData(env, b, me) },
   savePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => savePanel(env, b, me) },
   assignVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => assignVerification(env, b, me) },
@@ -2173,7 +2186,7 @@ async function classUnits(env, cls) {
   return { ok: true, classCode: cls, units, items: ITEMS, driveReady: !!url[0], pushReady: !!env.VAPID_PRIVATE_KEY };
 }
 const evidenceOut = (r) => ({ approvalRef: r.status === 'approved' ? r.approval_ref || '' : '', id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
-  version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.status,
+  version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.replaced_at ? 'replaced' : r.status,
   decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at,
   source: r.source || 'bridge', ownerEmail: r.owner_email || '', changedAt: r.changed_at || '' });
 
@@ -2182,9 +2195,10 @@ const evidenceOut = (r) => ({ approvalRef: r.status === 'approved' ? r.approval_
  * the HOD(s), the MIS Officer(s) and the backup account. The Worker checks the file with Google itself, using the
  * student's short-lived Google access (never stored), and keeps its fingerprint (md5) so a later change shows. */
 const GOOGLE_API = 'https://www.googleapis.com';
-async function google(env, path, token) {
+async function google(env, path, token, { method = 'GET', body } = {}) {
   // GOOGLE_API_TEST points the local test harness at a stand-in for Google; never set on Cloudflare.
-  const res = await fetch((env.GOOGLE_API_TEST || GOOGLE_API) + path, { headers: { Authorization: 'Bearer ' + String(token || '') } });
+  const res = await fetch((env.GOOGLE_API_TEST || GOOGLE_API) + path, { method, headers: { Authorization: 'Bearer ' + String(token || ''),
+    ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   if (res.status === 401) fail('Your Google sign-in has expired. Sign in to Google again.');
   if (!res.ok) fail(`Google said no (${res.status}). Try again.`);
   return res.json();
@@ -2265,6 +2279,22 @@ async function shareTargets(env, classCode, unitCode, ctx = {}) {
   if (archive[0]?.value) out.add(lower(archive[0].value));
   return [...out];
 }
+/** A new version replaces the older ones of the same item still with the trainer or returned: they leave the lists, cannot
+ *  be decided, and with the student's Google access their files in the student's Drive go to the bin. An approved version
+ *  stays as it is, with its approval and backup copy. */
+async function replaceOlder(env, adm, unit, item, version, token) {
+  const old = await all(env, "SELECT id, file_id, source FROM evidence WHERE adm_no=? AND unit_code=? AND item=? AND version<? AND status<>'approved' AND replaced_at IS NULL",
+    adm, unit, item, Number(version) || 0);
+  if (!old.length) return;
+  const now = nowIso();
+  await run(env, `UPDATE evidence SET replaced_at=?, updated_at=? WHERE id IN ${IN}`, now, now, JSON.stringify(old.map((r) => r.id)));
+  if (!token) return;
+  for (const r of old) {
+    if (r.source !== 'drive' || !r.file_id) continue;
+    try { await google(env, `/drive/v3/files/${encodeURIComponent(r.file_id)}?fields=id`, token, { method: 'PATCH', body: { trashed: true } }); }
+    catch (e) { console.error('trash old version', r.id, e.message); }   // the record is replaced either way
+  }
+}
 const sharedOf = (r) => { try { return JSON.parse(r.shared || '[]') || []; } catch { return []; } };
 const STUDENT_ACTIONS = {
   async googleConnect(env, b) { const t = await studentOf(env, b, { google: false }); return googleConnect(env, 'trainees', t.adm_no, b.code); },
@@ -2310,11 +2340,12 @@ const STUDENT_ACTIONS = {
     await run(env, `INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?) ON CONFLICT(id) DO NOTHING`, t.id, t.adm, t.sname, t.cls, t.unit, t.unitName, t.item, Number(b.version) || t.v,
     String(b.fileId), String(b.fileName), t.bytes, t.pages, now, now);
+    await replaceOlder(env, t.adm, t.unit, t.item, Number(b.version) || t.v);
     return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', t.id)) };
   },
   async poeMine(env, b) {
     const t = await studentOf(env, b);
-    const rows = await all(env, 'SELECT * FROM evidence WHERE adm_no=? ORDER BY submitted_at DESC', t.adm_no);
+    const rows = await all(env, 'SELECT * FROM evidence WHERE adm_no=? AND replaced_at IS NULL ORDER BY submitted_at DESC', t.adm_no);
     // For files in the student's Drive: anyone who should see it but has not been given access yet (a new trainer,
     // a new HOD). The phone shares it and reports back; nobody is ever removed.
     const ctx = {};
@@ -2359,6 +2390,7 @@ const STUDENT_ACTIONS = {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,'drive',?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.id, t.adm_no, t.name, t.class_code, p.unit, p.unitName, p.item, p.v,
     f.id, f.name || p.name, Number(f.size) || 0, p.pages, now, now, owner, f.md5Checksum || '', f.modifiedTime || '', JSON.stringify(shared)],
     ['UPDATE trainees SET email=? WHERE adm_no=?', owner, t.adm_no], changedStmt());
+    await replaceOlder(env, t.adm_no, p.unit, p.item, p.v, b.accessToken);
     return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', p.id)) };
   },
   /** The phone shared a file with more people (a new trainer or HOD): remember them, so they are not asked for again. */
@@ -2431,14 +2463,14 @@ async function poeList(env, b, me) {
   const status = ['submitted', 'approved', 'returned'].includes(b.status) ? b.status : '';
   let list = [];
   if (seesAll(me)) {
-    list = status ? await all(env, 'SELECT * FROM evidence WHERE status=? ORDER BY submitted_at DESC LIMIT 3000', status)
-      : await all(env, 'SELECT * FROM evidence ORDER BY submitted_at DESC LIMIT 3000');
+    list = status ? await all(env, 'SELECT * FROM evidence WHERE status=? AND replaced_at IS NULL ORDER BY submitted_at DESC LIMIT 3000', status)
+      : await all(env, 'SELECT * FROM evidence WHERE replaced_at IS NULL ORDER BY submitted_at DESC LIMIT 3000');
   } else {
     // Only this trainer's class-units are read (through the class/unit index), a few dozen at a time.
     const keys = [...pairs].map((k) => k.split('|'));
     for (let i = 0; i < keys.length; i += 40) {
       const part = keys.slice(i, i + 40);
-      const rows = await all(env, `SELECT * FROM evidence WHERE (${part.map(() => '(class_code=? AND unit_code=?)').join(' OR ')})${status ? ' AND status=?' : ''}`,
+      const rows = await all(env, `SELECT * FROM evidence WHERE (${part.map(() => '(class_code=? AND unit_code=?)').join(' OR ')}) AND replaced_at IS NULL${status ? ' AND status=?' : ''}`,
         ...part.flat(), ...(status ? [status] : []));
       list.push(...rows);
     }
@@ -2494,6 +2526,119 @@ async function bulkTicket(env, b, me) {
   await audit(env, me, 'reports in bulk', run);
   return { ok: true, driveUrl: url, ticket: await signTicket(env, { k: 'bulk', run, by: me.name, exp: Date.now() + 3 * 3600e3 }) };
 }
+/* ---------- Trainer POE: a trainer's own portfolio of evidence (schemes, lesson plans, papers, records) ----------
+ * The attendance registers, marksheets and student evidence are gathered automatically from what the app already
+ * holds; the trainer uploads the documents the app cannot know about, one per fixed checklist item, per unit or per
+ * term. Files go into the trainer's own Drive folder under POE / <term> / <unit>. The HOD, MIS Officer and IAO can
+ * view any trainer's portfolio; a trainer sees and fills only their own. (HOD sign-off and assessor access are later.) */
+const TPOE_UNIT_SLOTS = [['scheme', 'Scheme of work'], ['plans', 'Lesson plans'], ['notes', 'Lesson notes'],
+  ['papers', 'CAT / exam papers and marking schemes'], ['moderation', 'Moderation / validation form'], ['record', 'Record of work covered']];
+const TPOE_TERM_SLOTS = [['attachment', 'Industrial attachment visit reports'], ['cpd', 'CPD certificates']];
+const TPOE_SLOT_NAME = new Map([...TPOE_UNIT_SLOTS, ...TPOE_TERM_SLOTS]);
+const tpoeExt = (name) => (String(name || '').match(/\.[A-Za-z0-9]{1,5}$/) || ['.pdf'])[0];
+const tpoeOut = (r) => (r ? { id: r.id, slot: r.slot, classCode: r.class_code || '', unitCode: r.unit_code || '', fileName: r.file_name,
+  version: r.version, uploadedBy: r.uploaded_name || r.uploaded_by || '', uploadedAt: r.uploaded_at, status: r.status || 'uploaded', note: r.note || '' } : null);
+const tpoeCanSeeAll = (me) => seesAll(me);
+
+/** The trainer POE page for one trainer: the fixed checklist, each slot's current file, and what the app has gathered. */
+async function tpoeList(env, b, me) {
+  const trainer = tpoeCanSeeAll(me) ? String(b.trainer || '') : me.code;
+  if (!tpoeCanSeeAll(me) && !me.roles.includes('TRAINER')) fail('Only your trainers and the office can open the trainer POE');
+  const term = await activeTerm(env);
+  const slots = { unit: TPOE_UNIT_SLOTS.map(([k, l]) => ({ slot: k, label: l })), term: TPOE_TERM_SLOTS.map(([k, l]) => ({ slot: k, label: l })) };
+  if (tpoeCanSeeAll(me)) {
+    const staff = await all(env, "SELECT code, name FROM staff WHERE active=1 AND roles LIKE '%TRAINER%' ORDER BY name");
+    const trainers = staff.map((s) => ({ code: s.code, name: s.name }));
+    if (!trainer) return { ok: true, slots, trainers, canUpload: false, term: term ? { id: term.id, name: term.name } : null };
+  }
+  const who = await getStaff(env, trainer);
+  if (!who) fail('No such trainer');
+  const canUpload = lower(me.code) === lower(trainer) && me.roles.includes('TRAINER');
+  if (!term) return { ok: true, slots, trainer: { code: who.code, name: who.name }, canUpload, term: null, units: [], termFiles: {}, complete: { done: 0, total: 0, pct: 0 } };
+  // The trainer's units this term, each as its own checklist; a class taught jointly is one row.
+  const loading = await all(env, 'SELECT DISTINCT class_code, unit_code, unit_name FROM loading WHERE term_id=? AND lower(trainer_code)=lower(?) ORDER BY class_code, unit_name', term.id, trainer);
+  const files = await all(env, 'SELECT * FROM trainer_poe WHERE term_id=? AND lower(trainer_code)=lower(?) AND replaced_at IS NULL', term.id, trainer);
+  const fileAt = (cls, unit, slot) => tpoeOut(files.find((f) => (f.class_code || '') === (cls || '') && (f.unit_code || '') === (unit || '') && f.slot === slot));
+  // What the app already holds, per unit: register submitted/approved, marksheet stage, student evidence counts.
+  const [sign, msheets, ev] = await many(env,
+    ['SELECT class_code, unit_code, status FROM signoffs WHERE term_id=? AND lower(trainer_code)=lower(?)', term.id, trainer],
+    ['SELECT class_code, unit_code, status FROM marksheets'],
+    ["SELECT class_code, unit_code, status, COUNT(*) n FROM evidence WHERE replaced_at IS NULL GROUP BY class_code, unit_code, status"]);
+  const msBy = new Map(msheets.map((m) => [lower(m.class_code + '|' + m.unit_code), m.status]));
+  const signBy = new Map(sign.map((s) => [lower(s.class_code + '|' + s.unit_code), s.status]));
+  const evBy = (cls, unit) => { const o = { submitted: 0, approved: 0, returned: 0 };
+    for (const r of ev) if (classParts(r.class_code).some((c) => lower(c) === lower(cls)) && lower(r.unit_code) === lower(unit)) o[r.status] = (o[r.status] || 0) + Number(r.n); return o; };
+  const units = loading.map((u) => ({ classCode: u.class_code, unitCode: u.unit_code, unitName: u.unit_name || u.unit_code,
+    files: Object.fromEntries(TPOE_UNIT_SLOTS.map(([k]) => [k, fileAt(u.class_code, u.unit_code, k)])),
+    auto: { register: signBy.get(lower(u.class_code + '|' + u.unit_code)) || '', marksheet: msBy.get(lower(u.class_code + '|' + u.unit_code)) || '', evidence: evBy(u.class_code, u.unit_code) } }));
+  const termFiles = Object.fromEntries(TPOE_TERM_SLOTS.map(([k]) => [k, fileAt('', '', k)]));
+  const total = units.length * TPOE_UNIT_SLOTS.length + TPOE_TERM_SLOTS.length;
+  const done = units.reduce((n, u) => n + Object.values(u.files).filter(Boolean).length, 0) + Object.values(termFiles).filter(Boolean).length;
+  const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
+  const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(trainer))?.[1] || '';
+  return { ok: true, slots, trainer: { code: who.code, name: who.name }, canUpload, term: { id: term.id, name: term.name },
+    units, termFiles, sheetUrl, complete: { done, total, pct: total ? Math.round((done / total) * 100) : 0 } };
+}
+/** A trainer asks for a ticket to upload one checklist item to their own Drive folder, through the bridge. */
+async function tpoeTicket(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('There is no active term');
+  const slot = String(b.slot || '');
+  if (!TPOE_SLOT_NAME.has(slot)) fail('Unknown checklist item');
+  const termSlot = TPOE_TERM_SLOTS.some(([k]) => k === slot);
+  const cls = termSlot ? '' : String(b.classCode || ''), unit = termSlot ? '' : String(b.unitCode || '');
+  let unitName = '';
+  if (!termSlot) {
+    const row = await one(env, 'SELECT unit_name FROM loading WHERE term_id=? AND lower(trainer_code)=lower(?) AND class_code=? AND unit_code=?', term.id, me.code, cls, unit);
+    if (!row) fail('That unit is not in your loading this term');
+    unitName = row.unit_name || unit;
+  }
+  if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB.');
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  const prev = await one(env, 'SELECT MAX(version) v FROM trainer_poe WHERE term_id=? AND lower(trainer_code)=lower(?) AND class_code=? AND unit_code=? AND slot=?', term.id, me.code, cls, unit, slot);
+  const v = (Number(prev?.v) || 0) + 1;
+  const label = TPOE_SLOT_NAME.get(slot), ext = tpoeExt(b.name);
+  const fileName = `${safeName(label)} - v${v}${ext}`;
+  const folders = ['POE', safeName(term.name), termSlot ? 'General' : safeName(`${unit} ${unitName}`)];
+  const self = await getStaff(env, me.code);
+  const ticket = await signTicket(env, { k: 'tup', id: crypto.randomUUID(), trainer: { code: me.code, name: me.name, folder: self?.drive_folder || '' },
+    term: term.id, cls, unit, unitName, slot, v, name: fileName, folders, bytes: Number(b.bytes) || 0, exp: Date.now() + 6 * 3600e3 });
+  return { ok: true, ticket, driveUrl: url, fileName, version: v };
+}
+/** The bridge saved the file and signed what it saved; record it, and retire any earlier version of the same item. */
+async function tpoeDone(env, b, me) {
+  const t = await readTicket(env, b.ticket, 'tup', { late: true });
+  if (lower(t.trainer.code) !== lower(me.code)) fail('That ticket is for another trainer');
+  if ((await hmacHex(`done|${t.id}|${b.fileId}|${b.version}|${b.fileName}`, bridgeSecret(env))) !== b.sig) fail('The Drive bridge did not confirm this file');
+  const now = nowIso(), v = Number(b.version) || t.v;
+  await run(env, `INSERT INTO trainer_poe (id,term_id,trainer_code,trainer_name,class_code,unit_code,unit_name,slot,file_id,file_name,mime,bytes,version,uploaded_by,uploaded_name,uploaded_at,status,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'uploaded',?) ON CONFLICT(id) DO NOTHING`,
+  t.id, t.term, t.trainer.code, t.trainer.name, t.cls, t.unit, t.unitName, t.slot, String(b.fileId), String(b.fileName), String(b.mime || ''), t.bytes, v, me.code, me.name, now, now);
+  await run(env, 'UPDATE trainer_poe SET replaced_at=?, updated_at=? WHERE term_id=? AND lower(trainer_code)=lower(?) AND class_code=? AND unit_code=? AND slot=? AND version<? AND replaced_at IS NULL',
+    now, now, t.term, t.trainer.code, t.cls, t.unit, t.slot, v);
+  await audit(env, me, 'trainer POE upload', `${t.slot}${t.unit ? ' ' + t.unit : ''} v${v}`);
+  return { ok: true, file: tpoeOut(await one(env, 'SELECT * FROM trainer_poe WHERE id=?', t.id)) };
+}
+/** A view ticket for one trainer POE file: the trainer who owns it, or the office. */
+async function tpoeView(env, b, me) {
+  const r = await one(env, 'SELECT * FROM trainer_poe WHERE id=?', String(b.id || ''));
+  if (!r || r.replaced_at) fail('That file is no longer the current one');
+  if (!tpoeCanSeeAll(me) && lower(r.trainer_code) !== lower(me.code)) fail('Only this trainer or the office can open it');
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  return { ok: true, driveUrl: url, fileName: r.file_name, ticket: await signTicket(env, { k: 'view', fileId: r.file_id, exp: Date.now() + 10 * 6e4 }) };
+}
+/** A trainer removes a checklist item they uploaded (it drops off the portfolio; the Drive file stays in their folder). */
+async function tpoeDelete(env, b, me) {
+  const r = await one(env, 'SELECT * FROM trainer_poe WHERE id=?', String(b.id || ''));
+  if (!r || r.replaced_at) return { ok: true };
+  if (lower(r.trainer_code) !== lower(me.code)) fail('Only the trainer who uploaded it can remove it');
+  const now = nowIso();
+  await run(env, 'UPDATE trainer_poe SET replaced_at=?, updated_at=? WHERE id=?', now, now, r.id);
+  await audit(env, me, 'trainer POE removed', `${r.slot}${r.unit_code ? ' ' + r.unit_code : ''} v${r.version}`);
+  return { ok: true };
+}
 /** A trainer's device found the file in the student's Drive no longer matches what was sent. */
 async function poeChanged(env, b, me) {
   const r = await evidenceFor(env, b.id, me, false);
@@ -2525,6 +2670,7 @@ async function setArchiveEmail(env, b, me) {
 }
 async function poeDecide(env, b, me, ctx, pinDone = false) {
   const r = await evidenceFor(env, b.id, me, true);
+  if (r.replaced_at) fail('The student sent a newer version of this. Open the latest one.');
   if (!['approved', 'returned'].includes(b.decision)) fail('Choose approve or return');
   let comment = String(b.comment || '').trim().slice(0, 500);
   if (b.decision === 'returned' && !comment) fail('Say what needs fixing when returning evidence');

@@ -135,7 +135,10 @@ const POE = (() => {
       rows.push({ local: true, id: d._id, unit: d.unitName, item: d.item, version: null, at: d.createdAt, status: 'local', cls, label, note: d.error || '', copy: d._id,
         retry: d.status === 'error' && navigator.onLine, needGoogle: d.needGoogle });
     }
-    for (const e of ps.server) {
+    // Only the latest version of each item (an older one sent again is replaced).
+    const top = new Map();
+    for (const e of ps.server) { const k = e.unitCode + '|' + e.item; if (!(top.get(k)?.version >= e.version)) top.set(k, e); }
+    for (const e of top.values()) {
       const [cls, label] = STATUS[e.status] || ['pending', e.status];
       rows.push({ id: e.id, unit: e.unitName, item: e.item, version: e.version, at: e.submittedAt, status: e.status, cls, label, note: e.comment || '',
         copy: local.find((d) => d.serverId === e.id)?._id || '', redo: e.status === 'returned' ? `${e.unitCode}|${e.item}` : '' });

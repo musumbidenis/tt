@@ -28,7 +28,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.9.0';
+var BRIDGE_VERSION = '1.10.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -65,6 +65,7 @@ function doPost(e) {
   try {
     var b = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (b.action === 'upload') return json_(upload_(b));
+    if (b.action === 'tupload') return json_(tupload_(b));
     if (b.action === 'file') return json_(viewFile_(b.ticket));
     if (b.action === 'nudge') return json_(nudge_(b));
     if (b.action === 'bulk') return json_(bulkSave_(b));
@@ -171,6 +172,25 @@ function upload_(b) {
     var blob = Utilities.newBlob(Utilities.base64Decode(b.data), b.mime || 'application/pdf', name);
     var file = folder.createFile(blob);
     file.setDescription('POE evidence ' + t.item + ' for ' + t.unit + ', uploaded from the student app ' + new Date().toISOString());
+    return { ok: true, fileId: file.getId(), fileName: name, version: v, sig: hmacHex_('done|' + t.id + '|' + file.getId() + '|' + v + '|' + name) };
+  } finally { lock.releaseLock(); }
+}
+/** Trainer POE (1.10.0): a trainer's own evidence (scheme of work, lesson plans, papers, records) goes into their own
+ * folder under POE / <term> / <unit>. The ticket carries which trainer, so the folder is found the same way the sheets are. */
+function tupload_(b) {
+  var t = readTicket_(b.ticket, 'tup');
+  if (!b.data) throw new Error('No file was sent');
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    var folder = resolveFolder_(t.trainer || {}, trainerFolders_());
+    if (!folder) throw new Error('No Drive folder for this trainer yet');
+    (t.folders || []).forEach(function (f) { folder = childFolder_(folder, String(f).replace(/[\/:*?"<>|]+/g, '-').slice(0, 90)); });
+    var v = Number(t.v) || 1, name = t.name;
+    var ext = (name.match(/(\.[A-Za-z0-9]{1,5})$/) || ['', ''])[1], stem = name.replace(/ - v\d+(\.[A-Za-z0-9]{1,5})?$/, '');
+    while (folder.getFilesByName(name).hasNext()) { v++; name = stem + ' - v' + v + ext; }
+    var blob = Utilities.newBlob(Utilities.base64Decode(b.data), b.mime || 'application/octet-stream', name);
+    var file = folder.createFile(blob);
+    file.setDescription('Trainer POE ' + t.slot + (t.unit ? ' for ' + t.unit : '') + ', uploaded ' + new Date().toISOString());
     return { ok: true, fileId: file.getId(), fileName: name, version: v, sig: hmacHex_('done|' + t.id + '|' + file.getId() + '|' + v + '|' + name) };
   } finally { lock.releaseLock(); }
 }
