@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.26.0';
+export const VERSION = '7.27.0';
 const SCHEMA_VERSION = '24';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -981,7 +981,7 @@ async function studentsOf(env, misClass, classCode) {
   const byAdm = new Map();
   for (const e of terms) { const k = lower(e.adm_no); if (!byAdm.has(k)) byAdm.set(k, []); byAdm.get(k).push({ term: e.name || '', classCode: e.class_code, status: e.status }); }
   return { ok: true, students: rows.map((r) => ({ admNo: r.adm_no, name: r.name, classCode: r.class_code, status: active(r) ? 'active' : (r.status || 'withdrawn'), note: r.note, rep: !!r.rep, email: !!r.email,
-    terms: byAdm.get(lower(r.adm_no)) || [] })) };
+    connected: !!r.g_refresh, terms: byAdm.get(lower(r.adm_no)) || [] })) };
 }
 
 /** MIS: move a student to another stream, withdraw them, or bring them back. */

@@ -59,7 +59,7 @@ const Admin = (() => {
 
   /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
   const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
-    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-classes', 'm-registers']], ['people', 'People', ['m-staff', 'm-phones']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
+    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-registers']], ['people', 'People', ['m-classes', 'm-staff', 'm-phones']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
   let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
   function groupTabs(parts) {
     const html = parts.join(''), have = GROUPS.filter(([, , ids]) => ids.some((id) => html.includes(`id="${id}"`)));
@@ -105,7 +105,13 @@ const Admin = (() => {
     return { done, failed, firstErr };
   }
   const doneToast = ({ done, failed, firstErr }) => toast(`Done: ${done}${failed ? ` - ${failed} failed: ${firstErr}` : ''}`, failed ? 'err' : 'ok');
-  let grpName = '';
+  let grpName = '', grpConn = '';
+  /** The open student list: show only rows matching the search box and the college-email chip. */
+  function filterGrp() {
+    const q = ($('#grpSearch')?.value || '').trim().toLowerCase();
+    $$('#adminDialog .students li').forEach((li) => { li.hidden = (q && !li.dataset.q.includes(q)) || (grpConn && li.dataset.conn !== grpConn); });
+    syncBar('stu');
+  }
   async function batchAct(btn) {
     const act = btn.dataset.bact, kind = act.split('-')[0], ids = [...picks[kind]];
     if (!ids.length) return;
@@ -630,11 +636,16 @@ const Admin = (() => {
       if (grpName !== group) picks.stu.clear();
       grpName = group;
       for (const id of [...picks.stu]) if (!list.some((s) => s.admNo === id)) picks.stu.delete(id);
+      const connN = list.filter((s) => s.connected).length;
       $('#adminDialogBody').innerHTML = `<div class="scan-head"><strong>${esc(group)} - ${list.filter((s) => s.status === 'active').length} students</strong><button type="button" class="btn small ghost" data-close>Close</button></div>
         <input type="search" id="grpSearch" placeholder="Search name or admission no." aria-label="Search students">
+        <div class="chips" role="group" aria-label="Filter by college email"><span class="muted small">College email:</span>
+          <button type="button" class="chipbtn${grpConn === '' ? ' on' : ''}" data-grpconn="">All</button>
+          <button type="button" class="chipbtn${grpConn === 'yes' ? ' on' : ''}" data-grpconn="yes">Connected <span class="n">${connN}</span></button>
+          <button type="button" class="chipbtn${grpConn === 'no' ? ' on' : ''}" data-grpconn="no">Not connected <span class="n">${list.length - connN}</span></button></div>
         ${list.length ? pickBar('stu', list.length, [['stu-withdraw', 'Withdraw selected', 'danger'], ['stu-restore', 'Restore selected'], ...(hasRole('MIS') ? [['stu-delete', 'Delete selected', 'danger-text']] : [])]) : ''}
-        <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" class="${s.status !== 'active' ? 'gone' : ''}">
-          ${pickBox('stu', s.admNo, s.name)}<span><b>${esc(s.name)}</b><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}${s.email ? '' : ' - no college email yet'}</small>
+        <ul class="mlist students">${list.map((s) => `<li data-adm="${esc(s.admNo)}" data-q="${esc((s.name + ' ' + s.admNo).toLowerCase())}" data-conn="${s.connected ? 'yes' : 'no'}" class="${s.status !== 'active' ? 'gone' : ''}">
+          ${pickBox('stu', s.admNo, s.name)}<span><b>${esc(s.name)}</b> <span class="pill ${s.connected ? 'synced' : 'pending'}" title="College Google account ${s.connected ? 'connected' : 'not connected yet'}">Email: ${s.connected ? 'Yes' : 'No'}</span><small>${esc(s.admNo)}${s.status !== 'active' ? ' - ' + esc(s.status === 'inactive' ? 'not on this term\'s list yet' : s.status) : ''}</small>
           ${s.terms?.length ? `<small class="muted">Terms: ${s.terms.map((t) => esc(`${t.term}${t.classCode !== s.classCode ? ' (' + t.classCode + ')' : ''}`)).join(' - ')}</small>` : ''}</span>
           <span class="st-actions"><label class="check small"><input type="checkbox" data-rep="${esc(s.admNo)}"${s.rep ? ' checked' : ''}> Class rep</label><select class="moveTo" aria-label="Stream for ${esc(s.name)}">${streams.map((c) => `<option ${c === s.classCode ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn small" data-status="${s.status === 'active' ? 'withdrawn' : 'active'}">${s.status === 'active' ? 'Withdraw' : 'Restore'}</button>
@@ -644,6 +655,7 @@ const Admin = (() => {
           <button type="button" class="btn" data-archive="${esc(group)}">Archive ${esc(group)}</button></div>`);
       }
       syncBar('stu');
+      filterGrp();
     } catch (e) { $('#adminDialogBody').insertAdjacentHTML('beforeend', `<p class="err-text">${esc(e.message)}</p>`); }
   }
   /** Archived classes, by MIS class name (all of its streams together). */
@@ -1025,6 +1037,7 @@ const Admin = (() => {
     }
     if (card && t.closest('[data-remove]')) { classImports.splice(Number(card.dataset.i), 1); $('#classImports').innerHTML = classImports.map(importCard).join(''); return; }
     const grp = t.closest('[data-group]'); if (grp) { showGroup(grp.dataset.group); return; }
+    const gc = t.closest('[data-grpconn]'); if (gc) { grpConn = gc.dataset.grpconn; $$('#adminDialog [data-grpconn]').forEach((b) => b.classList.toggle('on', b.dataset.grpconn === grpConn)); filterGrp(); return; }
     const rp = t.closest('[data-resetphone]'); if (rp) { resetPhone(rp); return; }
     const st = t.closest('.students [data-status]'); if (st) { updateStudent(st.closest('li'), { status: st.dataset.status }); return; }
     const pin = t.closest('.staff [data-pin]');
@@ -1081,11 +1094,11 @@ const Admin = (() => {
     }
     if (t.id === 'phoneSearch') { phoneQuery = t.value; Tables.reset('phones'); drawPhones(); return; }
     if (t.id === 'soSearch') { soQuery = t.value; Tables.reset('signoffs'); Tables.reset('signoffsDone'); drawSignoffs(); return; }
-    if (t.id === 'grpSearch' || t.id === 'staffSearch') {
+    if (t.id === 'grpSearch') { filterGrp(); return; }
+    if (t.id === 'staffSearch') {
       const q = t.value.trim().toLowerCase();
-      const list = t.id === 'grpSearch' ? $$('#adminDialog .students li') : $$('#m-staff .staff li');
-      list.forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
-      syncBar(t.id === 'grpSearch' ? 'stu' : 'staff');
+      $$('#m-staff .staff li').forEach((li) => { li.hidden = q && !li.dataset.q.includes(q); });
+      syncBar('staff');
     }
   });
   document.addEventListener('toggle', (e) => {
