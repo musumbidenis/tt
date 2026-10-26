@@ -760,6 +760,27 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-decide { margin-top: .75rem; border-top: 1px solid var(--line); padding-top: .75rem; }
 .poe-decide textarea { width: 100%; }
 .poe-decide .row-actions { justify-content: flex-end; }
+/* Evidence (POE): one row per student, their items as state-coloured chips. */
+.poe-stu-table td { vertical-align: top; }
+.poe-stu-table .tadm { display: block; font-weight: 400; }
+.poe-items { line-height: 1.9; }
+.poe-item-chip { display: inline-flex; align-items: center; gap: .2rem; margin: .1rem .25rem .1rem 0; padding: .1rem .45rem; border-radius: 99px; font-size: .78rem; font-weight: 600; background: var(--sunk); color: var(--ink); white-space: nowrap; }
+.poe-item-chip.approved { background: var(--p-soft); color: var(--p); }
+.poe-item-chip.submitted { background: var(--l-soft); color: var(--l); }
+.poe-item-chip.returned { background: var(--a-soft); color: var(--a); }
+.poe-item-chip .ci { font-weight: 700; }
+.poe-item-chip small { font-weight: 400; opacity: .7; margin-left: .1rem; }
+/* Minimalist preview: who + item + mark, the page, one row of actions. */
+.poe-view2 { display: flex; flex-direction: column; gap: .5rem; }
+.poe-view2-top { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.poe-view2-item { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .6rem; }
+.poe-view2-mark b { font-size: 1.05rem; }
+.poe-view2-pos { margin-left: auto; }
+.poe-view2-note textarea { width: 100%; }
+.poe-view2-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
+.poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
+.poe-view2-more { display: flex; gap: .4rem; }
 .drive-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 1rem; }
 .drive-list select { width: auto; max-width: 100%; margin: 0; }
 /* POE by student */
