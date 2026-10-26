@@ -156,7 +156,6 @@ const Marks = (() => {
       <div id="marksTable"></div>
       <div class="row-actions marks-actions">
         <button type="button" class="btn primary" id="marksExport"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export Excel marksheet</button>
-        ${edits ? '<button type="button" class="btn" id="marksSend">Send now</button>' : ''}
       </div>
       <div id="msSteps" class="ms-steps"></div>`}`;
     if (roster.length) { drawTable(); drawSteps(); }
@@ -384,7 +383,6 @@ const Marks = (() => {
     document.addEventListener('focusin', (e) => { if (e.target.matches?.('#marksCard input.mk')) e.target.select(); });
     document.addEventListener('click', (e) => {
       if (e.target.closest('#marksExport')) exportXlsx();
-      if (e.target.closest('#marksSend')) syncAll().then(() => render());
       const st = e.target.closest('[data-ms]'); if (st) step(st.dataset.ms, st.dataset.cls, st);
       const un = e.target.closest('[data-munlock]');
       if (un) {

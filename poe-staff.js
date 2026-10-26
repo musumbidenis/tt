@@ -396,10 +396,12 @@ const PoeStaff = (() => {
     const lib = await Imports.pdfLib();
     const doc = await lib.getDocument({ data: file.bytes.slice() }).promise;
     holder.innerHTML = `<p class="muted small">${doc.numPages} page${doc.numPages === 1 ? '' : 's'}</p>`;
-    const width = Math.min(holder.clientWidth || 640, 900), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Render each page well above its shown size so scanned pages stay crisp (and sharp when zoomed). The page is still
+    // displayed at `width` CSS px; the extra backing pixels are what fixes the blur the old 900px/2x render showed.
+    const width = Math.min(holder.clientWidth || 640, 1100), dpr = Math.min(window.devicePixelRatio || 1, 2), QUALITY = 1.6;
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
-      const base = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: (width / base.width) * dpr });
+      const base = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: (width / base.width) * dpr * QUALITY });
       const c = document.createElement('canvas');
       c.width = Math.round(vp.width); c.height = Math.round(vp.height); c.style.width = width + 'px';
       c.setAttribute('aria-label', `Page ${n}`); c.className = 'poe-page';

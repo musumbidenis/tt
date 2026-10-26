@@ -253,6 +253,7 @@ const Admin = (() => {
   /* ---------- marksheets: the Assessment Officer receives them, the HOD approves them (several at once) ---------- */
   const msPicked = new Set();
   let msShow = '';
+  let msCls = '', msUnit = '';   // the class / unit dropdowns in the marksheets window
   const MS_LABEL = { submitted: ['pending', 'To receive'], received: ['pending', 'To approve'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
   const myStep = () => (hasRole('HOD') ? 'received' : 'submitted');
   async function loadMarksheets() {
@@ -261,23 +262,77 @@ const Admin = (() => {
   function drawMarksheets() {
     const all = cache.marksheets || [], step = myStep();
     if (!msShow) msShow = step;
-    const list = all.filter((m) => !msShow || m.status === msShow).sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
+    // The class / unit dropdowns list only what has actually been sent; the units narrow to the chosen class.
+    const classList = [...new Set(all.map((m) => m.classCode))].sort((a, b) => a.localeCompare(b));
+    if (msCls && !classList.includes(msCls)) msCls = '';
+    const unitList = [...new Set(all.filter((m) => !msCls || m.classCode === msCls).map((m) => m.unitCode))].sort((a, b) => a.localeCompare(b));
+    if (msUnit && !unitList.includes(msUnit)) msUnit = '';
+    const list = all.filter((m) => (!msShow || m.status === msShow) && (!msCls || m.classCode === msCls) && (!msUnit || m.unitCode === msUnit))
+      .sort((a, b) => a.classCode.localeCompare(b.classCode) || a.unitCode.localeCompare(b.unitCode));
     for (const id of [...msPicked]) if (!list.some((m) => m.id === id && m.status === step)) msPicked.delete(id);
     const counts = {}; for (const m of all) counts[m.status] = (counts[m.status] || 0) + 1;
     const chips = [['submitted', 'With the Assessment Officer'], ['received', 'With the HOD'], ['approved', 'Approved'], ['returned', 'Returned'], ['', 'All']]
       .map(([k, l]) => `<button type="button" class="chipbtn${msShow === k ? ' on' : ''}" data-msshow="${k}">${l}${k && counts[k] ? ` <span class="n">${counts[k]}</span>` : ''}</button>`).join('');
+    const picker = `<div class="ms-pick">
+      <label class="small">Class <select id="msClass" aria-label="Class"><option value="">All classes</option>${classList.map((c) => `<option value="${esc(c)}"${c === msCls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+      <label class="small">Unit <select id="msUnit" aria-label="Unit"><option value="">All units</option>${unitList.map((u) => `<option value="${esc(u)}"${u === msUnit ? ' selected' : ''}>${esc(u)}</option>`).join('')}</select></label></div>`;
     const mine = list.filter((m) => m.status === step);
     const verb = hasRole('HOD') ? 'Approve' : 'Mark as received';
-    fill('m-marksheets', `<p class="muted small">Trainers send their marksheets from Reports - Marks. The Assessment Officer receives each one, then the HOD approves it.</p>
+    fill('m-marksheets', `<p class="muted small">Trainers send their marksheets from Reports - Marks. Open one to review its marks and ${hasRole('HOD') ? 'approve' : 'receive'} it here - the latest marks show, including any the trainer changed after sending.</p>
+      ${picker}
       <div class="chips" role="group" aria-label="Show">${chips}</div>
       ${mine.length ? `<div class="batch-bar"><label class="kchip"><input type="checkbox" data-mspickall${mine.every((m) => msPicked.has(m.id)) ? ' checked' : ''}><span>Select all ${mine.length}</span></label>
         <button type="button" class="btn primary small" id="msBatch"${msPicked.size ? '' : ' disabled'}>${verb} selected${msPicked.size ? ` (${msPicked.size})` : ''}</button>
         ${hasRole('HOD') ? `<span class="muted small">Each gets the comment: ${esc(OK_SAID.marksheet)}</span>` : ''}</div>` : ''}
       ${list.length ? `<ul class="mlist">${list.map((m) => { const [c, l] = MS_LABEL[m.status] || ['pending', m.status]; return `<li class="${m.status === step ? 'pickable' : ''}">
         ${m.status === step ? `<input type="checkbox" class="so-pick" data-mspick="${esc(m.id)}"${msPicked.has(m.id) ? ' checked' : ''} aria-label="Select ${esc(m.classCode)} ${esc(m.unitCode)}">` : ''}
-        <button type="button" class="mrow" data-msopen="${esc(m.classCode)}|${esc(m.unitCode)}"><span><b>${esc(m.classCode)} - ${esc(m.unitCode)}</b>
+        <button type="button" class="mrow" data-msreview="${esc(m.classCode)}|${esc(m.unitCode)}"><span><b>${esc(m.classCode)} - ${esc(m.unitCode)}</b>
         <small>${esc(m.unitName)} - prepared by ${esc(m.preparedName)}${m.receivedName ? ' - received by ' + esc(m.receivedName) : ''}${m.approvedName ? ' - approved by ' + esc(m.approvedName) : ''}</small></span>
         <span class="pill ${c}">${l}</span></button></li>`; }).join('')}</ul>` : '<p class="muted">Nothing here.</p>'}`);
+  }
+  /** Review one marksheet inside this window (no jump to the Marks tab): its current marks, then receive or approve it. */
+  async function openMarksheetReview(cls, unit) {
+    const m = (cache.marksheets || []).find((x) => x.id === `${cls}|${unit}`);
+    if (!m) { toast('That marksheet has not been sent', 'err'); return; }
+    const head = `<div class="scan-head"><strong>${esc(cls)} - ${esc(unit)}</strong><button type="button" class="btn small ghost" data-close>Close</button></div>`;
+    dialog(`${head}<p class="muted">Loading the marks…</p>`);
+    try {
+      const data = await Marks.dataFor(cls, unit);
+      if (!$('#adminDialog').open) return;
+      const [c, l] = MS_LABEL[m.status] || ['pending', m.status];
+      const who = [m.preparedName && `Prepared by ${esc(m.preparedName)}`, m.receivedName && `received by ${esc(m.receivedName)}`, m.approvedName && `approved by ${esc(m.approvedName)}`].filter(Boolean).join(' - ');
+      const canReceive = (hasRole('HOD') || hasRole('IAO')) && m.status === 'submitted';
+      const canDecide = hasRole('HOD') && m.status === 'received';
+      $('#adminDialogBody').innerHTML = `${head}
+        <p><span class="pill ${c}">${l}</span> <span class="small">${who}</span></p>
+        ${m.comment && m.status === 'returned' ? `<p class="so-quote small"><b>Comment:</b> ${esc(m.comment)}</p>` : ''}
+        <div class="ms-review">${Marks.printHtml(data)}</div>
+        ${canReceive ? `<div class="row-actions"><button type="button" class="btn primary" data-msreact="receive" data-id="${esc(m.id)}">Mark as received</button></div>` : ''}
+        ${canDecide ? `<label>HOD's comment<textarea id="msrComment" rows="2" placeholder="Left empty: ${esc(OK_SAID.marksheet)}"></textarea></label>${quickSays('marksheet', 'msrComment')}
+          <div class="row-actions"><button type="button" class="btn primary" data-msreact="approved" data-id="${esc(m.id)}">Approve marksheet</button>
+          <button type="button" class="btn" data-msreact="returned" data-id="${esc(m.id)}">Return to trainer</button></div>` : ''}
+        ${!canReceive && !canDecide ? `<p class="muted small">This marksheet is read-only for you here.</p>` : ''}`;
+    } catch (e) { if ($('#adminDialog').open) $('#adminDialogBody').innerHTML = `${head}<p class="err-text">${esc(e.message)}</p>`; }
+  }
+  /** Receive, approve or return the open marksheet, then close the review and refresh the list. */
+  async function reviewMarksheet(action, id, btn) {
+    btn.disabled = true;
+    try {
+      let r;
+      if (action === 'receive') r = await api('msReceive', { id });
+      else {
+        const comment = $('#msrComment')?.value.trim() || '';
+        if (action === 'returned' && !comment) { toast('Write what needs fixing, then return it', 'err'); btn.disabled = false; return; }
+        r = action === 'approved' ? await withPin('Approve this marksheet', (pin) => api('msDecide', { id, decision: 'approved', comment, pin }))
+          : await api('msDecide', { id, decision: 'returned', comment });
+        if (!r) { btn.disabled = false; return; }
+      }
+      need(r);
+      const m = r.marksheet || r.marksheets?.[0];
+      if (m) { const k = cache.marksheets.findIndex((x) => x.id === m.id); if (k >= 0) cache.marksheets[k] = m; }
+      toast(action === 'receive' ? 'Received' : action === 'approved' ? 'Marksheet approved' : 'Returned to the trainer', 'ok');
+      closeDialog(); drawMarksheets(); refreshBadge();
+    } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
   }
   async function batchMarksheets(btn) {
     const ids = [...msPicked]; if (!ids.length) return;
@@ -472,12 +527,16 @@ const Admin = (() => {
     busy(btn, true, 'Uploading…');
     try {
       const res = need(await api('uploadLoading', { rows: loadingRows(), trainers: loadingPreview.trainers }));
-      toast(`Loading saved: ${res.rows} class units (${res.newUnits} new, ${res.continuing} carrying on), ${res.trainers} trainers${res.newStaff ? ` (${res.newStaff} new - issue their PINs under Staff)` : ''}`, 'ok');
+      const archived = res.archivedClasses?.length || 0;
+      toast(`Loading saved: ${res.rows} class units (${res.newUnits} new, ${res.continuing} carrying on), ${res.trainers} trainers${res.newStaff ? ` (${res.newStaff} new - issue their PINs under Staff)` : ''}${archived ? ` - ${archived} class${archived === 1 ? '' : 'es'} archived` : ''}`, 'ok');
       loadingPreview = null;
       await pullRoster({ silent: true });
       replaceBody($('#m-loading'), loadingHtml());
       if (res.finished?.length) $('#m-loading').insertAdjacentHTML('beforeend', fold('finishedUnits', `Finished last term - not in this loading (${res.finished.length})`,
         `<ul class="mlist">${res.finished.map((u) => `<li><span><b>${esc(u.classCode)} - ${esc(u.unitCode)}</b><small>${esc(u.unitName)}</small></span></li>`).join('')}</ul>`));
+      if (archived) $('#m-loading').insertAdjacentHTML('beforeend', fold('archivedClasses', `Archived - gone from this loading (${archived})`,
+        `<p class="muted small">These classes were in the term's earlier loading but not in this one, so they were archived. Their registers and marks are kept; restore a class under Classes if it was dropped by mistake.</p>
+        <ul class="mlist">${res.archivedClasses.map((c) => `<li><span><b>${esc(c)}</b></span></li>`).join('')}</ul>`));
       replaceBody($('#m-classes'), classesHtml());
       loadStaff();
     } catch (e) { toast(e.message, 'err'); busy(btn, false); }
@@ -987,8 +1046,10 @@ const Admin = (() => {
     }
     if (t.closest('#msBatch')) { batchMarksheets(t.closest('#msBatch')); return; }
     const mss = t.closest('[data-msshow]'); if (mss) { msShow = mss.dataset.msshow; drawMarksheets(); return; }
-    const mso = t.closest('[data-msopen]');
-    if (mso) { const [c, u] = mso.dataset.msopen.split('|'); window.openMarks?.(c, u); return; }
+    const mso = t.closest('[data-msreview]');
+    if (mso) { const [c, u] = mso.dataset.msreview.split('|'); openMarksheetReview(c, u); return; }
+    const mra = t.closest('[data-msreact]');
+    if (mra) { reviewMarksheet(mra.dataset.msreact, mra.dataset.id, mra); return; }
     const arc = t.closest('[data-archive]');
     if (arc) { const codes = classGroups().get(arc.dataset.archive) || []; if (codes.length && confirm(`Archive ${arc.dataset.archive}? It can be brought back later.`)) archive(codes, true, arc.dataset.archive); return; }
     const res = t.closest('[data-restore]');
@@ -1059,6 +1120,8 @@ const Admin = (() => {
     if (t.id === 'loadingFile' && t.files[0]) { readLoading(t.files[0]); t.value = ''; }
     if (t.closest('#loadingDepts')) drawLoadingSummary();
     if (t.id === 'ovTerm') { ovTerm = t.value; loadOverview(); }
+    if (t.id === 'msClass') { msCls = t.value; msUnit = ''; drawMarksheets(); return; }
+    if (t.id === 'msUnit') { msUnit = t.value; drawMarksheets(); return; }
     if (t.matches?.('[data-mspick]')) { if (t.checked) msPicked.add(t.dataset.mspick); else msPicked.delete(t.dataset.mspick); drawMarksheets(); return; }
     if (t.matches?.('[data-mspickall]')) { for (const m of (cache.marksheets || []).filter((x) => x.status === myStep() && (!msShow || x.status === msShow))) { if (t.checked) msPicked.add(m.id); else msPicked.delete(m.id); } drawMarksheets(); return; }
     if (t.matches?.('[data-sopick]')) { if (t.checked) soPicked.add(t.dataset.sopick); else soPicked.delete(t.dataset.sopick); drawSignoffs(); return; }

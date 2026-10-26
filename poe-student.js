@@ -232,9 +232,11 @@ const POE = (() => {
     let flat = null, small = null;
     try {
       flat = Scanner.flatten(canvas, quad);
-      small = Scanner.thumb(flat);
+      // The preview is shown stretched to the full width of the page card, so it is kept large enough to stay sharp there
+      // (the old 320px/0.7 copy looked blurred); the full-quality page is still what is sent.
+      small = Scanner.thumb(flat, 720);
       // Kept at high quality: the page is compressed again when the PDF is made, so little is lost twice.
-      const [page, preview] = await Promise.all([Scanner.toJpeg(flat, 0.94), Scanner.toJpeg(small, 0.7)]);
+      const [page, preview] = await Promise.all([Scanner.toJpeg(flat, 0.94), Scanner.toJpeg(small, 0.82)]);
       Scanner.release(flat); Scanner.release(small); flat = small = null;
       closeCrop();
       await addPage(item, page, preview);

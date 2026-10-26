@@ -1018,9 +1018,12 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .backup-alert { margin: 0 0 .75rem; padding: .65rem .8rem; border-radius: var(--r); background: var(--l-soft); color: var(--ink); border: 1px solid var(--l); border: 1px solid color-mix(in srgb, var(--l) 45%, var(--line)); }
 .backup-alert.full { background: var(--a-soft); border-color: var(--a); border-color: color-mix(in srgb, var(--a) 50%, var(--line)); }
 .gauge { height: 12px; border-radius: 999px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; margin: .5rem 0 .25rem; }
-.gauge span { display: block; height: 100%; background: var(--p); }
+/* The fill grows from empty to its real share each time the page is drawn: a tactile read of "how full". */
+.gauge span { display: block; height: 100%; width: var(--pct, 0); background: var(--p); border-radius: inherit; animation: gaugeGrow .6s cubic-bezier(.2, 0, 0, 1); }
 .gauge.warn span { background: var(--l); }
 .gauge.full span { background: var(--a); }
+@keyframes gaugeGrow { from { width: 0; } }
+@media (prefers-reduced-motion: reduce) { .gauge span { animation: none; } }
 
 /* A short form on one row: fields and the button the same height, the button lined up with the boxes. */
 .inline-form { display: flex; align-items: flex-end; gap: .5rem; margin: .75rem 0 .5rem; }
@@ -1127,7 +1130,7 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .h-status.warn { background: var(--l-soft); border-color: var(--l); border-color: color-mix(in srgb, var(--l) 40%, var(--line)); }
 .h-status ul { margin: .35rem 0 0; padding-left: 1.1rem; font-size: .9375rem; }
 .h-status li.full { color: var(--a); font-weight: 600; }
-.h-sub { font-size: 1rem; margin: 1.25rem 0 .5rem; }
+.h-sub { font-size: 1rem; margin: 1.25rem 0 .5rem; text-wrap: balance; }
 .h-gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .75rem 1.5rem; }
 .hg-top { display: flex; justify-content: space-between; gap: .5rem; flex-wrap: wrap; font-size: .9375rem; }
 .hg-top span { color: var(--ink-2); font-variant-numeric: tabular-nums; }
@@ -1136,9 +1139,9 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .h-table tr.h-bad td:first-child { color: var(--a); }
 .h-errors { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .h-errors li { padding: .6rem .25rem; border-bottom: 1px solid var(--line); font-size: .9375rem; }
-.h-errors p { margin: .2rem 0 0; overflow-wrap: anywhere; }
+.h-errors p { margin: .2rem 0 0; overflow-wrap: anywhere; text-wrap: pretty; }
 .h-errors pre { white-space: pre-wrap; font-size: .75rem; max-height: 12rem; overflow: auto; background: var(--sunk); padding: .5rem; border-radius: var(--r-sm); }
-.h-facts { margin: 0; padding-left: 1.1rem; font-size: .9375rem; }
+.h-facts { margin: 0; padding-left: 1.1rem; font-size: .9375rem; font-variant-numeric: tabular-nums; }
 .h-facts li { margin: .2rem 0; }
 .del-regs { align-self: flex-start; margin-top: .25rem; }
 .del-list { list-style: none; margin: .25rem 0 0; padding: 0; max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); }
@@ -1152,6 +1155,28 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .mlist li.pickable { display: flex; align-items: center; gap: .5rem; }
 .mlist li.pickable .mrow { flex: 1; min-width: 0; }
 .so-pick { width: 1.25rem; height: 1.25rem; flex: none; }
+/* The class / unit dropdowns above the marksheets list. */
+.ms-pick { display: flex; flex-wrap: wrap; gap: .5rem .75rem; margin: .25rem 0 .6rem; }
+.ms-pick label { display: flex; align-items: center; gap: .35rem; }
+.ms-pick select { min-width: 8rem; }
+/* The in-window marksheet review: the print layout shown on screen (the @media print rules do not apply here). */
+.ms-review { margin: .6rem 0; overflow-x: auto; -webkit-overflow-scrolling: touch; background: #fff; border: 1px solid var(--line); border-radius: .5rem; padding: .75rem; }
+.ms-review .ms-print { color: #000; font-size: .8125rem; }
+.ms-review .ms-head { text-align: center; }
+.ms-review .ms-head img { width: 54px; height: auto; }
+.ms-review .ms-head h1 { font-size: .9375rem; font-weight: 700; margin: .1rem 0; }
+.ms-review .ms-head h2 { font-size: .875rem; font-weight: 700; margin: .25rem 0 .5rem; color: #0070c0; }
+.ms-review .ms-fields { width: 100%; border-collapse: collapse; text-align: left; margin-bottom: .5rem; }
+.ms-review .ms-fields th { padding: .15rem .25rem; white-space: nowrap; }
+.ms-review .ms-fields td { border-bottom: 1px dotted #000; padding: .15rem .5rem; }
+.ms-review .ms-grid { width: 100%; border-collapse: collapse; }
+.ms-review .ms-grid th, .ms-review .ms-grid td { border: 1px solid #000; padding: .15rem .3rem; text-align: center; }
+.ms-review .ms-grid td.l { text-align: left; white-space: nowrap; }
+.ms-review .ms-grid th.g { background: #d9d9d9; } .ms-review .ms-grid th.p { background: #fbe4d5; }
+.ms-review .ms-foot { width: 100%; border-collapse: collapse; margin-top: .75rem; }
+.ms-review .ms-foot th { text-align: left; padding: .4rem .25rem 0; white-space: nowrap; }
+.ms-review .ms-foot td { border-bottom: 1px dotted #000; padding: .4rem .5rem 0; }
+.ms-review .ms-more { margin-top: 1rem; border-top: 1px dashed var(--line); padding-top: 1rem; }
 .pin-dialog form { display: grid; gap: .6rem; min-width: min(20rem, 80vw); }
 .pin-dialog input { font-size: 1.2rem; letter-spacing: .3em; }
 td.sig, .sig { font-family: "Segoe Script", "Brush Script MT", "Lucida Handwriting", cursive; font-style: italic; font-size: 1.05em; }
