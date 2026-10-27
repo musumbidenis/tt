@@ -124,7 +124,6 @@ const PoeStaff = (() => {
   }
   /** Students this person may approve in one go: those with at least one item still waiting (the server checks each is theirs). */
   const batchable = (list) => (canDecide() ? list.filter((r) => r.counts.submitted > 0) : []);
-  const SYM = { approved: '✓', returned: '↺', submitted: '•' };
   /** One row per student: name, the items they sent as state-coloured chips, and a Review button (marks live in the preview). */
   function studentTable(list) {
     const page = Tables.slice('poeUnit', list), off = Tables.offset('poeUnit');
@@ -146,7 +145,7 @@ const PoeStaff = (() => {
   function studentRow(r, sn, picking) {
     const pendingIds = r.items.filter((e) => e.status === 'submitted').map((e) => e.id);
     const reviewable = canDecide() && pendingIds.length > 0;
-    const chips = r.items.map((e) => `<span class="poe-item-chip ${e.status}" title="${esc(e.unitName)} - ${statusOf(e)[1]}${e.changedAt ? ' - changed after sending' : ''}">${esc(e.item)} <span class="ci">${SYM[e.status] || ''}</span>${e.version > 1 ? `<small>v${e.version}</small>` : ''}</span>`).join('');
+    const chips = r.items.map((e) => `<span class="poe-item-chip ${e.status}" title="${esc(e.unitName)} - ${statusOf(e)[1]}${e.changedAt ? ' - changed after sending' : ''}">${esc(e.item)}${e.version > 1 ? `<small>v${e.version}</small>` : ''}</span>`).join('');
     const first = r.items.find((e) => e.status === 'submitted') || r.items[0];
     return `<tr>${picking ? `<td class="pick">${pendingIds.length ? `<input type="checkbox" data-pick-stu="${esc(r.admNo)}"${pendingIds.every((id) => ps.picked.has(id)) ? ' checked' : ''} aria-label="Select ${esc(r.name)}">` : ''}</td>` : ''}<td class="sn">${sn}</td>
       <td><b>${esc(r.name)}</b><small class="tadm">${esc(r.admNo)}</small></td>
@@ -277,7 +276,7 @@ const PoeStaff = (() => {
         </div>
         ${decided && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
         <div id="poePages" class="poe-pages-view" aria-live="polite"><p class="muted">Opening…</p></div>
-        ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})">${esc(e.status === 'returned' ? e.comment : '')}</textarea>${quickSays('poe', 'poeComment')}</div>` : ''}
+        ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})">${esc(e.status === 'returned' ? e.comment : '')}</textarea></div>` : ''}
         <div class="poe-view2-actions">
           <div class="poe-nav"><button type="button" class="btn small" data-nav="${order[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous">‹ Prev</button>
             <button type="button" class="btn small" data-nav="${order[i + 1] || ''}" ${i >= 0 && i < order.length - 1 ? '' : 'disabled'} aria-label="Next">Next ›</button></div>

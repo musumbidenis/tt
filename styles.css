@@ -726,7 +726,12 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 
 /* ---------- POE tab (trainers, HOD, MIS Officer) ---------- */
 .poe-head .row-actions { margin: .25rem 0 .75rem; }
-.poe-chips { margin: .5rem 0 .75rem; }
+.poe-chips { margin: .5rem 0 .75rem; gap: .3rem; }
+/* Compact everywhere (not only on phones): the "Show" chips and the POE action/setup rows are kept small. */
+.poe-chips .chipbtn { min-height: 28px; padding: .12rem .55rem; font-size: .78rem; }
+.table-actions .btn, #poe .su-go .btn { min-height: 30px; padding: .2rem .7rem; font-size: .8125rem; }
+#poe .su-go { gap: .4rem; }
+#poe .su-go label.small { font-size: .8rem; }
 .chipbtn .n { display: inline-block; min-width: 1.4em; padding: 0 .35em; margin-left: .2rem; border-radius: 99px; background: var(--sunk); color: var(--ink); font-size: .75rem; }
 .chipbtn.on .n { background: rgba(128,128,128,.35); background: color-mix(in srgb, var(--btn-ink) 22%, transparent); color: inherit; }
 .poe-filters { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
@@ -768,7 +773,6 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-item-chip.approved { background: var(--p-soft); color: var(--p); }
 .poe-item-chip.submitted { background: var(--l-soft); color: var(--l); }
 .poe-item-chip.returned { background: var(--a-soft); color: var(--a); }
-.poe-item-chip .ci { font-weight: 700; }
 .poe-item-chip small { font-weight: 400; opacity: .7; margin-left: .1rem; }
 /* Minimalist preview: who + item + mark, the page, one row of actions. */
 .poe-view2 { display: flex; flex-direction: column; gap: .5rem; }
@@ -1159,8 +1163,6 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 }
 
 /* Approving: ready comments, ticking several, the PIN, signatures as initials */
-.says { display: flex; flex-wrap: wrap; gap: .35rem; margin: -.25rem 0 .6rem; }
-.says .chipbtn { font-size: .8rem; padding: .2rem .6rem; }
 /* System health (MIS) */
 .h-status { padding: .75rem 1rem; border-radius: var(--r-sm); margin: .25rem 0 .5rem; border: 1px solid var(--line); }
 .h-status.ok { background: var(--p-soft); border-color: var(--p); border-color: color-mix(in srgb, var(--p) 35%, var(--line)); }
@@ -1325,7 +1327,9 @@ details.vcard > :last-child { margin-bottom: 1rem; }
 #poe .vt-q, #poe .vcheck select, #poe .vcheck input[name=comment] { height: 32px; font-size: .8125rem; }
 #poe .ver-table input[type=checkbox] { width: 1.25rem; height: 1.25rem; }
 #poe .vcheck { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
-#poe .ver-ph { font-size: .9rem; color: var(--ink-2); margin: .9rem 0 .25rem; }
+/* Set up verification: each step heading reads as a clear, spaced-out step. */
+#poe .ver-ph { font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 1.1rem 0 .4rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+#poe .ver-ph:first-of-type { margin-top: .5rem; padding-top: 0; border-top: 0; }
 #poe .su-go { align-items: center; }
 .connect-card { display: flex; flex-wrap: wrap; gap: .5rem .9rem; align-items: center; justify-content: space-between; padding: .7rem .85rem; margin: .5rem 0; border: 1px solid var(--p); border: 1px solid color-mix(in srgb, var(--p) 40%, var(--line)); border-radius: var(--r-sm); background: var(--p-soft); background: color-mix(in srgb, var(--p) 7%, var(--surface)); }
 .connect-card > div { display: grid; gap: .15rem; flex: 1 1 16rem; }

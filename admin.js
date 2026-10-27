@@ -308,7 +308,7 @@ const Admin = (() => {
         ${m.comment && m.status === 'returned' ? `<p class="so-quote small"><b>Comment:</b> ${esc(m.comment)}</p>` : ''}
         <div class="ms-review">${Marks.printHtml(data)}</div>
         ${canReceive ? `<div class="row-actions"><button type="button" class="btn primary" data-msreact="receive" data-id="${esc(m.id)}">Mark as received</button></div>` : ''}
-        ${canDecide ? `<label>HOD's comment<textarea id="msrComment" rows="2" placeholder="Left empty: ${esc(OK_SAID.marksheet)}"></textarea></label>${quickSays('marksheet', 'msrComment')}
+        ${canDecide ? `<label>HOD's comment<textarea id="msrComment" rows="2" placeholder="Left empty: ${esc(OK_SAID.marksheet)}"></textarea></label>
           <div class="row-actions"><button type="button" class="btn primary" data-msreact="approved" data-id="${esc(m.id)}">Approve marksheet</button>
           <button type="button" class="btn" data-msreact="returned" data-id="${esc(m.id)}">Return to trainer</button></div>` : ''}
         ${!canReceive && !canDecide ? `<p class="muted small">This marksheet is read-only for you here.</p>` : ''}`;

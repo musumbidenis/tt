@@ -1334,7 +1334,7 @@ function renderSignoff() {
       <button type="button" class="btn primary" id="soSubmit"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg>${so ? 'Submit again' : 'Submit to HOD'}</button>`;
   } else if (so?.lecturerComment) html += `<p class="so-quote"><b>Lecturer's comment:</b> ${esc(so.lecturerComment)}</p>`;
   if (isHod && so && so.status !== 'approved') {
-    html += `<label>HOD's comment<textarea id="soHod" rows="2" placeholder="Left empty: ${esc(OK_SAID.register)}">${esc(so.hodComment || '')}</textarea></label>${quickSays('register', 'soHod')}
+    html += `<label>HOD's comment<textarea id="soHod" rows="2" placeholder="Left empty: ${esc(OK_SAID.register)}">${esc(so.hodComment || '')}</textarea></label>
       <div class="row-actions"><button type="button" class="btn primary" id="soApprove">Approve register</button><button type="button" class="btn" id="soReturn">Return to trainer</button></div>`;
   }
   card.innerHTML = html;
@@ -1381,20 +1381,9 @@ window.openMarks = (cls, unit) => {
   }, 60);
 };
 
-/* ---------- approving: the PIN again, short ready comments, initials for signatures ---------- */
+/* ---------- approving: the PIN again, initials for signatures ---------- */
 /** What an approval says when the comment is left empty (the server writes the same). */
 const OK_SAID = { register: 'Checked - complete and in order.', poe: 'Checked - complete and acceptable.', marksheet: 'Checked - marks complete and in order.' };
-const SAYS = {
-  register: ['Complete and in order.', 'Attendance well kept.', 'Approved - meets the requirements.'],
-  poe: ['Complete and acceptable.', 'Well presented.', 'Meets the requirements.'],
-  marksheet: ['Marks complete and in order.', 'Checked against the evidence.', 'Approved - meets the requirements.'],
-};
-/** Ready comments under a comment box: a tap puts one in the box. */
-const quickSays = (kind, target) => `<div class="says" role="group" aria-label="Ready comments">${SAYS[kind].map((s) => `<button type="button" class="chipbtn small" data-say="${esc(s)}" data-say-to="${target}">${esc(s)}</button>`).join('')}</div>`;
-document.addEventListener('click', (e) => {
-  const b = e.target.closest('[data-say]'); if (!b) return;
-  const box = document.getElementById(b.dataset.sayTo); if (box) { box.value = b.dataset.say; box.focus(); }
-});
 /** A signature written as the person's initials: "Musumbi Denis" -> "M.D." */
 const initials = (name) => String(name || '').replace(/[^A-Za-z\s'-]/g, ' ').split(/[\s-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + '.').join('');
 /** Approving asks for the PIN again. It is kept in memory (never saved) for 5 minutes, so a run of approvals asks once. */

@@ -266,10 +266,10 @@ const Marks = (() => {
       return `<div class="ms-step" data-cls="${esc(s.cls)}"><p>${tag}${cls ? `<span class="pill ${cls}">${label}</span>` : `<span class="muted">${label}</span>`} <span class="small">${who}</span>
           ${m?.approvalRef ? `<span class="small"> - Ref ${esc(m.approvalRef)}</span>` : ''}</p>
         ${m?.comment && m.status === 'returned' ? `<p class="so-quote small"><b>HOD's comment:</b> ${esc(m.comment)}</p>` : ''}
-        ${decide ? `<label>HOD's comment<textarea id="msComment-${esc(s.cls)}" rows="2" placeholder="Left empty: ${esc(OK_SAID.marksheet)}"></textarea></label>${quickSays('marksheet', 'msComment-' + s.cls)}
+        ${decide ? `<label>HOD's comment<textarea id="msComment-${esc(s.cls)}" rows="2" placeholder="Left empty: ${esc(OK_SAID.marksheet)}"></textarea></label>
           <div class="row-actions"><button type="button" class="btn small primary" data-ms="approved" data-cls="${esc(s.cls)}">Approve marksheet</button><button type="button" class="btn small" data-ms="returned" data-cls="${esc(s.cls)}">Return to trainer</button></div>` : ''}
         ${acts.length ? `<div class="row-actions">${acts.join('')}</div>` : ''}</div>`;
-    }).join('')}<p class="muted tiny">The Excel marksheet's footer shows who prepared, received and approved it, with their initials as signatures.</p>`;
+    }).join('')}`;
   }
   async function step(act, cls, btn) {
     const s = ms.sheets.find((x) => x.cls === cls); if (!s) return;
