@@ -96,7 +96,10 @@ const PoeStaff = (() => {
     const chips = [['submitted', canDecide() ? 'To review' : 'With trainers'], ['approved', 'Approved'], ['returned', 'Returned'], ['', 'All']]
       .map(([k, l]) => `<button type="button" class="chipbtn${ps.status === k ? ' on' : ''}" data-status="${k}">${l}${k && counts[k] ? ` <span class="n">${counts[k]}</span>` : ''}</button>`).join('');
     const classes = [...new Set(all.map((e) => e.classCode))].sort();
+    // Start scoped to one class and unit (simpler than everything at once); the person can still switch to All.
+    if (!ps.defaulted && classes.length) { ps.defaulted = true; if (!ps.cls) ps.cls = classes[0]; }
     const units = [...new Map(all.filter((e) => !ps.cls || e.classCode === ps.cls).map((e) => [e.unitCode, e.unitName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    if (!ps.unitDefaulted && ps.cls && units.length) { ps.unitDefaulted = true; if (!ps.unit) ps.unit = units[0][0]; }
     const students = sortedStudents();
     const links = [ps.sheetUrl && `<a class="btn small" href="${esc(ps.sheetUrl)}" target="_blank" rel="noopener">My attendance sheet in Drive</a>`,
       ps.indexUrl && `<a class="btn small" href="${esc(ps.indexUrl)}" target="_blank" rel="noopener">Evidence index sheet</a>`].filter(Boolean).join('');
@@ -416,7 +419,7 @@ const PoeStaff = (() => {
       const t = e.target;
       if (ps.mode === 'verify' && t.closest('#poe')) { Verify.onChange(t); return; }
       if (ps.mode === 'trainer' && t.closest('#poe')) { PoeTrainer.onChange(t); return; }
-      if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; Tables.reset('poeUnit'); draw(); }
+      if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; ps.unitDefaulted = !t.value; Tables.reset('poeUnit'); draw(); }
       if (t.id === 'poeUnitF') { ps.unit = t.value; Tables.reset('poeUnit'); draw(); }
     });
     document.addEventListener('input', (e) => {
@@ -437,6 +440,6 @@ const PoeStaff = (() => {
     ps.badgeAt = Date.now();
     try { await load(); } catch { /* shown when the tab opens */ }
   }
-  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '' }); ps.roster.clear(); ps.files.clear(); ps.marks.clear(); Verify.reset(); PoeTrainer.reset(); badge(); }
+  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '', defaulted: false, unitDefaulted: false }); ps.roster.clear(); ps.files.clear(); ps.marks.clear(); Verify.reset(); PoeTrainer.reset(); badge(); }
   return { render, wire, refreshBadge, reset, state: ps, open: (id, order) => openViewer(id, order), redraw: () => draw() };
 })();
