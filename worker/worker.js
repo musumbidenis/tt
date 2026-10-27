@@ -17,7 +17,7 @@
  */
 
 export const VERSION = '7.28.0';
-const SCHEMA_VERSION = '25';
+const SCHEMA_VERSION = '27';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -42,8 +42,10 @@ CREATE INDEX IF NOT EXISTS classes_mis ON classes (mis_class);
 CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, adm_no TEXT, name TEXT, class_code TEXT, reason TEXT, requested_by TEXT, requested_name TEXT, requested_at TEXT, status TEXT, decided_by TEXT, decided_at TEXT, merged_into TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, date TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, period TEXT, trainer_id TEXT, trainer_name TEXT, present INTEGER, absent INTEGER, late INTEGER, excused INTEGER, total INTEGER, pct REAL, updated_at TEXT, synced_at TEXT, term_id TEXT, week INTEGER, data TEXT, kind TEXT, slots INTEGER);
 CREATE INDEX IF NOT EXISTS sessions_cu ON sessions (class_code, unit_code, date);
+CREATE INDEX IF NOT EXISTS sessions_term ON sessions (term_id);
 CREATE TABLE IF NOT EXISTS checkins (session_id TEXT, adm_no TEXT, device_id TEXT, name TEXT, w TEXT, code TEXT, scanned_at TEXT, updated_at TEXT, status TEXT, reason TEXT, PRIMARY KEY (session_id, adm_no, device_id)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS checkins_updated ON checkins (updated_at);
+CREATE INDEX IF NOT EXISTS checkins_adm ON checkins (adm_no, status);
 CREATE TABLE IF NOT EXISTS devices (device_id TEXT PRIMARY KEY, adm_no TEXT COLLATE NOCASE, name TEXT, class_code TEXT, registered_at TEXT, last_seen TEXT);
 CREATE INDEX IF NOT EXISTS devices_adm ON devices (adm_no);
 CREATE TABLE IF NOT EXISTS signoffs (id TEXT PRIMARY KEY, term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, lecturer_comment TEXT, submitted_at TEXT, status TEXT, hod_code TEXT, hod_name TEXT, hod_comment TEXT, decided_at TEXT);
@@ -71,9 +73,10 @@ CREATE INDEX IF NOT EXISTS approvals_subject ON approvals (kind, subject);
 CREATE TABLE IF NOT EXISTS marksheets (id TEXT PRIMARY KEY, class_code TEXT, unit_code TEXT, unit_name TEXT, status TEXT, prepared_code TEXT, prepared_name TEXT, prepared_at TEXT, received_code TEXT, received_name TEXT, received_at TEXT, approved_code TEXT, approved_name TEXT, approved_at TEXT, comment TEXT, approval_ref TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS enrolments (term_id TEXT, adm_no TEXT COLLATE NOCASE, class_code TEXT, status TEXT, at TEXT, PRIMARY KEY (term_id, adm_no));
 CREATE TABLE IF NOT EXISTS verify_list (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, students INTEGER, added_by TEXT, added_at TEXT, PRIMARY KEY (term_id, class_code, unit_code));
-CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT);
+CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT, board INTEGER, priority TEXT, pinned_until TEXT, need_ack INTEGER);
 CREATE INDEX IF NOT EXISTS notices_at ON notices (at);
 CREATE TABLE IF NOT EXISTS notice_reads (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
+CREATE TABLE IF NOT EXISTS notice_acks (notice_id TEXT, who TEXT COLLATE NOCASE, at TEXT, PRIMARY KEY (notice_id, who));
 CREATE TABLE IF NOT EXISTS mail_groups (key TEXT PRIMARY KEY, email TEXT, name TEXT, group_name TEXT, added TEXT, want_hash TEXT, synced_at TEXT, error TEXT, failed TEXT);
 CREATE TABLE IF NOT EXISTS mail_out (id TEXT PRIMARY KEY, notice_id TEXT, bcc TEXT, reply_to TEXT, subject TEXT, body TEXT, status TEXT, tries INTEGER DEFAULT 0, error TEXT, at TEXT, sent_at TEXT);
 CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, trainer_id TEXT COLLATE NOCASE, class_code TEXT, unit_code TEXT, by_code TEXT, at TEXT);
@@ -114,7 +117,10 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // Google connected once: the long-lived permission Google gives (kept encrypted), so nobody signs in again.
   'ALTER TABLE trainees ADD COLUMN g_refresh TEXT', 'ALTER TABLE staff ADD COLUMN g_refresh TEXT',
   // A newer version of the same item was sent: this one leaves the lists and can no longer be decided.
-  'ALTER TABLE evidence ADD COLUMN replaced_at TEXT'];
+  'ALTER TABLE evidence ADD COLUMN replaced_at TEXT',
+  // Notice board: a message can be pinned to a board, given a priority, and require readers to confirm they have read it.
+  'ALTER TABLE notices ADD COLUMN board INTEGER', 'ALTER TABLE notices ADD COLUMN priority TEXT',
+  'ALTER TABLE notices ADD COLUMN pinned_until TEXT', 'ALTER TABLE notices ADD COLUMN need_ack INTEGER'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -421,6 +427,7 @@ const ACTIONS = {
   noticeOptions: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => noticeOptions(env, me) },
   sendNotice: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me, pre, ctx) => sendNotice(env, b, me, ctx) },
   myNotices: { fn: (env, b, me) => myNotices(env, b, me) },
+  noticeAck: { fn: (env, b, me) => ackNotice(env, b.id, me.code) },
   setRep: { role: ['MIS', 'HOD', 'TRAINER'], fn: (env, b, me) => setRep(env, b, me) },
   marksPull: { fn: (env, b, me) => marksPull(env, b, me) },
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
@@ -739,8 +746,9 @@ async function uploadLoading(env, b, me) {
   if (!seen.size) fail('No loading rows found in that file');
   const rows = [...seen.values()];
   // Units the class had in an earlier term carry on (their marks and evidence stay); the rest are new.
-  const [earlier, lastTerm] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM loading WHERE term_id<>?', term.id],
-    ['SELECT l.class_code, l.unit_code, l.unit_name FROM loading l WHERE l.term_id = (SELECT t.id FROM terms t WHERE t.id<>? AND EXISTS (SELECT 1 FROM loading x WHERE x.term_id=t.id) ORDER BY t.start_date DESC LIMIT 1)', term.id]);
+  const [earlier, lastTerm, prevClassRows] = await many(env, ['SELECT DISTINCT class_code, unit_code FROM loading WHERE term_id<>?', term.id],
+    ['SELECT l.class_code, l.unit_code, l.unit_name FROM loading l WHERE l.term_id = (SELECT t.id FROM terms t WHERE t.id<>? AND EXISTS (SELECT 1 FROM loading x WHERE x.term_id=t.id) ORDER BY t.start_date DESC LIMIT 1)', term.id],
+    ['SELECT DISTINCT class_code FROM loading WHERE term_id=?', term.id]);
   const had = new Set(earlier.map((r) => r.class_code + '|' + r.unit_code)), nowKeys = new Set(rows.map((r) => r.classCode + '|' + r.unitCode));
   const continuing = rows.filter((r) => had.has(r.classCode + '|' + r.unitCode)).length;
   const finished = lastTerm.filter((r) => !nowKeys.has(r.class_code + '|' + r.unit_code)).map((r) => ({ classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name || r.unit_code }));
@@ -757,6 +765,13 @@ async function uploadLoading(env, b, me) {
   const classes = new Map();
   for (const r of rows) if (!classes.has(r.classCode)) classes.set(r.classCode, { code: r.classCode, name: r.classCode, level: levelOf(r.classCode), mis_class: null, population: Number(r.population) || null });
   await upsertMany(env, 'classes', ['code', 'name', 'level', 'mis_class', 'population'], [...classes.values()], ['code'], []);
+  // This loading is the term's new truth: a class that was in the term's previous loading but is gone from this
+  // one is archived (its register, marks and evidence are kept, but it drops out of the day-to-day views). A class
+  // that comes back in this loading is un-archived - the classes upsert above leaves existing rows untouched.
+  const archivedClasses = [...new Set(prevClassRows.map((r) => r.class_code))].filter((c) => c && !c.includes(',') && !classes.has(c));
+  if (archivedClasses.length) await run(env, `UPDATE classes SET status='archived', archived_at=?, archived_by=? WHERE code IN ${IN} AND COALESCE(status,'')<>'archived'`,
+    now, me.name, JSON.stringify(archivedClasses));
+  if (classes.size) await run(env, `UPDATE classes SET status='active', archived_at=NULL, archived_by=NULL WHERE code IN ${IN} AND status='archived'`, JSON.stringify([...classes.keys()]));
   // Staff: every trainer in the loading gets an account (no PIN until the MIS Officer issues one).
   const info = new Map();
   for (const r of rows) if (r.trainerCode) info.set(lower(r.trainerCode), { code: r.trainerCode, name: r.trainerName });
@@ -774,9 +789,9 @@ async function uploadLoading(env, b, me) {
       pin_version: old ? old.pin_version : 0, updated_at: now };
   });
   await upsertMany(env, 'staff', ['code', 'name', 'roles', 'responsibility', 'active', 'must_change', 'pin_version', 'updated_at'], staffRows, ['code'], ['name', 'roles', 'responsibility', 'updated_at']);
-  await audit(env, me, 'upload loading', `${term.id}: ${rows.length} class-units, ${info.size} trainers`);
+  await audit(env, me, 'upload loading', `${term.id}: ${rows.length} class-units, ${info.size} trainers${archivedClasses.length ? `, archived ${archivedClasses.length} class(es): ${archivedClasses.join(', ')}` : ''}`);
   await bumpRoster(env);
-  return { ok: true, term: term.id, rows: rows.length, trainers: info.size, newStaff: added, classes: classes.size, continuing, newUnits: rows.length - continuing, finished };
+  return { ok: true, term: term.id, rows: rows.length, trainers: info.size, newStaff: added, classes: classes.size, continuing, newUnits: rows.length - continuing, finished, archivedClasses };
 }
 
 
@@ -2176,6 +2191,23 @@ async function studentOf(env, b, { google = true } = {}) {
 /** Students must connect Google before using the app: on unless the MIS Officer switched it off (and only when the server can keep Google sign-ins). */
 const requireGoogle = async (env) => googleReady(env) && (await getMeta(env, 'require_google')) !== '0';
 const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class_code).includes(cls) || u.class_code === cls);
+/** The class_code strings this student's lessons can carry: their own stream plus any merged/joint lesson code that
+ *  includes it. Lets a lesson lookup use the class_code index instead of scanning every session. Loading (all terms)
+ *  is the source of every code a session can carry, and classParts() is the same membership rule used elsewhere.
+ *  The distinct loading codes are cached until the lists change (roster_v), so a call reads 1–2 rows, not all loading. */
+async function classCodesFor(env, cls) {
+  const [cache, ver] = await many(env, ["SELECT value FROM meta WHERE key='loading_codes'"], ["SELECT value FROM meta WHERE key='roster_v'"]);
+  const v = ver[0]?.value || 'none';
+  let codes;
+  if (cache[0]) { const c = JSON.parse(cache[0].value); if (c.v === v) codes = c.codes; }
+  if (!codes) {
+    codes = (await all(env, 'SELECT DISTINCT class_code FROM loading')).map((r) => r.class_code);
+    await setMeta(env, 'loading_codes', JSON.stringify({ v, codes }));
+  }
+  const set = new Set([cls]);
+  for (const code of codes) if (classParts(code).includes(cls)) set.add(code);
+  return [...set];
+}
 async function classUnits(env, cls) {
   if (!cls) fail('Choose a class');
   // Every unit the class has had in any term (a unit can span terms): this term's first, then the earlier ones.
@@ -2308,11 +2340,12 @@ const STUDENT_ACTIONS = {
   /** Every lesson of this student's class with their mark, so the student keeps a copy of their own attendance. */
   async myAttendance(env, b) {
     const t = await studentOf(env, b);
+    const codes = await classCodesFor(env, t.class_code);
     const [rows, acc] = await many(env,
       [`SELECT s.id, s.date, s.unit_code, s.unit_name, s.period, COALESCE(s.kind,'lesson') AS kind, s.slots, json_extract(m.value,'$.status') AS status
         FROM sessions s, json_each(s.data, '$.marks') m
-        WHERE (s.class_code=?1 OR instr(s.class_code, ?1) > 0) AND lower(json_extract(m.value,'$.admNo'))=lower(?2)
-        ORDER BY s.date DESC, s.period LIMIT 800`, t.class_code, t.adm_no],
+        WHERE s.class_code IN ${IN} AND lower(json_extract(m.value,'$.admNo'))=lower(?)
+        ORDER BY s.date DESC, s.period LIMIT 800`, JSON.stringify(codes), t.adm_no],
       ["SELECT session_id FROM checkins WHERE adm_no=? AND status='accepted'", t.adm_no]);
     const qr = new Set(acc.map((r) => r.session_id));
     return { ok: true, serverTime: nowIso(), lessons: rows.map((r) => ({ id: r.id, date: r.date, unitCode: r.unit_code, unitName: r.unit_name || r.unit_code,
@@ -2438,6 +2471,11 @@ const STUDENT_ACTIONS = {
   async messages(env, b) {
     const t = await studentOf(env, b);
     return { ok: true, messages: await noticesFor(env, t.adm_no, 'students', b.read) };
+  },
+  /** The student confirms they have read a board notice (the proof their trainer/HOD can see). */
+  async noticeAck(env, b) {
+    const t = await studentOf(env, b);
+    return ackNotice(env, b.id, t.adm_no);
   },
   async notices(env, b) {
     const t = await studentOf(env, b);
@@ -3411,15 +3449,18 @@ async function sendNotice(env, b, me, ctx) {
   const targets = Array.isArray(b.to) ? b.to.slice(0, 50) : [];
   if (!targets.length) fail('Choose who the message is for');
   const ch = { app: true, push: b.push !== false, email: b.email !== false };
+  // Notice board: a pinned, optionally urgent message that can ask readers to confirm they have read it.
+  const board = b.board ? 1 : 0, priority = b.priority === 'urgent' ? 'urgent' : 'normal', needAck = b.needAck ? 1 : 0;
+  const pinnedUntil = board && /^\d{4}-\d{2}-\d{2}$/.test(String(b.pinnedUntil || '')) ? String(b.pinnedUntil) : '';
   const f = await audienceFacts(env), aud = resolveAudience(env, targets, me, f);
   if (!aud.staff.length && !aud.students.length && !aud.groups.length && !aud.people.length) fail('Nobody is in that audience yet');
   const id = crypto.randomUUID(), now = nowIso();
   const sender = f.staff.find((s) => lower(s.code) === lower(me.code));
   const groupMails = ch.email ? aud.groups.map((g) => groupEmail(env, g, f.panels)) : [];
   const bcc = ch.email ? [...new Set([...groupMails, ...aud.people])] : [];
-  const stmts = [[`INSERT INTO notices (id,at,by_code,by_name,title,body,audience,channels,staff,students,groups,counts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+  const stmts = [[`INSERT INTO notices (id,at,by_code,by_name,title,body,audience,channels,staff,students,groups,counts,board,priority,pinned_until,need_ack) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, now, me.code, me.name, title, body, aud.label, JSON.stringify(ch), JSON.stringify(aud.staff), JSON.stringify(aud.students), JSON.stringify(aud.groups),
-    JSON.stringify({ staff: aud.staff.length, students: aud.students.length, emails: bcc.length })]];
+    JSON.stringify({ staff: aud.staff.length, students: aud.students.length, emails: bcc.length }), board, priority, pinnedUntil, needAck]];
   if (bcc.length) {
     const text = `${body}\n\n— ${me.name}, through The ARK (${aud.label}). Reply to this email to answer ${me.name}.`;
     stmts.push(['INSERT INTO mail_out (id,notice_id,bcc,reply_to,subject,body,status,at) VALUES (?,?,?,?,?,?,?,?)', crypto.randomUUID(), id, JSON.stringify(bcc), sender?.email || '', title, text, 'queued', now]);
@@ -3431,22 +3472,36 @@ async function sendNotice(env, b, me, ctx) {
   if (bcc.length) ctx?.waitUntil?.(nudgeDrive(env).catch(() => {}));
   return { ok: true, id, reached: { staff: aud.staff.length, students: aud.students.length, groups: groupMails.length, people: ch.email ? aud.people.length : 0 } };
 }
-const noticeView = (r, read) => ({ id: r.id, at: r.at, title: r.title, body: r.body, from: r.by_name, fromCode: r.by_code, to: r.audience, read: !!read });
-/** Messages for one person (`staff` code or `students` admission number), newest first, the last 60 days. */
+const noticeView = (r, read, acked) => ({ id: r.id, at: r.at, title: r.title, body: r.body, from: r.by_name, fromCode: r.by_code, to: r.audience, read: !!read,
+  board: !!r.board, priority: r.priority || 'normal', pinnedUntil: r.pinned_until || '', needAck: !!r.need_ack, acked: !!acked });
+/** Messages for one person (`staff` code or `students` admission number), newest first, the last 60 days. Each carries
+ *  whether that person has read it and, for a board notice that asks for it, whether they have confirmed they read it. */
 async function noticesFor(env, who, col, markRead) {
   const ids = (Array.isArray(markRead) ? markRead : []).map(String).filter(Boolean).slice(0, 100);
   if (ids.length) await run(env, `INSERT OR IGNORE INTO notice_reads (notice_id, who, at) SELECT value, ?, ? FROM json_each(?)`, who, nowIso(), JSON.stringify(ids));
   const since = new Date(Date.now() - 60 * 864e5).toISOString();
-  const rows = await all(env, `SELECT n.*, r.at AS read_at FROM notices n LEFT JOIN notice_reads r ON r.notice_id=n.id AND r.who=?1
+  const rows = await all(env, `SELECT n.*, r.at AS read_at, a.at AS ack_at FROM notices n
+    LEFT JOIN notice_reads r ON r.notice_id=n.id AND r.who=?1 LEFT JOIN notice_acks a ON a.notice_id=n.id AND a.who=?1
     WHERE n.at > ?2 AND EXISTS (SELECT 1 FROM json_each(n.${col}) WHERE lower(value)=lower(?1)) ORDER BY n.at DESC LIMIT 80`, who, since);
-  return rows.map((r) => noticeView(r, r.read_at));
+  return rows.map((r) => noticeView(r, r.read_at, r.ack_at));
+}
+/** One person confirms they have read a notice (the "proof" for board notices that ask for it). who = adm no or staff code. */
+async function ackNotice(env, id, who) {
+  if (!id) fail('Which notice?');
+  await run(env, 'INSERT OR IGNORE INTO notice_acks (notice_id, who, at) VALUES (?,?,?)', String(id), who, nowIso());
+  return { ok: true };
 }
 async function myNotices(env, b, me) {
   const inbox = await noticesFor(env, me.code, 'staff', b.read);
   const sent = (await all(env, 'SELECT * FROM notices WHERE lower(by_code)=lower(?) ORDER BY at DESC LIMIT 30', me.code))
     .map((r) => ({ ...noticeView(r, true), counts: JSON.parse(r.counts || '{}'), channels: JSON.parse(r.channels || '{}') }));
-  const mail = sent.length ? await all(env, `SELECT notice_id, status, error FROM mail_out WHERE notice_id IN (SELECT value FROM json_each(?))`, JSON.stringify(sent.map((s) => s.id))) : [];
+  const ids = sent.map((s) => s.id);
+  const mail = ids.length ? await all(env, `SELECT notice_id, status, error FROM mail_out WHERE notice_id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)) : [];
   for (const s of sent) { const m = mail.find((x) => x.notice_id === s.id); if (m) s.email = { status: m.status, error: m.error || '' }; }
+  // Proof of reading: how many of the students a board notice went to have confirmed it.
+  const ackNeed = sent.filter((s) => s.needAck).map((s) => s.id);
+  const acks = ackNeed.length ? await all(env, `SELECT notice_id, COUNT(*) AS n FROM notice_acks WHERE notice_id IN (SELECT value FROM json_each(?)) GROUP BY notice_id`, JSON.stringify(ackNeed)) : [];
+  for (const s of sent) if (s.needAck) { s.ackCount = acks.find((x) => x.notice_id === s.id)?.n || 0; s.ackOf = s.counts.students || 0; }
   return { ok: true, inbox, sent, unread: inbox.filter((n) => !n.read).length };
 }
 async function setRep(env, b, me) {

@@ -28,7 +28,7 @@ const Health = (() => {
   function gauge(label, used, limit, fmt = num, note = '') {
     const p = pct(used, limit);
     return `<div class="hg"><div class="hg-top"><b>${label}</b><span>${fmt(used)} of ${fmt(limit)} - ${p}%</span></div>
-      <div class="gauge ${level(p)}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}" aria-label="${esc(label)}"><span style="width:${p}%"></span></div>
+      <div class="gauge ${level(p)}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}" aria-label="${esc(label)}"><span style="--pct:${p}%"></span></div>
       ${note ? `<small class="muted">${note}</small>` : ''}</div>`;
   }
   /** What needs a look, worst first. */

@@ -17,7 +17,6 @@ const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
 const LIVE_FAST_MS = window.__liveFastMs || 4000;
 const LIVE_SLOW_MS = window.__liveSlowMs || 60000;
 const LIVE_MID_MS = window.__liveMidMs || Math.min(15000, LIVE_SLOW_MS);
-const LIVE_IDLE_MS = window.__liveIdleMs || Math.max(LIVE_SLOW_MS, 3 * 60000);
 const IDLE_AFTER_MS = window.__idleAfterMs || 10 * 60000;
 // While the QR is shown, the register (whose QR record grows every 20 s) is uploaded at most every 2 minutes,
 // and again when the QR is closed. The server accepts genuine codes for "right now" without waiting for it.
@@ -2078,9 +2077,10 @@ function isLiveLesson() {
   return $('#lessonQrDialog').open || !!(s && s.qr && s.date === todayISO());
 }
 
-/* One loop decides how often to check: every few seconds while the QR is shown, every 15 s with today's QR
- * register open, else every minute — or every three minutes once the device has been left alone for ten.
- * While the app is off screen it stops altogether and starts again the moment it is back. */
+/* Background checks run ONLY during a live lesson — every few seconds while the QR is on screen, every 15 s
+ * with today's QR register open — so students' scans show up as they happen. Outside a live lesson there is
+ * no idle polling at all: a check runs once when the app is opened, comes back on screen, comes online or is
+ * picked up after a rest, and then stops. Uploads of your own work go up separately (scheduleAutoSync). */
 let liveTimer = null, liveBusy = false;
 let lastTouch = Date.now();
 const idle = () => Date.now() - lastTouch > IDLE_AFTER_MS;
@@ -2103,12 +2103,12 @@ async function liveTick() {
   } catch { /* offline or slow network: try again next round */ }
   liveBusy = false;
   clearTimeout(liveTimer);
-  if (document.visibilityState !== 'hidden') liveTimer = setTimeout(liveTick, liveDelay());
+  // Keep checking only while a live lesson needs it; otherwise this was a one-off check, so stop here — no idle polling.
+  if (document.visibilityState !== 'hidden' && isLiveLesson()) liveTimer = setTimeout(liveTick, liveDelay());
 }
 function liveDelay() {
-  if ($('#lessonQrDialog').open) return LIVE_FAST_MS;          // the QR is on screen: students are scanning now
-  if (isLiveLesson()) return LIVE_MID_MS;                      // today's QR register is open
-  return idle() ? LIVE_IDLE_MS : LIVE_SLOW_MS;                 // left alone for ten minutes: ease off
+  // Only ever called during a live lesson: fast while the QR is on screen, a little slower with the register open.
+  return $('#lessonQrDialog').open ? LIVE_FAST_MS : LIVE_MID_MS;
 }
 /* Check again now instead of waiting out the current round: when a live lesson starts, and when the
  * device is picked up after being left alone. */
@@ -2299,10 +2299,9 @@ function switchTab(name) {
   state.tabSeq = (state.tabSeq || 0) + 1;
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
-  if (name === 'reports') renderReport();
+  if (name === 'reports') { renderReport(); window.Alerts?.render(); }   // Absences lives under Report(s), as its last section
   if (name === 'manage') window.Admin?.render();
   if (name === 'poe') PoeStaff.render();
-  if (name === 'alerts') window.Alerts?.render();
   if (name === 'me') { renderDbInfo(); renderMe(); }
 }
 
@@ -2312,7 +2311,6 @@ function applyRoles() {
   $('.tabs button[data-tab="mark"]').hidden = !marks;
   $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
-  $('.tabs button[data-tab="alerts"]').hidden = !(hasRole('HOD') || hasRole('MIS'));
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
   $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
@@ -2321,7 +2319,6 @@ function applyRoles() {
   renderClassSelects();
   window.Admin?.refreshBadge?.();
   if (me()) PoeStaff.refreshBadge();
-  if (me()) window.Alerts?.refreshBadge();
   Notices.show();
   if (me()) Notices.tick();
 }
@@ -2530,8 +2527,8 @@ function wire() {
   $('#syncBtn')?.addEventListener('click', () => syncSheets());
   window.addEventListener('online', () => { updateNet(); syncSheets({ silent: true }); maybeRefreshRoster(); });
   window.addEventListener('offline', updateNet);
-  // Automatic sync: fast during a live lesson, once a minute otherwise, slower when the device is left
-  // alone, nothing while the app is off screen, and straight away whenever it comes back into view.
+  // Automatic checks run only during a live lesson (students scanning). Otherwise a single check on open,
+  // on return to the screen, on coming online, and when the device is picked up after a rest — nothing in between.
   liveTimer = setTimeout(liveTick, 1500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { clearTimeout(liveTimer); if (state.dirty) saveCurrent(); }

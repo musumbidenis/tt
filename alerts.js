@@ -1,10 +1,10 @@
-/* Absences tab (HOD and MIS Officer): students who have missed more lessons of a unit than the limit set here.
- * The tab's dot shows how many; the list can be searched, sorted, and saved as Excel or PDF.
+/* Absences section (HOD and MIS Officer): the last section under Report(s) - students who have missed more lessons
+ * of a unit than the limit set here. The list can be searched, sorted, and saved as Excel or PDF.
  * Uses app.js (api, state, $, esc, toast, hasRole, me) and tables.js (Tables). */
 'use strict';
 
 const Alerts = (() => {
-  const al = { rows: [], limit: 3, term: null, termId: '', q: '', cls: '', loaded: false, badgeAt: 0, seq: 0 };
+  const al = { rows: [], limit: 3, term: null, termId: '', q: '', cls: '', loaded: false, seq: 0 };
   const box = () => $('#alerts');
   const allowed = () => hasRole('HOD') || hasRole('MIS');
 
@@ -12,18 +12,6 @@ const Alerts = (() => {
     const res = await api('absences', al.termId ? { termId: al.termId } : {});
     if (!res.ok) throw new Error(res.error || 'Could not count the absences');
     Object.assign(al, { rows: res.rows || [], limit: res.limit ?? 3, term: res.term, loaded: true });
-    badge();
-  }
-  function badge() {
-    const dot = $('#alertCount'); if (!dot) return;
-    const n = al.termId ? 0 : new Set(al.rows.map((r) => r.admNo.toLowerCase())).size;
-    dot.hidden = !n; dot.textContent = n > 99 ? '99+' : String(n);
-  }
-  /** After sign-in: one small request for the tab's dot (at most every 15 minutes). */
-  async function refreshBadge() {
-    if (!me() || !allowed() || !navigator.onLine || Date.now() - al.badgeAt < 15 * 60e3) return;
-    al.badgeAt = Date.now();
-    try { await load(); } catch { /* shown when the tab opens */ }
   }
 
   async function render() {
@@ -116,6 +104,6 @@ const Alerts = (() => {
     Tables.on('absences', draw);
   }
   wire();
-  return { render, refreshBadge };
+  return { render };
 })();
 window.Alerts = Alerts;

@@ -78,7 +78,6 @@
   <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Report(s)</button>
   <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE<span id="poeCount" class="dot" hidden></span></button>
   <button data-tab="tools" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-tools"/></svg>Tools</button>
-  <button data-tab="alerts" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg>Absences<span id="alertCount" class="dot" hidden></span></button>
   <button data-tab="manage" role="tab" hidden><svg class="i" aria-hidden="true"><use href="#i-manage"/></svg>Manage<span id="manageCount" class="dot" hidden></span></button>
   <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Profile</button>
 </nav>
@@ -196,6 +195,9 @@
       <button class="btn" id="printReg"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg>Print or save PDF</button>
       <button class="btn ghost" id="printQR" disabled title="Not available right now">Print QR ID cards</button>
     </div>
+
+    <!-- ABSENCES (HOD and MIS Officer): students who have missed more lessons than the limit -->
+    <div id="alerts"></div>
   </section>
 
   <!-- POE: students' evidence -->
@@ -217,8 +219,6 @@
     </ul>
   </section>
 
-  <!-- ABSENCES (HOD and MIS Officer): students who have missed more lessons than the limit -->
-  <section id="tab-alerts" class="tab"><div id="alerts"></div></section>
 
   <!-- MANAGE (HOD and MIS Officer) -->
   <section id="tab-manage" class="tab"><div id="manage"></div></section>

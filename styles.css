@@ -1107,6 +1107,23 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .msg-pills span { font-size: .75rem; padding: .05rem .5rem; border-radius: 99px; background: var(--sunk); color: var(--ink-2); border: 1px solid var(--line); }
 .msg-pills span.bad { color: var(--a); border-color: var(--a); }
 .msg-empty { text-align: center; color: var(--muted); padding: 2rem 1rem; border: 1px dashed var(--line-strong); border-radius: var(--r); margin: 0; }
+/* Notice board: pinned messages stand out in the list, urgent ones more so. */
+.board-tag { display: inline-block; font-size: .7rem; font-weight: 700; padding: .05rem .4rem; margin-right: .4rem; border-radius: 99px; background: var(--p-soft); color: var(--p); vertical-align: middle; }
+.board-tag.urgent { background: var(--a-soft); color: var(--a); }
+.msg-list li.board { border-color: color-mix(in srgb, var(--p) 40%, var(--line)); }
+.msg-list li.board.urgent { border-color: var(--a); background: color-mix(in srgb, var(--a) 6%, var(--surface)); }
+.msg-ack { margin-top: .4rem; }
+.msg-ack.done { color: var(--p); font-size: .8rem; margin: .4rem 0 0; }
+/* The sticky banner at the top of the student app. */
+.notice-banner { display: grid; gap: .5rem; margin: 0 0 .75rem; }
+.nb-item { display: flex; align-items: center; gap: .6rem; padding: .6rem .8rem; border-radius: var(--r); border: 1px solid var(--p); background: var(--p-soft); background: color-mix(in srgb, var(--p) 8%, var(--surface)); }
+.nb-item.urgent { border-color: var(--a); background: color-mix(in srgb, var(--a) 8%, var(--surface)); }
+.nb-text { min-width: 0; flex: 1; display: grid; gap: .1rem; }
+.nb-text b { font-size: .9rem; }
+.nb-text span { font-size: .8rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nb-item .btn { flex: none; }
+/* Composer: the "keep pinned until" date sits under the board toggles. */
+.board-until { display: flex; align-items: center; gap: .4rem; margin-top: .5rem; font-size: .85rem; }
 .notice-form { display: grid; gap: .7rem; }
 .notice-form label { display: grid; gap: .2rem; font-size: .8125rem; font-weight: 600; color: var(--ink-2); }
 .notice-form input:not([type=checkbox]), .notice-form select { min-height: 36px; padding: .3rem .6rem; font-size: .9375rem; }
