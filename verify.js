@@ -15,7 +15,9 @@ const Verify = (() => {
   const vs = { data: null, open: '', seq: 0 };
   const RESULT = { verified: 'Verified', actions: 'Verified with actions', not_verified: 'Not verified' };
   const STAT = { open: ['pending', 'In progress'], submitted: ['wait', 'Submitted'], signed: ['synced', 'Signed'] };
-  const slotOf = (v) => (isMe(v.verifier) ? 'internal' : '');
+  // Any logged-in trainer (or office member) can do the internal verification, not only the assigned verifier; an EAO stays external-only.
+  const canVerify = () => hasRole('TRAINER') || hasRole('HOD') || hasRole('MIS') || hasRole('IAO');
+  const slotOf = (v) => ((isMe(v.verifier) || canVerify()) ? 'internal' : '');
   const external = () => hasRole('EAO');
   const office = () => hasRole('MIS') || hasRole('IAO') || hasRole('HOD');
   const drafts = () => hasRole('MIS') || hasRole('IAO');
@@ -78,7 +80,7 @@ const Verify = (() => {
     const mine = d.verifications.filter((x) => slotOf(x));
     const units = d.verifications.filter((x) => isMe(x.trainerCode) && x.status !== 'open');
     const parts = [];
-    if (mine.length) parts.push(card('Class-units given to you', 'Check every student in each sample, then give your result.', table(mine, { key: 'vMine' }), count(mine.length)));
+    if (mine.length) parts.push(card('Class-units to verify', 'Open any one, check every student in its sample, then give your result. Any trainer can pick one up.', table(mine, { key: 'vMine' }), count(mine.length)));
     if (external()) parts.push(extCard());
     if (units.length) parts.push(card('Verification of your units', 'What the panel found in your units, and your response.', table(units, { key: 'vUnits' })));
     // Panels first, then the classes to verify (they are given out to the panels).

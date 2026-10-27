@@ -3012,13 +3012,15 @@ const verOut = (r) => ({ id: r.id, panelId: r.panel_id, classCode: r.class_code,
 const checkOut = (r) => ({ verificationId: r.verification_id, admNo: r.adm_no, who: r.who, valid: !!r.valid, authentic: !!r.authentic, current: !!r.current,
   sufficient: !!r.sufficient, agree: r.agree === null ? null : !!r.agree, comment: r.comment || '', by: r.by_code, at: r.at });
 /** 'internal' when this person is the class-unit's verifier, else ''. */
-const verifierSlot = (v, code) => (lower(v.verifier) === lower(code) ? 'internal' : '');
+// Any logged-in staff with an internal role can do the internal verification, not only the assigned verifier (EAO stays external-only).
+const INTERNAL_VERIFY_ROLES = ['TRAINER', 'HOD', 'MIS', 'IAO'];
+const verifierSlot = (v, me) => ((lower(v.verifier) === lower(me.code) || (me.roles || []).some((r) => INTERNAL_VERIFY_ROLES.includes(r))) ? 'internal' : '');
 const inPanel = (p, code) => p && (lower(p.chair) === lower(code) || JSON.parse(p.members || '[]').some((m) => lower(m) === lower(code)));
 async function verifiesEvidence(env, me, r) {
   const rows = await all(env, 'SELECT verifier, external, sample, ext_sample, status FROM verifications WHERE class_code=? AND unit_code=?', r.class_code, r.unit_code);
   const inList = (s) => JSON.parse(s || '[]').some((a) => lower(a) === lower(r.adm_no));
   // The two verifiers see the class-unit's evidence; an External Assessment Officer sees any student in a sample (theirs or the panel's).
-  return rows.some((v) => verifierSlot(v, me.code) || (me.roles.includes('EAO') && (inList(v.sample) || inList(v.ext_sample))));
+  return rows.some((v) => verifierSlot(v, me) || (me.roles.includes('EAO') && (inList(v.sample) || inList(v.ext_sample))));
 }
 /** Panels, the class-units given out, and the checks this person may see; with the staff and loading to choose from. */
 async function verifyData(env, b, me) {
@@ -3029,12 +3031,13 @@ async function verifyData(env, b, me) {
   // The External Assessment Officer sees every panel and what each was given (this term).
   const myPanels = panels.filter((p) => office || (p.status === 'approved' && (inPanel(p, me.code) || (ext && p.term_id === term?.id))));
   const panelIds = new Set(myPanels.map((p) => p.id));
-  const seeV = vers.filter((v) => office || panelIds.has(v.panel_id) || verifierSlot(v, me.code) || lower(v.external) === lower(me.code)
+  const seeV = vers.filter((v) => office || panelIds.has(v.panel_id) || verifierSlot(v, me) || lower(v.external) === lower(me.code)
     || (lower(v.trainer_code) === lower(me.code) && ['submitted', 'signed'].includes(v.status)));
   const ids = seeV.map((v) => v.id);
   const checks = ids.length ? await all(env, `SELECT * FROM verify_checks WHERE verification_id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)) : [];
   // A trainer sees the verifier's findings on their units, not the external officer's working; the external officer sees both.
-  const seeCheck = (c) => { const v = seeV.find((x) => x.id === c.verification_id); return office || ext || verifierSlot(v, me.code) || panelIds.has(v.panel_id) || c.who !== 'external'; };
+  // The external officer's own working stays private to the assigned verifier, the panel and the office; every internal check is shared.
+  const seeCheck = (c) => { const v = seeV.find((x) => x.id === c.verification_id); return office || ext || lower(v.verifier) === lower(me.code) || panelIds.has(v.panel_id) || c.who !== 'external'; };
   const names = Object.fromEntries((await all(env, `SELECT adm_no, name FROM trainees WHERE adm_no IN (SELECT value FROM json_each(?))`, JSON.stringify([...new Set(seeV.flatMap((v) => [...JSON.parse(v.sample || '[]'), ...JSON.parse(v.ext_sample || '[]')]))]))).map((t) => [lower(t.adm_no), t.name]));
   const list = office || ext ? (await all(env, 'SELECT * FROM verify_list WHERE term_id=? ORDER BY class_code, unit_code', term?.id || '')).map((r) => ({ classCode: r.class_code, unitCode: r.unit_code,
     unitName: r.unit_name || r.unit_code, trainerCode: r.trainer_code || '', trainerName: r.trainer_name || '', students: r.students || 0,
@@ -3275,7 +3278,7 @@ async function moreSample(env, b, me) {
 }
 async function saveCheck(env, b, me) {
   const v = await getVer(env, b.id), adm = String(b.admNo || '');
-  const slot = verifierSlot(v, me.code), who = slot || (me.roles.includes('EAO') ? 'external' : '');
+  const slot = verifierSlot(v, me), who = slot || (me.roles.includes('EAO') ? 'external' : '');
   if (!who) fail('This verification is not given to you');
   if (slot && v.status !== 'open') fail('This verification has been submitted');
   const inS = (s) => JSON.parse(s || '[]').some((a) => lower(a) === lower(adm));
@@ -3298,8 +3301,8 @@ async function saveChecks(env, b, me) {
 /** The verifier's result. Too many disagreements (2 or more, or over 20% of the sample) first doubles the sample, then takes in
  * every student, before a result can be given. */
 async function submitVerification(env, b, me) {
-  const v = await getVer(env, b.id), slot = verifierSlot(v, me.code);
-  if (!slot) fail('Only the member given this class and unit can submit it');
+  const v = await getVer(env, b.id), slot = verifierSlot(v, me);
+  if (!slot) fail('Only a trainer can submit this verification');
   if (v.status !== 'open') fail('This verification has already been submitted');
   const sample = JSON.parse(v.sample || '[]');
   if (!sample.length) fail('The sample has not been drawn yet');
