@@ -114,8 +114,8 @@ const PoeStaff = (() => {
         ${links ? `<div class="row-actions">${links}</div>` : ''}
         <div class="chips poe-chips" role="group" aria-label="Show">${chips}</div>
         <div class="poe-filters">
-          <select id="poeClass" aria-label="Class"><option value="">All classes</option>${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
-          <select id="poeUnitF" aria-label="Unit"><option value="">All units</option>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+          <select id="poeClass" aria-label="Class">${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <select id="poeUnitF" aria-label="Unit">${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
           <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
         </div>
       </div>
