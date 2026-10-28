@@ -365,10 +365,18 @@ export default {
     return res;
   },
 };
+// Shown whenever the system is standing down: the D1 read/write cap is spent, or a deliberate maintenance lock.
+const MAINT_MSG = 'The system is under maintenance and will be back by about 3.00 am (EAT). Your saved work is safe — please try again then.';
 async function handle(request, env, ctx, info) {
   {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
     try {
+      // A deliberate maintenance lock set in KV (auto-expires). Checked before any D1 access, so it holds even
+      // while D1 is unavailable. The value is the epoch-ms "open again" time; set/cleared out of band (wrangler kv).
+      if (kvOn(env)) {
+        const until = Number(await kvGet(env, 'm:maint_until')) || 0;
+        if (until > Date.now()) { info.action = 'maintenance'; info.kind = 'refused'; return reply({ ok: false, maintenance: true, error: MAINT_MSG }); }
+      }
       if (!env.DB) fail('The database is not connected: add a D1 binding called DB to this Worker (Settings → Bindings).');
       await ready(env);
       if (request.method === 'GET') {
@@ -421,7 +429,7 @@ async function handle(request, env, ctx, info) {
       // "exceeded D1's free tier..." text; hand the apps a maintenance marker so they show a calm notice.
       if (/D1's free tier daily|daily row (read|write) limit/i.test(out.error)) {
         info.kind = 'refused';
-        return reply({ ok: false, maintenance: true, error: 'The system is under maintenance and will be back by about 3.00 am (EAT). Your saved work is safe — please try again then.' });
+        return reply({ ok: false, maintenance: true, error: MAINT_MSG });
       }
       if (err && err.authError) out.authError = true;
       if (err && err.mustChange) out.mustChange = true;
