@@ -23,9 +23,9 @@ database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
 #      (or Cloudflare dashboard -> Storage & Databases -> KV -> Create namespace, name it "CACHE").
 #   2. Paste the namespace id below and uncomment these three lines.
 #   3. Push (Workers Builds redeploys) or run:  npx wrangler deploy
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = "PASTE_THE_KV_NAMESPACE_ID_HERE"
+[[kv_namespaces]]
+binding = "CACHE"
+id = "20e0178d24804ba69f1a3eec021e6488"
 
 # Only college Google accounts may connect (staff) or own evidence files (students). Not a secret.
 [vars]
