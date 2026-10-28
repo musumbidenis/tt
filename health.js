@@ -63,7 +63,7 @@ const Health = (() => {
       <h3 class="h-sub">Daily limits</h3>
       <div class="h-gauges">
         ${gauge('Server requests', t.requests, L.requests, num, 'Over the limit, the apps stop reaching the server until 3.00 am.')}
-        ${gauge('Database reads', t.reads, L.reads, num, 'Rows the database looked through.')}
+        ${gauge('Database reads', t.reads, L.reads, num, 'Rows the database looked through.' + (h.cache ? (h.cache.on ? ' Cache on — reads are kept low.' : ' Cache off — turn on the KV cache to cut reads (see the README).') : '') + (h.cache && h.cache.readsBand === 'soft' ? ' Busy: heaviest reports will pause if it keeps climbing.' : h.cache && h.cache.readsBand === 'hard' ? ' At the limit: some reports are paused until 3.00 am.' : ''))}
         ${gauge('Database writes', t.writes, L.writes, num, 'Over either limit, saving and loading stop until 3.00 am.')}
         ${gauge('Database size', h.db.bytes, L.dbBytes, size, h.db.bytes ? '' : 'Shown after the next few requests.')}
         ${g.driveLimit ? gauge('Backup Drive space', g.driveUsed, g.driveLimit, size, g.driveAt ? `Checked ${esc(ago(g.driveAt))}.` : '') : ''}
@@ -76,8 +76,8 @@ const Health = (() => {
         <li>Refused - wrong PIN or no permission - ${num(t.refused)}</li>
         <li>Server errors today - ${num(t.errors)}</li>
       </ul>
-      ${h.actions.length ? `<div class="table-wrap"><table class="report-table h-table"><thead><tr><th>What</th><th class="num">Times</th><th class="num">Average</th><th class="num">Slowest</th><th class="num">Errors</th></tr></thead>
-        <tbody>${actions.map((a) => `<tr${a.errors ? ' class="h-bad"' : ''}><td>${esc(LABEL[a.action] || a.action)}</td><td class="num">${num(a.n)}</td><td class="num">${ms(a.avgMs)}</td><td class="num${a.maxMs > 5000 ? ' warn-text' : ''}">${ms(a.maxMs)}</td><td class="num">${a.errors || ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('health', h.actions)}` : '<p class="muted">Nothing counted yet today.</p>'}
+      ${h.actions.length ? `<div class="table-wrap"><table class="report-table h-table"><thead><tr><th>What</th><th class="num">Times</th><th class="num">Rows read</th><th class="num">Average</th><th class="num">Slowest</th><th class="num">Errors</th></tr></thead>
+        <tbody>${actions.map((a) => `<tr${a.errors ? ' class="h-bad"' : ''}><td>${esc(LABEL[a.action] || a.action)}</td><td class="num">${num(a.n)}</td><td class="num">${num(a.reads || 0)}</td><td class="num">${ms(a.avgMs)}</td><td class="num${a.maxMs > 5000 ? ' warn-text' : ''}">${ms(a.maxMs)}</td><td class="num">${a.errors || ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('health', h.actions)}` : '<p class="muted">Nothing counted yet today.</p>'}
       ${days.length > 1 ? `<details class="fold"><summary>Last ${days.length} days</summary><div class="table-wrap"><table class="report-table h-table"><thead><tr><th>Day</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">Average</th><th class="num">Reads</th><th class="num">Writes</th></tr></thead>
         <tbody>${days.map((d) => `<tr><td>${esc(fmtShort(d.day))}</td><td class="num">${num(d.requests)} <small class="muted">${pct(d.requests, L.requests)}%</small></td><td class="num">${d.errors || ''}</td><td class="num">${ms(d.avgMs)}</td><td class="num">${num(d.reads)}</td><td class="num">${num(d.writes)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
       <h3 class="h-sub">Errors</h3>

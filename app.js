@@ -1541,7 +1541,16 @@ async function api(action, body = {}) {
   // A reply to a request sent before a PIN change carries the old sign-in: ignore it rather than sign out.
   if (res && res.authError) { if (state.auth?.token === used) showSignin(res.error); throw new Error(res.error); }
   if (res && res.mustChange) { showSignin(); showPinForm(); throw new Error(res.error); }
+  if (res && (res.busy || res.degraded === 'hard')) noteBusy();
   return res;
+}
+/* The server is at today's database read limit and some admin/reporting views are standing aside. Marking
+ * attendance and syncing still work; say so once in a while rather than on every reply. */
+let busyNotedAt = 0;
+function noteBusy() {
+  if (Date.now() - busyNotedAt < 10 * 60e3) return;
+  busyNotedAt = Date.now();
+  toast('The system is very busy (daily database read limit). Marking and syncing still work; some reports may be unavailable until tomorrow.', 'err');
 }
 
 /* Which register versions the server has. Kept per server address: after a move to a new server every

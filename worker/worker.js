@@ -17,7 +17,7 @@
  */
 
 export const VERSION = '7.28.0';
-const SCHEMA_VERSION = '28';
+const SCHEMA_VERSION = '29';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -70,9 +70,11 @@ CREATE INDEX IF NOT EXISTS push_adm ON push_subs (adm_no);
 CREATE TABLE IF NOT EXISTS panels (id TEXT PRIMARY KEY, term_id TEXT, name TEXT, chair TEXT, members TEXT, status TEXT, note TEXT, created_by TEXT, created_at TEXT, decided_by TEXT, decided_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS verifications (id TEXT PRIMARY KEY, panel_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, verifier TEXT, external TEXT, population INTEGER, risk REAL, size INTEGER, seed TEXT, sample TEXT, reasons TEXT, round INTEGER DEFAULT 1, status TEXT, result TEXT, actions TEXT, response TEXT, responded_at TEXT, submitted_at TEXT, signed_by TEXT, signed_at TEXT, ext_result TEXT, ext_note TEXT, ext_at TEXT, log TEXT, updated_at TEXT);
 CREATE INDEX IF NOT EXISTS verifications_panel ON verifications (panel_id);
+CREATE INDEX IF NOT EXISTS verifications_upd ON verifications (updated_at);
 CREATE TABLE IF NOT EXISTS approvals (ref TEXT PRIMARY KEY, kind TEXT, subject TEXT, title TEXT, info TEXT, fingerprint TEXT, by_code TEXT, by_name TEXT, by_role TEXT, at TEXT, sig TEXT, status TEXT, replaced_by TEXT);
 CREATE INDEX IF NOT EXISTS approvals_subject ON approvals (kind, subject);
 CREATE TABLE IF NOT EXISTS marksheets (id TEXT PRIMARY KEY, class_code TEXT, unit_code TEXT, unit_name TEXT, status TEXT, prepared_code TEXT, prepared_name TEXT, prepared_at TEXT, received_code TEXT, received_name TEXT, received_at TEXT, approved_code TEXT, approved_name TEXT, approved_at TEXT, comment TEXT, approval_ref TEXT, updated_at TEXT);
+CREATE INDEX IF NOT EXISTS marksheets_upd ON marksheets (updated_at);
 CREATE TABLE IF NOT EXISTS enrolments (term_id TEXT, adm_no TEXT COLLATE NOCASE, class_code TEXT, status TEXT, at TEXT, PRIMARY KEY (term_id, adm_no));
 CREATE TABLE IF NOT EXISTS verify_list (term_id TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, trainer_code TEXT, trainer_name TEXT, students INTEGER, added_by TEXT, added_at TEXT, PRIMARY KEY (term_id, class_code, unit_code));
 CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, at TEXT, by_code TEXT, by_name TEXT, title TEXT, body TEXT, audience TEXT, channels TEXT, staff TEXT, students TEXT, groups TEXT, counts TEXT, board INTEGER, priority TEXT, pinned_until TEXT, need_ack INTEGER);
@@ -219,6 +221,59 @@ function upsertStmts(table, cols, rows, key, update = cols.filter((c) => !(key |
 }
 const upsertMany = (env, ...a) => many(env, ...upsertStmts(...a));
 
+/* ---------- KV cache (optional) ----------
+ * A Workers KV namespace bound as CACHE lets us answer the hottest, rarely-changing reads
+ * (the "anything changed?" markers, the signed-in staff's status, the roster) without touching
+ * D1, and, once the D1 daily read budget is spent, serve the last good copy instead of failing.
+ * D1 stays the source of truth: every KV path falls back to D1 on a miss, and with no CACHE
+ * binding the Worker behaves exactly as before. KV's minimum expiry is 60s. */
+const kvOn = (env) => !!(env && env.CACHE);
+async function kvGet(env, key, type) {
+  try { return env.CACHE ? await env.CACHE.get(key, type || 'text') : null; } catch { return null; }
+}
+async function kvPut(env, key, val, ttl) {
+  try {
+    if (!env.CACHE) return;
+    const body = typeof val === 'string' ? val : JSON.stringify(val);
+    await env.CACHE.put(key, body, ttl ? { expirationTtl: Math.max(60, ttl) } : undefined);
+  } catch { /* cache write is best-effort */ }
+}
+async function kvDel(env, ...keys) {
+  try { if (env.CACHE) for (const k of keys) await env.CACHE.delete(k); } catch { /* best-effort */ }
+}
+const KV_META_TTL = 300;      // version markers: short, and refreshed on every write anyway
+const KV_STAFF_TTL = 300;     // a signed-in staff member's status; cleared at once on any staff write
+const KV_ROSTER_TTL = 86400;  // a built roster; the key carries roster_v, so a change just makes a new key
+const KV_BUDGET_TTL = 60;     // how long a read of today's D1 total is trusted before re-reading it
+
+/* ---------- daily read budget (cross-isolate) ----------
+ * STATS.reads is per-isolate and resets on flush, so it cannot tell how close the whole Worker is to
+ * D1's daily limit. The authoritative daily total lives in the sys_stats `_db` row (summed across all
+ * isolates). budgetState reads that once a minute (cached in KV so every isolate shares it) and maps it
+ * to soft/hard bands. Degraded serving needs KV, so without a CACHE binding the bands stay 'ok'. */
+const READ_SOFT_FRAC = 0.80;   // start shedding the heaviest optional reads here
+const READ_HARD_FRAC = 0.95;   // serve the last good copy and refuse non-essential reads here
+async function budgetState(env) {
+  if (!kvOn(env)) return { reads: 0, band: 'ok', over: false, near: false };
+  const day = utcDay();
+  const cached = await kvGet(env, `budget:${day}`);
+  let reads = cached === null || cached === '' ? NaN : Number(cached);
+  if (!Number.isFinite(reads)) {
+    try {
+      const r = await one(env, "SELECT reads FROM sys_stats WHERE day=? AND action='_db'", day);
+      reads = Number(r?.reads) || 0;
+      await kvPut(env, `budget:${day}`, String(reads), KV_BUDGET_TTL);
+    } catch {
+      // Could not read the counter (D1 may itself be over its limit): fall back to this isolate's own
+      // tally so the gate still errs toward shedding rather than throwing and breaking the request.
+      reads = STATS.reads;
+    }
+  }
+  const soft = LIMITS.reads * READ_SOFT_FRAC, hard = LIMITS.reads * READ_HARD_FRAC;
+  const band = reads >= hard ? 'hard' : reads >= soft ? 'soft' : 'ok';
+  return { reads, band, over: band === 'hard', near: band !== 'ok' };
+}
+
 let schemaReady = false;
 async function ready(env) {
   if (schemaReady) return;
@@ -253,9 +308,17 @@ async function caseNames(env) {
 }
 const getMeta = async (env, key) => (await one(env, 'SELECT value FROM meta WHERE key=?', key))?.value ?? null;
 const metaStmt = (key, value) => ['INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, String(value)];
-const setMeta = (env, key, value) => many(env, metaStmt(key, value));
+// The three markers the KV cache mirrors (see the KV section): auth checks and pulse read them from KV
+// when it is on, so every write of one is also pushed to KV here, keeping KV at least as fresh as D1.
+const KV_MIRROR = { last_change: 'm:last_change', roster_v: 'm:roster_v', auth_secret: 'm:auth_secret' };
+async function setMeta(env, key, value) {
+  await many(env, metaStmt(key, String(value)));
+  if (KV_MIRROR[key]) await kvPut(env, KV_MIRROR[key], String(value), KV_META_TTL);
+}
 const changedStmt = () => metaStmt('last_change', nowIso());
-const markChanged = (env) => many(env, changedStmt());
+/** Call right after a batch that included changedStmt(), so KV's last_change never lags D1's. */
+const mirrorChanged = (env) => kvPut(env, KV_MIRROR.last_change, nowIso(), KV_META_TTL);
+const markChanged = async (env) => { const iso = nowIso(); await many(env, metaStmt('last_change', iso)); await kvPut(env, KV_MIRROR.last_change, iso, KV_META_TTL); };
 const bumpRoster = (env) => setMeta(env, 'roster_v', nowIso() + '#' + Math.random().toString(36).slice(2, 6));
 const catWeeksOf = (v) => [...new Set(String(v || '').split(/[\s,;]+/).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= TERM_WEEKS))].sort((a, b) => a - b);
 const termOut = (r) => (r ? { id: r.id, name: r.name, duration: r.duration, startDate: r.start_date, weeks: TERM_WEEKS, breaks: String(r.breaks || '').split(/[\s,;]+/).filter(Boolean),
@@ -281,16 +344,21 @@ async function authSecret(env) {
   // Created once: if two requests race on a new database, both end up with the one that was stored first.
   const [, rows] = await many(env, ["INSERT INTO meta (key,value) VALUES ('auth_secret',?) ON CONFLICT(key) DO NOTHING", crypto.randomUUID() + crypto.randomUUID()],
     ["SELECT value FROM meta WHERE key='auth_secret'"]);
-  return (secretCache = rows[0].value);
+  secretCache = rows[0].value;
+  // Never changes once set; cache it in KV (no TTL) so other isolates can verify tokens without this read.
+  await kvPut(env, KV_MIRROR.auth_secret, secretCache);
+  return secretCache;
 }
 
 /* ---------- web requests ---------- */
 export default {
   async fetch(request, env, ctx) {
-    const t0 = Date.now(), info = { action: '', kind: '' };
+    const t0 = Date.now(), reads0 = STATS.reads, info = { action: '', kind: '' };
     const res = await handle(request, env, ctx, info);
     if (info.action) {
-      countRequest(info.action, Date.now() - t0, info.kind);
+      // Rows read by this request = the growth in the shared counter while it ran (a concurrent flush can
+      // reset it mid-request, so this is clamped at 0 and treated as an approximation for the breakdown).
+      countRequest(info.action, Date.now() - t0, info.kind, STATS.reads - reads0);
       if (info.error && ctx?.waitUntil) ctx.waitUntil(logError(env, 'server', info.action, info.error, info.stack || '', info.who || '').catch(() => {}));
       if (env.DB && Date.now() - STATS.flushedAt > STATS_EVERY && ctx?.waitUntil) ctx.waitUntil(flushStats(env).catch((e) => console.error('stats', e)));
     }
@@ -332,8 +400,19 @@ async function handle(request, env, ctx, info) {
       if (!h) return reply({ ok: false, error: 'Unknown action' });
       if (h.role && !me.roles.some((r) => h.role.includes(r))) fail(`This needs the ${h.role.join(' or ')} role. Ask the MIS Officer.`);
       if (me.mustChange && b.action !== 'setPin') fail('Choose a new PIN first', { mustChange: true });
+      // Daily read budget (only checked where it matters, so most requests pay nothing for it). Over the hard
+      // band, the heavy optional reads stand aside so the essentials (served largely from KV) keep working;
+      // near either band, the response carries a `degraded` marker the apps use to show a quiet notice.
+      let band = 'ok';
+      if (kvOn(env) && (SHEDDABLE.has(b.action) || b.action === 'pulse' || b.action === 'roster')) {
+        band = (await budgetState(env)).band;
+        if (band === 'hard' && SHEDDABLE.has(b.action)) {
+          return reply({ ok: false, busy: true, degraded: 'hard', error: 'The system has reached today’s database read limit. Your saved work is safe — please try again later.' });
+        }
+      }
       const out = await h.fn(env, b, me, pre, ctx);
       nudge();
+      if (band !== 'ok' && out && typeof out === 'object' && out.degraded === undefined) out.degraded = band;
       if (b.action === 'roster' && ctx?.waitUntil) ctx.waitUntil(foldOldCheckins(env).catch((e) => console.error('fold', e)));
       return reply(out);
     } catch (err) {
@@ -468,16 +547,20 @@ function dbMeta(m) {
   STATS.reads += Number(m.rows_read) || 0; STATS.writes += Number(m.rows_written) || 0;
   if (Number(m.size_after)) STATS.size = Number(m.size_after);
 }
-function countRequest(action, ms, kind) {
+function countRequest(action, ms, kind, reads) {
   const k = utcDay() + '|' + action;
   let a = STATS.acts.get(k);
-  if (!a) STATS.acts.set(k, (a = { n: 0, refused: 0, errors: 0, ms: 0, max: 0 }));
+  if (!a) STATS.acts.set(k, (a = { n: 0, refused: 0, errors: 0, ms: 0, max: 0, reads: 0 }));
   a.n++; a.ms += ms; if (ms > a.max) a.max = ms;
+  a.reads += Math.max(0, Number(reads) || 0);
   if (kind === 'error') a.errors++; else if (kind === 'refused') a.refused++;
 }
 async function flushStats(env) {
   STATS.flushedAt = Date.now();
-  const rows = [...STATS.acts].map(([k, a]) => { const [day, action] = k.split('|'); return [day, action, a.n, a.refused, a.errors, a.ms, a.max, 0, 0]; });
+  // Per-action rows carry the rows read attributed to that action (approximate: measured as the delta in
+  // STATS.reads across each request, which can interleave under load). The `_db` row keeps the authoritative
+  // grand total; the health view sums day totals from `_db` only, so the per-action reads never double-count.
+  const rows = [...STATS.acts].map(([k, a]) => { const [day, action] = k.split('|'); return [day, action, a.n, a.refused, a.errors, a.ms, a.max, a.reads || 0, 0]; });
   const reads = STATS.reads, writes = STATS.writes, size = STATS.size;
   STATS.acts = new Map(); STATS.reads = 0; STATS.writes = 0;
   if (reads || writes) rows.push([utcDay(), '_db', 0, 0, 0, 0, 0, reads, writes]);
@@ -491,8 +574,12 @@ async function flushStats(env) {
       ...(size ? [env.DB.prepare(metaStmt('db_size', size)[0]).bind(...metaStmt('db_size', size).slice(1))] : []),
       // Kept for 90 days; the error list keeps the last 1,000.
       ...(Math.random() < 0.05 ? [env.DB.prepare('DELETE FROM sys_stats WHERE day < ?').bind(utcDay(Date.now() - 90 * 864e5)),
-        env.DB.prepare('DELETE FROM sys_errors WHERE id <= (SELECT MAX(id) - 1000 FROM sys_errors)')] : []),
+        env.DB.prepare('DELETE FROM sys_errors WHERE id <= (SELECT MAX(id) - 1000 FROM sys_errors)'),
+        // The audit log has no natural cap; keep the most recent ~100,000 entries so scans of it stay cheap.
+        env.DB.prepare('DELETE FROM audit WHERE id <= (SELECT MAX(id) - 100000 FROM audit)')] : []),
     ]);
+    // Our own write just moved today's total; drop the cached budget so the next check re-reads the real number.
+    if (reads) await kvDel(env, 'budget:' + utcDay());
   } catch (e) {
     // Not saved (the database is busy or over its limit): the counts are kept for the next try.
     for (const r of rows) {
@@ -502,9 +589,9 @@ async function flushStats(env) {
     throw e;
   }
 }
-function countMerge([day, action, n, refused, errors, ms, max]) {
-  const k = day + '|' + action, a = STATS.acts.get(k) || { n: 0, refused: 0, errors: 0, ms: 0, max: 0 };
-  Object.assign(a, { n: a.n + n, refused: a.refused + refused, errors: a.errors + errors, ms: a.ms + ms, max: Math.max(a.max, max) });
+function countMerge([day, action, n, refused, errors, ms, max, reads]) {
+  const k = day + '|' + action, a = STATS.acts.get(k) || { n: 0, refused: 0, errors: 0, ms: 0, max: 0, reads: 0 };
+  Object.assign(a, { n: a.n + n, refused: a.refused + refused, errors: a.errors + errors, ms: a.ms + ms, max: Math.max(a.max, max), reads: a.reads + (reads || 0) });
   STATS.acts.set(k, a);
 }
 /** One error in the list. At most 30 a minute from one copy of the Worker, so a fault that repeats cannot flood it. */
@@ -539,16 +626,22 @@ async function systemHealth(env) {
   const byDay = new Map();
   for (const r of stats) {
     const d = byDay.get(r.day) || { day: r.day, requests: 0, refused: 0, errors: 0, ms: 0, reads: 0, writes: 0 };
-    d.requests += r.n; d.refused += r.refused; d.errors += r.errors; d.ms += r.ms; d.reads += r.reads; d.writes += r.writes;
+    d.requests += r.n; d.refused += r.refused; d.errors += r.errors; d.ms += r.ms;
+    // Day totals for reads/writes come from the authoritative `_db` row only, so the per-action reads
+    // (also stored now, for the breakdown below) are not counted twice.
+    if (r.action === '_db') { d.reads += r.reads; d.writes += r.writes; }
     byDay.set(r.day, d);
   }
   const days = [...byDay.values()].map((d) => ({ ...d, avgMs: d.requests ? Math.round(d.ms / d.requests) : 0 }));
   const today = days.find((d) => d.day === day) || { day, requests: 0, refused: 0, errors: 0, avgMs: 0, reads: 0, writes: 0 };
   const actions = stats.filter((r) => r.day === day && r.action !== '_db')
-    .map((r) => ({ action: r.action, n: r.n, avgMs: r.n ? Math.round(r.ms / r.n) : 0, maxMs: r.max_ms, errors: r.errors, refused: r.refused }))
-    .sort((a, b) => b.n - a.n);
+    .map((r) => ({ action: r.action, n: r.n, avgMs: r.n ? Math.round(r.ms / r.n) : 0, maxMs: r.max_ms, errors: r.errors, refused: r.refused, reads: r.reads || 0 }))
+    .sort((a, b) => b.reads - a.reads || b.n - a.n);
   const drive = readJson(meta.drive_report, null), backup = readJson(meta.backup_report, {}), bridge = readJson(meta.bridge_health, null);
+  // Which read-budget band today sits in, and whether the KV cache/fallback is actually wired up.
+  const readsBand = today.reads >= LIMITS.reads * 0.95 ? 'hard' : today.reads >= LIMITS.reads * 0.80 ? 'soft' : 'ok';
   return { ok: true, now: nowIso(), day, version: VERSION, limits: LIMITS, today, days, actions,
+    cache: { on: kvOn(env), readsBand },
     errors: errs, db: { bytes: Number(meta.db_size) || 0, counts: counts[0] || {} },
     google: { driveUsed: Number(backup.used) || 0, driveLimit: (Number(meta.backup_quota_gb) || 50) * 1024 ** 3, driveAt: backup.checkedAt || '',
       bridgeAt: drive?.at || '', bridgeVersion: drive?.bridge || '', bridgeMs: bridge?.ms || 0, bridgeErrors: bridge?.errors || [], mailLeft: bridge?.mailLeft ?? null,
@@ -561,6 +654,11 @@ async function systemHealth(env) {
 const NUDGE_ACTIONS = new Set(['push', 'deleteSessions', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
   'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep']);
+
+// Heavy, non-urgent admin and reporting reads that stand aside only in the hard budget band, so the
+// live path (marking attendance, pulse, roster, check-ins, marks) keeps its remaining read allowance.
+const SHEDDABLE = new Set(['sessionList', 'verifyData', 'verifyPool', 'msList', 'candidates',
+  'absences', 'students', 'phones', 'poeList', 'poeClass', 'tpoeList', 'tpoeGrants', 'poeLinks']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -586,6 +684,7 @@ export async function setStaffPin(env, code, pin, mustChange, create) {
   await run(env, `INSERT INTO staff (code,name,roles,responsibility,active,pin_hash,pin_salt,pin_version,must_change,late_pct,excused_pct,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(code) DO UPDATE SET name=excluded.name, roles=excluded.roles, active=1, pin_hash=excluded.pin_hash, pin_salt=excluded.pin_salt, pin_version=excluded.pin_version, must_change=excluded.must_change, updated_at=excluded.updated_at`,
   next.code, next.name, next.roles, next.responsibility || '', 1, next.pin_hash, next.pin_salt, next.pin_version, next.must_change, next.late_pct ?? null, next.excused_pct ?? null, next.updated_at);
+  await kvDel(env, 'staff:' + lower(next.code));
   return next;
 }
 
@@ -622,7 +721,7 @@ async function login(env, b) {
   }
   if (lf) await run(env, 'DELETE FROM login_fails WHERE code=?', code);
   if (accountEnded(row)) fail(`This account ended on ${row.ends_on}. Ask the MIS Officer if you need it again.`);
-  if (firstTime && !row.must_change) { await run(env, 'UPDATE staff SET must_change=1 WHERE code=?', row.code); row.must_change = 1; }
+  if (firstTime && !row.must_change) { await run(env, 'UPDATE staff SET must_change=1 WHERE code=?', row.code); row.must_change = 1; await kvDel(env, 'staff:' + lower(row.code)); }
   return { ok: true, token: await makeToken(env, row), staff: staffPublic(row), mustChange: firstTime || !!row.must_change };
 }
 
@@ -645,23 +744,56 @@ async function confirmPin(env, me, pin) {
 const OK_SAID = { register: 'Checked - complete and in order.', poe: 'Checked - complete and acceptable.', marksheet: 'Checked - marks complete and in order.' };
 const BATCH_MAX = 50;
 
+/** A staff member's status, small enough to cache in KV, holding everything auth and `me` need.
+ * It carries no PIN hash, so the cache cannot be used to check a PIN — only to read status. */
+const staffSnap = (r) => ({ code: r.code, name: r.name, roles: r.roles, active: r.active ? 1 : 0, ends_on: r.ends_on || '',
+  pin_version: r.pin_version, must_change: r.must_change ? 1 : 0, late_pct: r.late_pct ?? null, excused_pct: r.excused_pct ?? null, responsibility: r.responsibility || '' });
+
 /** Checks a sign-in token: genuine, staff still active, PIN not changed or reset since.
- * Reads the staff row, the change markers and any `extra` statements in one database trip;
- * returns [me, { meta, rows }] where rows are the results of `extra`. */
+ * With a KV cache on, the change markers, the signing secret and the staff member's status are served
+ * from KV, so the common authenticated request reads nothing from D1 for the sign-in check; whatever KV
+ * cannot supply, plus any action-specific `extra`, still goes to D1 in one trip. A staff change clears the
+ * cached status at once (kvDel on every staff write); KV is eventually consistent, so a deactivation or
+ * PIN reset can take up to ~60s to lock out a token that was already issued. Returns [me, { meta, rows }]
+ * where rows are the results of `extra`. */
 async function auth(env, token, extra = []) {
   const parts = String(token || '').split('|');
   if (parts.length !== 4) fail('Sign in to continue', { authError: true });
-  const wanted = secretCache ? ['last_change', 'roster_v'] : ['last_change', 'roster_v', 'auth_secret'];
-  const [staffRows, metaRows, ...rows] = await many(env, ['SELECT * FROM staff WHERE code=?', parts[0]], [`SELECT key, value FROM meta WHERE key IN (${wanted.map(() => '?').join(',')})`, ...wanted], ...extra);
-  const meta = Object.fromEntries(metaRows.map((r) => [r.key, r.value]));
-  if (!secretCache && meta.auth_secret) secretCache = meta.auth_secret;
+  const code = parts[0];
+  const meta = {};
+  let secret = secretCache, snap = null;
+  if (kvOn(env)) {
+    const [lc, rv, sec, st] = await Promise.all([
+      kvGet(env, KV_MIRROR.last_change), kvGet(env, KV_MIRROR.roster_v),
+      secret ? null : kvGet(env, KV_MIRROR.auth_secret), kvGet(env, 'staff:' + lower(code), 'json')]);
+    if (lc !== null) meta.last_change = lc;
+    if (rv !== null) meta.roster_v = rv;
+    if (!secret && sec) secret = secretCache = sec;
+    if (st) snap = st;
+  }
+  // Build the D1 trip from only what KV could not answer, plus the caller's `extra` statements.
+  const metaKeys = [];
+  if (meta.last_change === undefined) metaKeys.push('last_change');
+  if (meta.roster_v === undefined) metaKeys.push('roster_v');
+  if (!secret) metaKeys.push('auth_secret');
+  const head = [];
+  if (!snap) head.push(['SELECT * FROM staff WHERE code=?', code]);
+  if (metaKeys.length) head.push([`SELECT key, value FROM meta WHERE key IN (${metaKeys.map(() => '?').join(',')})`, ...metaKeys]);
+  const results = (head.length || extra.length) ? await many(env, ...head, ...extra) : [];
+  let i = 0;
+  if (!snap) {
+    const row = results[i++][0];
+    if (row) { snap = staffSnap(row); await kvPut(env, 'staff:' + lower(code), snap, KV_STAFF_TTL); }
+  }
+  if (metaKeys.length) { for (const r of results[i++]) meta[r.key] = r.value; if (!secret && meta.auth_secret) secret = secretCache = meta.auth_secret; }
+  const rows = results.slice(i);
+  if (!secret) secret = await authSecret(env);
   const payload = parts.slice(0, 3).join('|');
-  if ((await hmacHex(payload, await authSecret(env))).slice(0, 32) !== parts[3]) fail('Sign in again', { authError: true });
-  const row = staffRows[0];
-  if (!row || !row.active || accountEnded(row) || String(row.pin_version) !== String(Number(parts[1]))) {
+  if ((await hmacHex(payload, secret)).slice(0, 32) !== parts[3]) fail('Sign in again', { authError: true });
+  if (!snap || !snap.active || accountEnded(snap) || String(snap.pin_version) !== String(Number(parts[1]))) {
     fail('Your sign-in has ended (PIN changed or account switched off). Sign in again.', { authError: true });
   }
-  const p = staffPublic(row);
+  const p = staffPublic(snap);
   return [{ code: p.code, name: p.name, roles: p.roles, mustChange: p.mustChange, latePct: p.latePct, excusedPct: p.excusedPct }, { meta, rows }];
 }
 
@@ -676,6 +808,7 @@ async function setPin(env, b, me) {
 async function saveMySettings(env, b, me) {
   const clamp = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(100, Math.round(Number(v)))) : null);
   await run(env, 'UPDATE staff SET late_pct=COALESCE(?,late_pct), excused_pct=COALESCE(?,excused_pct), updated_at=? WHERE code=?', clamp(b.latePct), clamp(b.excusedPct), nowIso(), me.code);
+  await kvDel(env, 'staff:' + lower(me.code));
   await bumpRoster(env);
   return { ok: true, staff: staffPublic(await getStaff(env, me.code)) };
 }
@@ -807,6 +940,14 @@ async function uploadLoading(env, b, me) {
 async function readRoster(env, b, me, pre) {
   const version = pre.meta.roster_v || 'none';
   if (b.version && b.version === version) return { ok: true, unchanged: true, version, me };
+  // Everything in the roster except `me` depends only on the data (keyed by roster_v) and the viewer's
+  // scope — the whole school for the HOD/MIS, a trainer's own classes for a trainer, nothing for a visitor.
+  // So one build per (roster_v, scope) is cached in KV and shared: the N-th trainer or HOD to pull a new
+  // version is served from KV instead of scanning trainees/loading/classes again. A roster change makes a
+  // new roster_v, hence a new key, so the cache never serves stale lists.
+  const scope = visitorOnly(me) ? 'v' : seesAll(me) ? (me.roles.includes('MIS') ? 'mis' : 'all') : 't:' + lower(me.code);
+  const cacheKey = `roster:${version}:${scope}`;
+  if (kvOn(env)) { const hit = await kvGet(env, cacheKey, 'json'); if (hit) return { ...hit, me }; }
   const [termRows, loading, unitRows, classRows, reqs, staffRows] = await many(env, [TERM_SQL], [`SELECT * FROM loading WHERE term_id=${ACTIVE_TERM}`], ['SELECT * FROM units'],
     ['SELECT * FROM classes'], ["SELECT adm_no, name, class_code, requested_name, reason, status, merged_into FROM requests WHERE status IN ('pending','rejected','merged')"],
     ['SELECT code, name, late_pct, excused_pct FROM staff']);
@@ -842,8 +983,8 @@ async function readRoster(env, b, me, pre) {
   }
   const staff = {};
   for (const r of staffRows) staff[r.code] = { name: r.name, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100 };
-  return {
-    ok: true, version, me, term, weeks: teachingWeeks(term),
+  const payload = {
+    ok: true, version, term, weeks: teachingWeeks(term),
     classes: classRows.filter((r) => !gone.has(r.code)).map((r) => ({ code: r.code, name: r.name || r.code, level: r.level || levelOf(r.code), misClass: r.mis_class || '' })),
     units,
     terms: termList.map((r) => ({ id: r.id, name: r.name, duration: r.duration || '', startDate: r.start_date || '', status: r.status || '' })),
@@ -858,6 +999,9 @@ async function readRoster(env, b, me, pre) {
     // Set when the MIS Officer starts afresh: phones drop their registers and marks from before this moment.
     resetAt: (await getMeta(env, 'data_reset')) || '',
   };
+  // Cache the built roster for this (roster_v, scope); `me` is added per request and never cached.
+  if (kvOn(env)) await kvPut(env, cacheKey, payload, KV_ROSTER_TTL);
+  return { ...payload, me };
 }
 
 /* ---------- student app: setup lists and phone registration ---------- */
@@ -1141,6 +1285,7 @@ async function updateStaff(env, b, me) {
     row.ends_on = d || null;
     if (row.pin_version !== undefined && !b.roles && b.active === undefined && !b.resetPin && !b.name) {
       await run(env, 'UPDATE staff SET ends_on=?, updated_at=? WHERE code=?', row.ends_on, nowIso(), code);
+      await kvDel(env, 'staff:' + lower(code));
       return { ok: true, staff: staffPublic(await getStaff(env, code)) };
     }
   }
@@ -1159,6 +1304,7 @@ async function updateStaff(env, b, me) {
     await run(env, 'UPDATE staff SET pin_hash=NULL, pin_salt=NULL, must_change=1, pin_version=COALESCE(pin_version,0)+1, updated_at=? WHERE code=?', nowIso(), code);
     toDefault = true;
   } else if (b.resetPin) { pin = randomPin(); row = await setStaffPin(env, code, pin, true); }
+  await kvDel(env, 'staff:' + lower(code));
   await audit(env, me, 'staff', `${code}${b.roles ? ' roles ' + row.roles : ''}${b.active !== undefined ? (b.active ? ' switched on' : ' switched off') : ''}${pin ? ' PIN reset' : ''}${toDefault ? ' back to the first-time PIN' : ''}`);
   await bumpRoster(env);
   return { ok: true, staff: staffPublic(await getStaff(env, code)), pin, toDefault };
@@ -1254,9 +1400,11 @@ async function pushSessions(env, sessions, me, pre) {
   }
   const accepted = acceptedOf(cis.filter((r) => r.status === 'accepted'));
   const term = termOut(termRows[0]);
+  const anyAccepted = ciWrites.some((r) => r.status === 'accepted');
   await many(env, ...upsertStmts('sessions', SCOLS, fresh.map((s) => sessionRow(s, accepted[s.sessionId], term, now)), ['id']),
-    ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY), ciWrites.some((r) => r.status === 'accepted') && changedStmt(),
+    ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY), anyAccepted && changedStmt(),
     revived.length && [`DELETE FROM deleted_sessions WHERE id IN ${IN}`, JSON.stringify(revived)]);
+  if (anyAccepted) await mirrorChanged(env);
   return { ok: true, results };
 }
 
@@ -1331,6 +1479,7 @@ async function deleteSessions(env, b, me) {
       ...upsertStmts('deleted_sessions', ['id', 'trainer_id', 'class_code', 'unit_code', 'by_code', 'at'],
         ok.map((r) => ({ id: r.id, trainer_id: r.trainer_id || me.code, class_code: r.class_code, unit_code: r.unit_code, by_code: me.code, at: now })), ['id']),
       changedStmt());
+    await mirrorChanged(env);
     const what = ok.map((r) => `${r.class_code} ${r.unit_code} ${r.date}`);
     await audit(env, me, 'registers deleted', `${ok.length}: ${what.slice(0, 40).join(', ')}${what.length > 40 ? ' and more' : ''}`);
   }
@@ -1674,6 +1823,7 @@ async function receiveCheckins(env, list) {
   await many(env, ...upsertStmts('checkins', CICOLS, ciWrites, CIKEY),
     ...upsertStmts('devices', ['device_id', 'adm_no', 'name', 'class_code', 'registered_at', 'last_seen'], [...devWrites.values()], ['device_id'], ['last_seen']),
     newly.length && changedStmt(), ...upsertStmts('sessions', SCOLS, newly.map((id) => sessionRow(sessions.get(id), accepted[id], term, now)), ['id']));
+  if (newly.length) await mirrorChanged(env);
   return { ok: true, results };
 }
 
@@ -2459,6 +2609,7 @@ const STUDENT_ACTIONS = {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,'drive',?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.id, p.adm, p.sname, p.cls, p.unit, p.unitName, p.item, p.v,
     f.id, f.name || p.name, Number(f.size) || 0, p.pages, now, now, owner, f.md5Checksum || '', f.modifiedTime || '', JSON.stringify(shared), p.by || null, p.byName || null, p.byDevice || null],
     ['UPDATE trainees SET email=? WHERE adm_no=?', owner, host.adm_no], changedStmt());
+    await mirrorChanged(env);
     await replaceOlder(env, p.adm, p.unit, p.item, p.v, b.accessToken);
     return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', p.id)) };
   },
@@ -2820,6 +2971,7 @@ async function poeChanged(env, b, me) {
   if (r.source !== 'drive' || !b.md5 || b.md5 === r.md5 || r.changed_at) return { ok: true };
   const now = nowIso();
   await many(env, ['UPDATE evidence SET changed_at=?, updated_at=? WHERE id=?', now, now, r.id], changedStmt());
+  await mirrorChanged(env);
   await audit(env, me, 'evidence changed', `${r.adm_no} ${r.unit_code} ${r.item} v${r.version}: the file in the student's Drive changed after it was sent`);
   return { ok: true, changedAt: now };
 }
@@ -2831,6 +2983,8 @@ async function setGoogle(env, b, me) {
   if (!email || u.email_verified === false) fail('Google did not give an email address');
   if (!okDomain(env, email)) fail(`Use your college Google account (@${env.GOOGLE_DOMAIN}), not ${email}.`);
   await many(env, ['UPDATE staff SET email=?, updated_at=? WHERE code=?', email, nowIso(), me.code], changedStmt());
+  await mirrorChanged(env);
+  await kvDel(env, 'staff:' + lower(me.code));
   return { ok: true, email };
 }
 async function setArchiveEmail(env, b, me) {
@@ -3585,6 +3739,7 @@ async function setRep(env, b, me) {
   if (!t) fail('That student is not on a class list');
   if (!seesAll(me) && !(await myUnitPairs(env, me)).loading.some((u) => lower(u.trainer_code) === lower(me.code) && classParts(u.class_code).includes(t.class_code))) fail('You can only choose class reps for your classes');
   await many(env, ['UPDATE trainees SET rep=?, updated_at=? WHERE adm_no=?', b.rep ? 1 : null, nowIso(), t.adm_no], changedStmt());
+  await mirrorChanged(env);
   await audit(env, me, 'class rep', `${t.adm_no} ${b.rep ? 'is' : 'is no longer'} a class rep of ${t.class_code}`);
   return { ok: true };
 }
@@ -3841,6 +3996,7 @@ async function deleteStaff(env, b, me) {
   if (!s) fail('No staff member with that code');
   if (lower(s.code) === lower(me.code)) fail('You cannot delete your own account');
   await many(env, ['DELETE FROM staff WHERE code=?', s.code], ['DELETE FROM login_fails WHERE code=?', s.code]);
+  await kvDel(env, 'staff:' + lower(s.code));
   await audit(env, me, 'staff deleted', `${s.code} ${s.name}`);
   await bumpRoster(env);
   return { ok: true };

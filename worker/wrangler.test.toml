@@ -9,3 +9,8 @@ compatibility_date = "2025-09-01"
 binding = "DB"
 database_name = "rvnp-attendance"
 database_id = "00000000-0000-0000-0000-000000000000"
+
+# Local KV so the cache/budget paths are exercised in --local runs (simulated on disk by Wrangler).
+[[kv_namespaces]]
+binding = "CACHE"
+id = "00000000000000000000000000000000"

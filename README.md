@@ -310,6 +310,26 @@ Registers and check-ins are stored in the phone browser's database (IndexedDB). 
 
 What can still lose unsent data: clearing the browser's data or uninstalling the browser; on iPhones, not opening the app for 7 days unless it was added to the home screen; and losing the phone before it syncs.
 
+## Keeping D1 reads low
+
+D1's free plan allows **5 million rows read per day**. Rows read — not requests — is what counts: a query that scans a table reads every row it looks through. The System health page (**Manage → System**) shows today's reads against the limit and, in the per-action table, a **Rows read** column so the MIS Officer can see which action is heaviest.
+
+The Worker is already careful: phones ask a one-row "anything new?" (`pulse`) before pulling anything, the roster is skipped entirely when its version has not changed, syncs pull only what changed, and old QR check-ins are folded away so scans stay small.
+
+**Optional KV cache (cuts reads to a minimum).** The Worker can keep the hottest, rarely-changing reads — the "anything changed?" markers, each signed-in staff member's status, and the built roster — in a **Cloudflare KV** namespace instead of hitting D1 every time. With it on, a steady `pulse` reads **nothing** from D1, and the first phone to pull a new roster version serves all the others from KV. It is **off by default and entirely optional** — every cached read falls back to D1, so the Worker runs exactly as before without it. To turn it on (once, about 2 minutes):
+
+1. Create the namespace: in the dashboard, **Storage & Databases → KV → Create namespace**, name it `CACHE` (or run `npx wrangler kv namespace create CACHE`).
+2. In [`wrangler.toml`](wrangler.toml), paste the namespace id and uncomment the three `[[kv_namespaces]]` lines.
+3. Push to GitHub (or `npx wrangler deploy`). The System health page then shows **Cache on**.
+
+Alternatively, bind it in the dashboard: Worker → **Bindings → Add binding → KV namespace**, variable name `CACHE`, namespace `CACHE`.
+
+**Automatic fallback as the limit nears.** When KV is on and today's reads pass ~80% of the limit, the heaviest admin and reporting screens (browsing all registers, verification pools, marksheet lists, student/phone lists, POE lists) quietly stand aside so the day-to-day path — marking attendance, check-ins, the roster, pulse, marks — keeps its remaining allowance. Past ~95% those screens show a short "please try again later" and the apps show a one-line "system is very busy" notice; attendance marking and syncing still work. The essentials keep working because they are served from KV, which does not count against the D1 read limit.
+
+**One trade-off to know.** KV copies propagate between Cloudflare locations within about a minute. In the rare case a student's phone and the trainer's phone are served from different locations, a brand-new check-in can take up to ~60 seconds to show as "something changed" (the data itself is always correct once pulled). If you ever need that signal to be instant everywhere, remove `last_change` from the `KV_MIRROR` list in the Worker so `pulse` reads it straight from D1 — you keep all the other savings.
+
+**If reads are still a worry**, the Workers Paid plan (about $5/month) raises the included reads to **25 billion per day** — far beyond a department's use — and makes this whole section moot.
+
 ## Good to know
 
 - **Sign-in security**:
@@ -320,7 +340,7 @@ What can still lose unsent data: clearing the browser's data or uninstalling the
 - **How often phones ask the server anything.** Nothing at all while the app is off screen (in another app, or the phone locked); it starts again the moment the app is back. While the lesson QR is on screen, a tiny "anything new?" every 4 seconds; with today's QR register open, every 15 seconds; otherwise once a minute, easing off to once every 3 minutes when nobody has touched the phone for 10 minutes — one tap and it is back to once a minute. During a QR lesson the register is uploaded every 2 minutes and when the QR is closed (the server accepts students' genuine codes straight away without waiting for it). The student app asks about its evidence only when it opens, when it comes back into view, after an upload, and when a notification arrives.
 - Load tests and their results are in [`loadtest/`](loadtest/README.md).
 - When you change any app file, bump `CACHE` in `sw.js` (for example `v4.1.2`) so phones fetch the new version.
-- **Testing the Worker on a computer** (for developers): `npx wrangler dev` with `worker/dev.js` as the main file and a local D1 binding called `DB` adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.
+- **Testing the Worker on a computer** (for developers): `npx wrangler dev --config worker/wrangler.test.toml --local` runs `worker/dev.js` with a local D1 binding `DB` and a local KV binding `CACHE`, and adds test helpers (`/__reset`, `/__dump`). Never deploy `dev.js`.
 
 ## Asking for a change to a screen
 

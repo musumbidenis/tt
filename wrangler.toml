@@ -16,6 +16,17 @@ binding = "DB"
 database_name = "rvnp-attendance"
 database_id = "44a79960-ce61-4cc0-afeb-d915fcbe0ecf"
 
+# Optional KV cache that cuts D1 reads to a minimum (see the README, "Keeping D1 reads low").
+# The Worker runs fine without it — every cached read falls back to D1 — so this stays commented until
+# the namespace exists. To turn it on:
+#   1. Create the namespace once:  npx wrangler kv namespace create CACHE
+#      (or Cloudflare dashboard -> Storage & Databases -> KV -> Create namespace, name it "CACHE").
+#   2. Paste the namespace id below and uncomment these three lines.
+#   3. Push (Workers Builds redeploys) or run:  npx wrangler deploy
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "PASTE_THE_KV_NAMESPACE_ID_HERE"
+
 # Only college Google accounts may connect (staff) or own evidence files (students). Not a secret.
 [vars]
 GOOGLE_DOMAIN = "rvnp.ac.ke"
