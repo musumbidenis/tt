@@ -28,6 +28,41 @@ const ls = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage full or blocked */ } },
 };
 
+/* ---------- "install the app" banner ----------
+ * Students who open this in a browser tab are nudged to install it to the Home Screen, so it opens like an app and
+ * works offline. The banner stays until the app is installed (opened in standalone mode). Android/Chrome give a real
+ * install prompt (beforeinstallprompt); iPhones have no such event, so we show the Share -> Add to Home Screen steps. */
+let deferredInstall = null;
+const installedPwa = () => window.navigator.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+const iOSphone = () => /iP(hone|od|ad)/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+function renderInstallBanner() {
+  const el = document.getElementById('installBanner');
+  if (!el) return;
+  if (installedPwa()) { el.hidden = true; el.innerHTML = ''; return; }
+  if (deferredInstall) {
+    el.hidden = false;
+    el.innerHTML = '<div class="ib-text"><b>Install The ARK</b><span>Add it to your phone so it opens like an app and works offline.</span></div><button type="button" class="btn small primary" id="installBtn">Install</button>';
+  } else if (iOSphone()) {
+    el.hidden = false;
+    el.innerHTML = '<div class="ib-text"><b>Add The ARK to your Home Screen</b><span>Tap the Share button, then <q>Add to Home Screen</q>, and open it from there.</span></div>';
+  } else {
+    el.hidden = true;   // not installable here yet (no prompt), and not an iPhone: say nothing until the browser offers it
+  }
+}
+// Registered at load because the browser can fire this before the app has finished starting.
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; renderInstallBanner(); });
+window.addEventListener('appinstalled', () => { deferredInstall = null; renderInstallBanner(); });
+function setupInstallBanner() {
+  document.getElementById('installBanner')?.addEventListener('click', async (e) => {
+    if (!e.target.closest('#installBtn') || !deferredInstall) return;
+    const p = deferredInstall; deferredInstall = null;
+    p.prompt();
+    try { await p.userChoice; } catch { /* dismissed */ }
+    renderInstallBanner();   // if they declined, beforeinstallprompt fires again later and the banner returns
+  });
+  renderInstallBanner();
+}
+
 let toastTimer;
 function toast(msg, kind = '') {
   const t = $('#toast'); t.textContent = msg; t.className = 'show ' + kind;
@@ -557,6 +592,7 @@ async function init() {
     const c = e.target.closest('[data-gate-connect]'); if (c) { connectFromGate(c); return; }
     if (e.target.closest('[data-gate-reset]')) { $('#googleGate').hidden = true; document.body.classList.remove('gated'); openSetup('Choose your class and name again. If this phone is registered to someone else, your trainer must reset it first.'); }
   });
+  setupInstallBanner();
   $('#setupClass').addEventListener('change', loadNames);
   $('#setupName').addEventListener('change', () => { $('#setupSave').disabled = !$('#setupName').value; });
   $('#setupSave').addEventListener('click', register);
