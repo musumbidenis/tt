@@ -171,9 +171,25 @@ async function api(method, params, body) {
   const res = await fetch(url.toString(), method === 'GET' ? { redirect: 'follow' }
     : { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
   const out = await res.json();
+  setMaintenance(!!(out && out.maintenance));
   // The server holds this phone at the Connect Google step (its permission was never given, or was taken back).
   if (out && out.needGoogle && st.profile && !st.needGoogle) { st.needGoogle = true; renderGate(); }
   return out;
+}
+/* The database has spent its daily read limit; nothing loads until it resets (00:00 UTC = 3.00 am EAT).
+ * One calm, centered screen over everything, taken away as soon as the server answers again. */
+function setMaintenance(on) {
+  const have = document.getElementById('maintenance');
+  if (!on) { have?.remove(); return; }
+  if (have) return;
+  const box = document.createElement('div');
+  box.id = 'maintenance';
+  box.setAttribute('role', 'alert');
+  box.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:#0f172a;color:#f1f5f9;text-align:center';
+  box.innerHTML = '<div style="max-width:30rem"><div style="font-size:2.5rem;margin-bottom:.5rem">🛠️</div>'
+    + '<h1 style="font-size:1.4rem;margin:0 0 .6rem">System under maintenance</h1>'
+    + '<p style="margin:0;line-height:1.5;opacity:.85">The system is back by about <strong>3.00 am (EAT)</strong>. Your saved work is safe — please check in again then.</p></div>';
+  document.body.appendChild(box);
 }
 
 function showResult(kind, title, text, sub = '') {

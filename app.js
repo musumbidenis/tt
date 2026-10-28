@@ -1515,7 +1515,7 @@ async function callSheets(method, body, params = {}) {
       text = await res.text();
       parsed = tryJson(text);
     }
-    if (parsed) return parsed;
+    if (parsed) { setMaintenance(!!parsed.maintenance); return parsed; }
     throw new Error(`The server did not answer properly (${res.status}${googleMessage(text) ? ': ' + googleMessage(text) : ''}). Try again in a moment; if it keeps happening, tell the MIS Officer.`);
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('The server took too long to answer');
@@ -1551,6 +1551,21 @@ function noteBusy() {
   if (Date.now() - busyNotedAt < 10 * 60e3) return;
   busyNotedAt = Date.now();
   toast('The system is very busy (daily database read limit). Marking and syncing still work; some reports may be unavailable until tomorrow.', 'err');
+}
+/* The database has spent its daily read limit; nothing loads until it resets (00:00 UTC = 3.00 am EAT).
+ * Show one calm, centered screen over everything and take it away as soon as the server answers again. */
+function setMaintenance(on) {
+  const have = document.getElementById('maintenance');
+  if (!on) { have?.remove(); return; }
+  if (have) return;
+  const box = document.createElement('div');
+  box.id = 'maintenance';
+  box.setAttribute('role', 'alert');
+  box.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:#0f172a;color:#f1f5f9;text-align:center';
+  box.innerHTML = '<div style="max-width:30rem"><div style="font-size:2.5rem;margin-bottom:.5rem">🛠️</div>'
+    + '<h1 style="font-size:1.4rem;margin:0 0 .6rem">System under maintenance</h1>'
+    + '<p style="margin:0;line-height:1.5;opacity:.85">The system is back by about <strong>3.00 am (EAT)</strong>. Your saved work is safe — please check in again then.</p></div>';
+  document.body.appendChild(box);
 }
 
 /* Which register versions the server has. Kept per server address: after a move to a new server every

@@ -417,6 +417,12 @@ async function handle(request, env, ctx, info) {
       return reply(out);
     } catch (err) {
       const out = { ok: false, error: String(err && err.message || err) };
+      // D1's free-tier daily read/write cap is spent (resets 00:00 UTC = 3.00 am EAT). Don't show the raw
+      // "exceeded D1's free tier..." text; hand the apps a maintenance marker so they show a calm notice.
+      if (/D1's free tier daily|daily row (read|write) limit/i.test(out.error)) {
+        info.kind = 'refused';
+        return reply({ ok: false, maintenance: true, error: 'The system is under maintenance and will be back by about 3.00 am (EAT). Your saved work is safe — please try again then.' });
+      }
       if (err && err.authError) out.authError = true;
       if (err && err.mustChange) out.mustChange = true;
       if (err && err.needPin) out.needPin = true;
