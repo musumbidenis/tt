@@ -144,7 +144,7 @@ const Outbox = (() => {
     const blobOf = () => o.db.getAttachment(d._id, 'doc.pdf');
     if (!d.plan) {
       const blob = await blobOf();
-      const pl = await post(o.serverUrl, { action: 'poeDrivePlan', deviceId: o.deviceId, admNo: o.admNo, unitCode: d.unitCode, item: d.item, bytes: blob.size, pages: d.pageCount });
+      const pl = await post(o.serverUrl, { action: 'poeDrivePlan', deviceId: o.deviceId, admNo: o.admNo, forAdm: d.forAdm || '', unitCode: d.unitCode, item: d.item, bytes: blob.size, pages: d.pageCount });
       if (!pl.ok) throw new Error(pl.error);
       d.plan = { plan: pl.plan, fileName: pl.fileName, version: pl.version, folder: pl.folder, subfolder: pl.subfolder, description: pl.description, share: pl.share || [] };
       await putDoc(o.db, d);
@@ -161,7 +161,7 @@ const Outbox = (() => {
       try { await drive.share(d.drive.fileId, email); d.drive.shared.push(email); } catch (e) { if (e instanceof NeedConnect) throw e; /* shared later */ }
     }
     await putDoc(o.db, d);
-    const done = await post(o.serverUrl, { action: 'poeDriveDone', deviceId: o.deviceId, admNo: o.admNo, plan: d.plan.plan, fileId: d.drive.fileId, accessToken: await drive.token(), shared: d.drive.shared });
+    const done = await post(o.serverUrl, { action: 'poeDriveDone', deviceId: o.deviceId, admNo: o.admNo, forAdm: d.forAdm || '', plan: d.plan.plan, fileId: d.drive.fileId, accessToken: await drive.token(), shared: d.drive.shared });
     if (!done.ok) throw new Error(done.error);
     return { evidence: done.evidence, fileName: d.plan.fileName, version: d.plan.version };
   }

@@ -7,10 +7,12 @@
 
 const POE = (() => {
   const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
-  const ps = { units: [], unit: '', picked: new Set(), drafts: {}, server: [], syncing: false, crop: null, target: null, notify: null };
+  // as = the device-less classmate this phone is submitting POE for ('' = this student themselves); benes = the links set up
+  // by the MIS Officer; serverBy keeps each student's own submissions separate so switching never mixes them up.
+  const ps = { units: [], unit: '', picked: new Set(), drafts: {}, server: [], serverBy: {}, as: '', asName: '', asEmail: '', benes: [], syncing: false, crop: null, target: null, notify: null };
   const $$ = (q, el = document) => [...el.querySelectorAll(q)];
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-  const draftId = (unit, item) => `ev:draft:${unit}:${item}`;
+  const draftId = (unit, item, as) => (as ? `ev:draft:~${as}:${unit}:${item}` : `ev:draft:${unit}:${item}`);
   const unitName = (code) => (ps.units.find((u) => u.code === code) || { name: code }).name;
 
   async function allDocs() { return (await sdb.allDocs({ include_docs: true, startkey: 'ev:', endkey: 'ev:￿' })).rows.map((r) => r.doc); }
@@ -40,6 +42,9 @@ const POE = (() => {
     if (!st.profile) { card.hidden = true; $('#poeListCard').hidden = true; return; }
     card.hidden = false;
     renderGoogle();
+    renderAs();
+    if (ps.as && !ps.benes.some((x) => x.admNo === ps.as)) switchTo('');   // a link that was removed: fall back to self
+    ps.server = ps.serverBy[ps.as || ''] || (ps.as ? [] : ps.server);
     const sel = $('#poeUnit');
     sel.innerHTML = ps.units.length ? ps.units.map((u) => `<option value="${esc(u.code)}">${esc(u.code)} - ${esc(u.name)}${u.current === false ? ' (earlier term)' : ''}</option>`).join('')
       : '<option value="">Connect once to load your units</option>';
@@ -47,7 +52,7 @@ const POE = (() => {
     sel.value = ps.unit;
     const docs = await allDocs();
     ps.drafts = {};
-    for (const d of docs) if (d.status === 'draft' && d.unitCode === ps.unit) { ps.drafts[d.item] = d; ps.picked.add(d.item); }
+    for (const d of docs) if (d.status === 'draft' && d.unitCode === ps.unit && (d.forAdm || '') === (ps.as || '')) { ps.drafts[d.item] = d; ps.picked.add(d.item); }
     const latest = (item) => ps.server.filter((e) => e.unitCode === ps.unit && e.item === item).sort((a, b) => b.version - a.version)[0];
     $('#poeItems').innerHTML = ITEMS.map((it) => {
       const s = latest(it);
@@ -96,19 +101,38 @@ const POE = (() => {
   async function googleSignIn(choose = false) {
     try { await Google.connect('student', { choose }); renderGoogle(); return true; } catch (e) { toast(e.message, 'err'); renderGoogle(); return false; }
   }
+  /* ---------- submitting for a device-less classmate (POE only; the MIS Officer sets up the link) ---------- */
+  // The host's own identity is always first; each classmate the MIS Officer linked is a chip. Only POE is ever affected.
+  function renderAs() {
+    const box = $('#poeAs'); if (!box) return;
+    if (!ps.benes.length) { box.hidden = true; box.innerHTML = ''; box.classList.remove('on'); return; }
+    box.hidden = false;
+    box.classList.toggle('on', !!ps.as);
+    const chip = (adm, name) => `<button type="button" class="kchip-btn${(ps.as || '') === adm ? ' on' : ''}" data-as="${esc(adm)}" aria-pressed="${(ps.as || '') === adm}">${esc(name)}</button>`;
+    box.innerHTML = `<p class="field-label">Submitting POE as <span class="muted small">pick the student</span></p>
+      <div class="item-chips">${chip('', st.profile?.name || 'Me')}${ps.benes.map((b) => chip(b.admNo, b.name)).join('')}</div>
+      ${ps.as ? `<p class="poe-as-note small">You are sending POE for <b>${esc(ps.asName)}</b> (${esc(ps.as)}). It is filed as their own evidence and also sent to <b>${esc(ps.asEmail)}</b>.</p>` : ''}`;
+  }
+  function switchTo(adm) {
+    const b = ps.benes.find((x) => x.admNo === adm);
+    ps.as = b ? adm : '';
+    ps.asName = b ? b.name : '';
+    ps.asEmail = b ? b.email : '';
+    ps.picked = new Set();
+  }
   /** True when this student's own Drive can be used right now (connected, a fresh sign-in is fetched silently). */
   async function driveReady() {
     if (!viaGoogle()) return false;
     try { await Google.ensure('student'); return true; } catch (e) { if (e instanceof Google.NeedSignIn) return false; throw e; }
   }
   /** A new trainer, HOD or MIS Officer since a file was sent: give them view access too (nobody is removed). */
-  async function shareMissing(list) {
+  async function shareMissing(list, as) {
     if (!viaGoogle() || !(await driveReady())) return;
     for (const e of list) {
       if (!e.share?.length) continue;
       const done = [];
       for (const email of e.share) { try { await Google.share('student', e.fileId, email); done.push(email); } catch (err) { if (err instanceof Google.NeedSignIn) return; } }
-      if (done.length) await api('POST', null, { action: 'poeShared', deviceId: st.deviceId, admNo: st.profile.admNo, id: e.id, emails: done }).catch(() => {});
+      if (done.length) await api('POST', null, { action: 'poeShared', deviceId: st.deviceId, admNo: st.profile.admNo, ...(as ? { forAdm: as } : {}), id: e.id, emails: done }).catch(() => {});
     }
   }
 
@@ -128,7 +152,7 @@ const POE = (() => {
   const shortDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
   async function renderList(docs) {
     docs = docs || await allDocs();
-    const local = docs.filter((d) => d.status !== 'draft');
+    const local = docs.filter((d) => d.status !== 'draft' && (d.forAdm || '') === (ps.as || ''));
     const rows = [];
     for (const d of local.filter((x) => x.status !== 'sent')) {
       const [cls, label] = d.status === 'uploading' ? ['pending', 'Sending…'] : d.status === 'error' ? ['rejected', 'Not sent yet'] : ['pending', 'Saved on device'];
@@ -161,9 +185,9 @@ const POE = (() => {
 
   /* ---------- drafts: one per unit and item, kept on the device ---------- */
   async function draft(item) {
-    const id = draftId(ps.unit, item);
+    const id = draftId(ps.unit, item, ps.as);
     try { return await sdb.get(id); } catch (e) { if (e.status !== 404) throw e; }
-    return { _id: id, type: 'evidence', status: 'draft', unitCode: ps.unit, unitName: unitName(ps.unit), item, pages: [], createdAt: nowISO() };
+    return { _id: id, type: 'evidence', status: 'draft', unitCode: ps.unit, unitName: unitName(ps.unit), item, pages: [], createdAt: nowISO(), forAdm: ps.as || '' };
   }
   async function saveDraft(d) { const r = await sdb.put(d); d._rev = r.rev; return d; }
   async function addPage(item, blob, small) {
@@ -366,7 +390,7 @@ const POE = (() => {
           pdf = await Scanner.pdf(pages);
         }
         const doc = { _id: 'ev:' + uid(), type: 'evidence', status: 'saved', unitCode: d.unitCode, unitName: d.unitName, item: d.item, pageCount: d.pdfOnly ? 0 : d.pages.length,
-          bytes: pdf.size, createdAt: nowISO(), _attachments: { 'doc.pdf': { content_type: 'application/pdf', data: pdf } } };
+          bytes: pdf.size, createdAt: nowISO(), forAdm: d.forAdm || '', _attachments: { 'doc.pdf': { content_type: 'application/pdf', data: pdf } } };
         await sdb.put(doc);
         await sdb.remove(d._id, d._rev);
         ps.picked.delete(it);
@@ -404,10 +428,25 @@ const POE = (() => {
       const res = await Outbox.run({ db: sdb, serverUrl: st.sheetsUrl, deviceId: st.deviceId, admNo: p.admNo, parts: ['evidence'], wait: true,
         getToken: viaGoogle() ? googleToken : async () => '', onChange: () => render() });
       if (res.failed && !res.needGoogle) window.queueOutbox?.();   // something could not go: the phone tries again later, even with the app closed
-      const mine = await api('POST', null, { action: 'poeMine', deviceId: st.deviceId, admNo: p.admNo });
-      if (mine.ok) { ps.server = mine.evidence; await updateLocal('poeMine', (x) => { x.list = mine.evidence; }); await shareMissing(mine.evidence); }
+      await loadBenes();
+      await fetchMine('');
+      for (const b of ps.benes) await fetchMine(b.admNo);
+      ps.server = ps.serverBy[ps.as || ''] || ps.server;
     } catch { /* offline */ }
     finally { ps.syncing = false; render(); }
+  }
+  /** The device-less classmates this phone may send POE for (set up by the MIS Officer). POE only. */
+  async function loadBenes() {
+    try { const r = await api('POST', null, { action: 'poeBeneficiaries', deviceId: st.deviceId, admNo: st.profile.admNo }); if (r.ok) ps.benes = r.beneficiaries || []; }
+    catch { /* offline: keep the ones we have */ }
+  }
+  /** One student's own submissions (self when as is ''), kept apart so switching never mixes them. */
+  async function fetchMine(as) {
+    const r = await api('POST', null, { action: 'poeMine', deviceId: st.deviceId, admNo: st.profile.admNo, ...(as ? { forAdm: as } : {}) });
+    if (!r.ok) return;
+    ps.serverBy[as || ''] = r.evidence;
+    if (!as) await updateLocal('poeMine', (x) => { x.list = r.evidence; });
+    await shareMissing(r.evidence, as);
   }
 
   /* ---------- "Notify me about my evidence" ----------
@@ -489,6 +528,7 @@ const POE = (() => {
       if (b.dataset.view === 'subs') { render(); sync(); window.syncAttendance?.({ force: true }); }
     });
     $('#poeUnit').addEventListener('change', (e) => { ps.unit = e.target.value; ps.picked = new Set(); render(); });
+    $('#poeAs').addEventListener('click', (e) => { const b = e.target.closest('[data-as]'); if (!b) return; switchTo(b.dataset.as); render(); });
     $('#poeItems').addEventListener('click', (e) => {
       const b = e.target.closest('[data-item]'); if (!b) return;
       const it = b.dataset.item;
@@ -594,6 +634,7 @@ const POE = (() => {
       Google.probe(st.sheetsUrl).then(() => renderGoogle());
     }
     await loadUnits();
+    await loadBenes().catch(() => {});
     await render();
     if (viaGoogle()) Google.preload();
     sync();   // on opening the app: send anything waiting and bring the statuses up to date

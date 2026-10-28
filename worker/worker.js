@@ -17,7 +17,7 @@
  */
 
 export const VERSION = '7.28.0';
-const SCHEMA_VERSION = '27';
+const SCHEMA_VERSION = '28';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -57,6 +57,8 @@ CREATE INDEX IF NOT EXISTS evidence_cu ON evidence (class_code, unit_code);
 CREATE INDEX IF NOT EXISTS evidence_upd ON evidence (updated_at);
 CREATE INDEX IF NOT EXISTS evidence_status ON evidence (status, submitted_at);
 CREATE INDEX IF NOT EXISTS evidence_sub ON evidence (submitted_at);
+CREATE TABLE IF NOT EXISTS poe_links (beneficiary_adm TEXT PRIMARY KEY COLLATE NOCASE, host_adm TEXT COLLATE NOCASE, class_code TEXT, beneficiary_email TEXT, authorised_by TEXT, created_at TEXT, status TEXT DEFAULT 'active', removed_at TEXT, removed_by TEXT);
+CREATE INDEX IF NOT EXISTS poe_links_host ON poe_links (host_adm, status);
 CREATE TABLE IF NOT EXISTS marks (term_id TEXT, class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, cat1 REAL, cat2 REAL, cat3 REAL, prac1 REAL, prac2 REAL, prac3 REAL, updated_at TEXT, updated_by TEXT, synced_at TEXT, PRIMARY KEY (term_id, class_code, unit_code, adm_no));
 CREATE INDEX IF NOT EXISTS marks_synced ON marks (synced_at);
 CREATE TABLE IF NOT EXISTS unit_marks (class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, cat1 REAL, cat2 REAL, cat3 REAL, prac1 REAL, prac2 REAL, prac3 REAL, meta TEXT, updated_at TEXT, updated_by TEXT, synced_at TEXT, PRIMARY KEY (class_code, unit_code, adm_no));
@@ -120,7 +122,10 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   'ALTER TABLE evidence ADD COLUMN replaced_at TEXT',
   // Notice board: a message can be pinned to a board, given a priority, and require readers to confirm they have read it.
   'ALTER TABLE notices ADD COLUMN board INTEGER', 'ALTER TABLE notices ADD COLUMN priority TEXT',
-  'ALTER TABLE notices ADD COLUMN pinned_until TEXT', 'ALTER TABLE notices ADD COLUMN need_ack INTEGER'];
+  'ALTER TABLE notices ADD COLUMN pinned_until TEXT', 'ALTER TABLE notices ADD COLUMN need_ack INTEGER',
+  // POE host: a classmate may submit POE on a device-less student's behalf; the item is still the student's, but we record who sent it.
+  'ALTER TABLE evidence ADD COLUMN submitted_by_adm TEXT', 'ALTER TABLE evidence ADD COLUMN submitted_by_name TEXT',
+  'ALTER TABLE evidence ADD COLUMN submitted_device TEXT'];
 /* Data moved once when the schema version changes (each is one statement, safe to run again). */
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
@@ -393,6 +398,9 @@ const ACTIONS = {
   poeReceive: { role: ['MIS'], fn: (env, b, me) => poeReceive(env, b, me) },
   driveStatus: { role: ['MIS', 'HOD'], fn: (env) => driveStatus(env) },
   poeClass: { role: ['MIS', 'HOD', 'IAO'], fn: (env, b) => poeClass(env, b) },
+  poeLinks: { role: ['MIS', 'HOD'], fn: (env, b, me) => poeLinks(env, b, me) },
+  poeLinkSave: { role: ['MIS', 'HOD'], fn: (env, b, me) => poeLinkSave(env, b, me) },
+  poeLinkRemove: { role: ['MIS', 'HOD'], fn: (env, b, me) => poeLinkRemove(env, b, me) },
   tpoeList: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tpoeList(env, b, me) },
   tpoeTicket: { role: ['TRAINER'], fn: (env, b, me) => tpoeTicket(env, b, me) },
   tpoeDone: { role: ['TRAINER'], fn: (env, b, me) => tpoeDone(env, b, me) },
@@ -2188,6 +2196,21 @@ async function studentOf(env, b, { google = true } = {}) {
   if (google && !t.g_refresh && googleReady(env) && req[0]?.value !== '0') fail('Connect your college Google account to use the app. You do this once.', { needGoogle: true });
   return t;
 }
+/** The student a POE action acts on. Normally the device's own student; but when forAdm is given and this device's
+ *  owner is an active MIS-authorised POE host for that student, the action acts on the beneficiary instead. The file
+ *  still comes from the host's own Google Drive, so the host is validated (incl. Google) and the beneficiary is not.
+ *  Returns { t: subject, host: device owner, via: host adm when proxied else '', email: beneficiary's own email }. */
+async function poeSubject(env, b, opts) {
+  const host = await studentOf(env, b, opts);
+  const forAdm = String(b.forAdm || '').trim();
+  if (!forAdm || lower(forAdm) === lower(host.adm_no)) return { t: host, host, via: '', email: '' };
+  const link = await one(env, "SELECT * FROM poe_links WHERE beneficiary_adm=? AND status='active'", forAdm);
+  if (!link || lower(link.host_adm) !== lower(host.adm_no)) fail('You are not linked to submit POE for that student.');
+  const b2 = await one(env, 'SELECT * FROM trainees WHERE adm_no=?', forAdm);
+  if (!b2 || !active(b2)) fail('That student is not on the class list');
+  if (lower(b2.class_code) !== lower(host.class_code)) fail('That student is not in your class');
+  return { t: b2, host, via: host.adm_no, email: link.beneficiary_email || '' };
+}
 /** Students must connect Google before using the app: on unless the MIS Officer switched it off (and only when the server can keep Google sign-ins). */
 const requireGoogle = async (env) => googleReady(env) && (await getMeta(env, 'require_google')) !== '0';
 const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class_code).includes(cls) || u.class_code === cls);
@@ -2226,7 +2249,8 @@ async function classUnits(env, cls) {
 const evidenceOut = (r) => ({ approvalRef: r.status === 'approved' ? r.approval_ref || '' : '', id: r.id, admNo: r.adm_no, name: r.name, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name, item: r.item,
   version: r.version, fileId: r.file_id, fileName: r.file_name, bytes: r.bytes, pages: r.pages, submittedAt: r.submitted_at, status: r.replaced_at ? 'replaced' : r.status,
   decidedName: r.decided_name || '', decidedAt: r.decided_at || '', comment: r.comment || '', receivedAt: r.received_at || '', updatedAt: r.updated_at,
-  source: r.source || 'bridge', ownerEmail: r.owner_email || '', changedAt: r.changed_at || '' });
+  source: r.source || 'bridge', ownerEmail: r.owner_email || '', changedAt: r.changed_at || '',
+  submittedByAdm: r.submitted_by_adm || '', submittedByName: r.submitted_by_name || '' });
 
 /* ---------- evidence in the student's own Google Drive ----------
  * The student's phone saves the PDF in the student's college Drive and shares it (view only) with the unit's trainer,
@@ -2352,7 +2376,7 @@ const STUDENT_ACTIONS = {
       period: r.period, kind: r.kind, slots: Number(r.slots) === 2 ? 2 : 1, status: qr.has(r.id) && r.status !== 'Late' ? 'Present' : r.status || '' })) };
   },
   async poeTicket(env, b) {
-    const t = await studentOf(env, b);
+    const { t, host, via } = await poeSubject(env, b);
     // Students connect their college Google account and save POE in their own Drive; nothing new goes through the college
     // Drive (an upload already under way can still be confirmed with poeDone).
     if (googleReady(env)) fail('Connect your college Google account to send POE. Your file is safe on this device.', { needGoogle: true });
@@ -2367,6 +2391,7 @@ const STUDENT_ACTIONS = {
     const v = (Number(ver[0]?.v) || 0) + 1, unitName = unit.unit_name || unit.unit_code;
     const fileName = `${safeName(unitName)} - ${item} - v${v}.pdf`;
     const ticket = await signTicket(env, { k: 'up', id: crypto.randomUUID(), adm: t.adm_no, sname: t.name, cls: t.class_code, unit: unit.unit_code, unitName, item, v, name: fileName,
+      by: via || '', byName: via ? host.name : '', byDevice: via ? String(b.deviceId || '') : '',
       folders: [safeName(t.class_code), folderName(`${t.adm_no} - ${t.name}`)], bytes: Number(b.bytes) || 0, pages: Number(b.pages) || 0, exp: Date.now() + 6 * 3600e3 });
     return { ok: true, ticket, driveUrl: url[0].value, fileName, version: v };
   },
@@ -2376,14 +2401,14 @@ const STUDENT_ACTIONS = {
     const t = await readTicket(env, b.ticket, 'up', { late: true });
     if ((await hmacHex(`done|${t.id}|${b.fileId}|${b.version}|${b.fileName}`, bridgeSecret(env))) !== b.sig) fail('The Drive bridge did not confirm this file');
     const now = nowIso();
-    await run(env, `INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?) ON CONFLICT(id) DO NOTHING`, t.id, t.adm, t.sname, t.cls, t.unit, t.unitName, t.item, Number(b.version) || t.v,
-    String(b.fileId), String(b.fileName), t.bytes, t.pages, now, now);
+    await run(env, `INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at,submitted_by_adm,submitted_by_name,submitted_device)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,?,?,?) ON CONFLICT(id) DO NOTHING`, t.id, t.adm, t.sname, t.cls, t.unit, t.unitName, t.item, Number(b.version) || t.v,
+    String(b.fileId), String(b.fileName), t.bytes, t.pages, now, now, t.by || null, t.byName || null, t.byDevice || null);
     await replaceOlder(env, t.adm, t.unit, t.item, Number(b.version) || t.v);
     return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', t.id)) };
   },
   async poeMine(env, b) {
-    const t = await studentOf(env, b);
+    const { t } = await poeSubject(env, b);
     const rows = await all(env, 'SELECT * FROM evidence WHERE adm_no=? AND replaced_at IS NULL ORDER BY submitted_at DESC', t.adm_no);
     // For files in the student's Drive: anyone who should see it but has not been given access yet (a new trainer,
     // a new HOD). The phone shares it and reports back; nobody is ever removed.
@@ -2398,7 +2423,7 @@ const STUDENT_ACTIONS = {
   },
   /** Before saving to the student's Drive: the file name, the version, and who to share it with. */
   async poeDrivePlan(env, b) {
-    const t = await studentOf(env, b);
+    const { t, host, via, email } = await poeSubject(env, b);
     const item = String(b.item || '').toUpperCase();
     if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
     if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
@@ -2409,15 +2434,19 @@ const STUDENT_ACTIONS = {
     const v = (Number(ver[0]?.v) || 0) + 1, unitName = unit.unit_name || unit.unit_code;
     const fileName = `${safeName(unitName)} - ${item} - v${v}.pdf`;
     const plan = await signPlan(env, { id: crypto.randomUUID(), adm: t.adm_no, sname: t.name, cls: t.class_code, unit: unit.unit_code, unitName, item, v, name: fileName,
-      pages: Number(b.pages) || 0, exp: Date.now() + 24 * 3600e3 });
+      by: via || '', byName: via ? host.name : '', byDevice: via ? String(b.deviceId || '') : '', pages: Number(b.pages) || 0, exp: Date.now() + 24 * 3600e3 });
+    const share = [...(await shareTargets(env, t.class_code, unit.unit_code)), ...(via && email ? [email] : [])];
     return { ok: true, plan, fileName, version: v, folder: 'The ARK - POE', subfolder: safeName(unitName),
-      description: `POE evidence ${item} for ${unitName}, ${t.name} (${t.adm_no}), sent from The ARK`, share: await shareTargets(env, t.class_code, unit.unit_code) };
+      description: `POE evidence ${item} for ${unitName}, ${t.name} (${t.adm_no}), sent from The ARK`, share };
   },
   /** After the phone saved the file: the Worker reads it from Google with the student's access and records it. */
   async poeDriveDone(env, b) {
-    const t = await studentOf(env, b);
+    const host = await studentOf(env, b);
     const p = await readPlan(env, b.plan);
-    if (lower(p.adm) !== lower(t.adm_no)) fail('That upload plan is for another student');
+    // The plan is this host's own upload, or one they are the active POE host for (p.by holds the host's adm).
+    if (lower(p.adm) !== lower(host.adm_no) && lower(p.by || '') !== lower(host.adm_no)) fail('That upload plan is for another student');
+    if (p.by) { const link = await one(env, "SELECT host_adm FROM poe_links WHERE beneficiary_adm=? AND status='active'", p.adm);
+      if (!link || lower(link.host_adm) !== lower(host.adm_no)) fail('You are no longer linked to submit POE for that student.'); }
     const f = await google(env, `/drive/v3/files/${encodeURIComponent(String(b.fileId || ''))}?fields=id,name,mimeType,size,md5Checksum,modifiedTime,trashed,owners(emailAddress)`, b.accessToken);
     const owner = lower(f.owners?.[0]?.emailAddress || '');
     if (f.trashed) fail('That file is in the bin in Google Drive');
@@ -2425,21 +2454,30 @@ const STUDENT_ACTIONS = {
     if (!okDomain(env, owner)) fail(`Use your college Google account (@${env.GOOGLE_DOMAIN}), not ${owner}.`);
     if (Number(f.size) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB');
     const now = nowIso(), shared = (b.shared || []).map((x) => lower(String(x))).filter(Boolean).slice(0, 50);
-    await many(env, [`INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at,source,owner_email,md5,modified_at,shared)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,'drive',?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.id, t.adm_no, t.name, t.class_code, p.unit, p.unitName, p.item, p.v,
-    f.id, f.name || p.name, Number(f.size) || 0, p.pages, now, now, owner, f.md5Checksum || '', f.modifiedTime || '', JSON.stringify(shared)],
-    ['UPDATE trainees SET email=? WHERE adm_no=?', owner, t.adm_no], changedStmt());
-    await replaceOlder(env, t.adm_no, p.unit, p.item, p.v, b.accessToken);
+    // The evidence is keyed to the student it belongs to (p.adm); the owner's email update only touches the host's own record.
+    await many(env, [`INSERT INTO evidence (id,adm_no,name,class_code,unit_code,unit_name,item,version,file_id,file_name,bytes,pages,submitted_at,status,updated_at,source,owner_email,md5,modified_at,shared,submitted_by_adm,submitted_by_name,submitted_device)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'submitted',?,'drive',?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, p.id, p.adm, p.sname, p.cls, p.unit, p.unitName, p.item, p.v,
+    f.id, f.name || p.name, Number(f.size) || 0, p.pages, now, now, owner, f.md5Checksum || '', f.modifiedTime || '', JSON.stringify(shared), p.by || null, p.byName || null, p.byDevice || null],
+    ['UPDATE trainees SET email=? WHERE adm_no=?', owner, host.adm_no], changedStmt());
+    await replaceOlder(env, p.adm, p.unit, p.item, p.v, b.accessToken);
     return { ok: true, evidence: evidenceOut(await one(env, 'SELECT * FROM evidence WHERE id=?', p.id)) };
   },
   /** The phone shared a file with more people (a new trainer or HOD): remember them, so they are not asked for again. */
   async poeShared(env, b) {
-    const t = await studentOf(env, b);
+    const { t } = await poeSubject(env, b);
     const r = await one(env, "SELECT * FROM evidence WHERE id=? AND adm_no=? AND source='drive'", String(b.id || ''), t.adm_no);
     if (!r) fail('That submission no longer exists');
     const all2 = [...new Set([...sharedOf(r), ...(b.emails || []).map((x) => lower(String(x))).filter(Boolean)])].slice(0, 100);
     await run(env, 'UPDATE evidence SET shared=? WHERE id=?', JSON.stringify(all2), r.id);
     return { ok: true };
+  },
+  /** The device-less classmates this student is the standing POE host for (set up by the MIS Officer). POE only. */
+  async poeBeneficiaries(env, b) {
+    const host = await studentOf(env, b, { google: false });
+    const links = await all(env, `SELECT l.beneficiary_adm, l.beneficiary_email, t.name FROM poe_links l LEFT JOIN trainees t ON t.adm_no=l.beneficiary_adm
+      WHERE l.host_adm=? AND l.status='active' ORDER BY t.name`, host.adm_no);
+    return { ok: true, admNo: host.adm_no, name: host.name, classCode: host.class_code,
+      beneficiaries: links.map((r) => ({ admNo: r.beneficiary_adm, name: r.name || r.beneficiary_adm, email: r.beneficiary_email || '' })) };
   },
   /** The student turned notifications on. The address comes from the browser and is only an address:
    *  nothing private is kept, and only this student's registered phone can add or remove one. */
@@ -2941,6 +2979,41 @@ async function poeClass(env, b) {
     .map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no }));
   const marks = (await all(env, `SELECT class_code, unit_code, adm_no, ${MARK_COLS.join(', ')} FROM unit_marks WHERE class_code=?`, cls)).map(markOut);
   return { ok: true, classes, classCode: cls, units, students, marks };
+}
+/* ---------- POE host links: a classmate submits POE for a device-less student (POE only; set up by the MIS Officer) ---------- */
+async function poeLinks(env, b) {
+  const rows = await all(env, `SELECT l.*, bt.name AS b_name, bt.class_code AS b_class, ht.name AS h_name FROM poe_links l
+    LEFT JOIN trainees bt ON bt.adm_no=l.beneficiary_adm LEFT JOIN trainees ht ON ht.adm_no=l.host_adm
+    WHERE l.status='active' ORDER BY l.created_at DESC`);
+  return { ok: true, links: rows.map((r) => ({ beneficiaryAdm: r.beneficiary_adm, beneficiaryName: r.b_name || r.beneficiary_adm,
+    classCode: r.b_class || r.class_code, hostAdm: r.host_adm, hostName: r.h_name || r.host_adm, email: r.beneficiary_email || '',
+    authorisedBy: r.authorised_by || '', createdAt: r.created_at || '' })) };
+}
+async function poeLinkSave(env, b, me) {
+  const benAdm = String(b.beneficiaryAdm || '').trim(), hostAdm = String(b.hostAdm || '').trim(), email = lower(String(b.email || '').trim());
+  if (!benAdm || !hostAdm) fail('Choose the student and the classmate who will submit for them');
+  if (lower(benAdm) === lower(hostAdm)) fail('A student cannot be their own POE host');
+  if (!okDomain(env, email)) fail(`Enter the student's college Google email (@${env.GOOGLE_DOMAIN})`);
+  const [ben, host] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', benAdm], ['SELECT * FROM trainees WHERE adm_no=?', hostAdm]);
+  const b2 = ben[0], h2 = host[0];
+  if (!b2 || !active(b2)) fail('That student is not on the class list');
+  if (!h2 || !active(h2)) fail('That classmate is not on the class list');
+  if (lower(b2.class_code) !== lower(h2.class_code)) fail('Both students must be in the same class');
+  const now = nowIso();
+  await run(env, `INSERT INTO poe_links (beneficiary_adm,host_adm,class_code,beneficiary_email,authorised_by,created_at,status)
+    VALUES (?,?,?,?,?,?,'active') ON CONFLICT(beneficiary_adm) DO UPDATE SET host_adm=excluded.host_adm, class_code=excluded.class_code,
+    beneficiary_email=excluded.beneficiary_email, authorised_by=excluded.authorised_by, created_at=excluded.created_at, status='active', removed_at=NULL, removed_by=NULL`,
+  b2.adm_no, h2.adm_no, b2.class_code, email, me.name, now);
+  await audit(env, me, 'POE host link', `${h2.name} submits POE for ${b2.name} (${b2.adm_no})`);
+  return { ok: true };
+}
+async function poeLinkRemove(env, b, me) {
+  const benAdm = String(b.beneficiaryAdm || '').trim();
+  const r = await one(env, "SELECT * FROM poe_links WHERE beneficiary_adm=? AND status='active'", benAdm);
+  if (!r) fail('That link is no longer active');
+  await run(env, "UPDATE poe_links SET status='removed', removed_at=?, removed_by=? WHERE beneficiary_adm=?", nowIso(), me.name, benAdm);
+  await audit(env, me, 'POE host link removed', `${benAdm}`);
+  return { ok: true };
 }
 /* ---------- internal verification of POE: panels, sampling, checks, results ---------- */
 // A panel is drafted by the MIS Officer or the Internal Assessment Officer and approved by the HOD. Each class-unit is given to

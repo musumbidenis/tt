@@ -145,7 +145,7 @@ const PoeStaff = (() => {
   function studentRow(r, sn, picking) {
     const pendingIds = r.items.filter((e) => e.status === 'submitted').map((e) => e.id);
     const reviewable = canDecide() && pendingIds.length > 0;
-    const chips = r.items.map((e) => `<span class="poe-item-chip ${e.status}" title="${esc(e.unitName)} - ${statusOf(e)[1]}${e.changedAt ? ' - changed after sending' : ''}">${esc(e.item)}${e.version > 1 ? `<small>v${e.version}</small>` : ''}</span>`).join('');
+    const chips = r.items.map((e) => `<span class="poe-item-chip ${e.status}${e.submittedByName ? ' proxy' : ''}" title="${esc(e.unitName)} - ${statusOf(e)[1]}${e.changedAt ? ' - changed after sending' : ''}${e.submittedByName ? ' - submitted by ' + esc(e.submittedByName) : ''}">${esc(e.item)}${e.version > 1 ? `<small>v${e.version}</small>` : ''}${e.submittedByName ? '<small class="proxy-mark" aria-hidden="true">⇄</small>' : ''}</span>`).join('');
     const first = r.items.find((e) => e.status === 'submitted') || r.items[0];
     return `<tr>${picking ? `<td class="pick">${pendingIds.length ? `<input type="checkbox" data-pick-stu="${esc(r.admNo)}"${pendingIds.every((id) => ps.picked.has(id)) ? ' checked' : ''} aria-label="Select ${esc(r.name)}">` : ''}</td>` : ''}<td class="sn">${sn}</td>
       <td><b>${esc(r.name)}</b><small class="tadm">${esc(r.admNo)}</small></td>
@@ -265,7 +265,7 @@ const PoeStaff = (() => {
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view2">
         <div class="poe-view2-top">
-          <div><b>${esc(e.name)}</b> <span class="muted small">${esc(e.admNo)} · ${esc(e.unitName)}</span></div>
+          <div><b>${esc(e.name)}</b> <span class="muted small">${esc(e.admNo)} · ${esc(e.unitName)}</span>${e.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(e.submittedByName)} on this student's behalf</span>` : ''}</div>
           <button type="button" class="btn small ghost" data-act="close" aria-label="Close">✕</button>
         </div>
         <div class="poe-view2-item">

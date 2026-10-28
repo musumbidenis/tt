@@ -39,18 +39,19 @@ const Admin = (() => {
       parts.push(section('m-loading', 'Trainer loading', loadingHtml()));
       parts.push(section('m-classes', 'Class lists', classesHtml()));
       parts.push(section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'));
+      parts.push(section('m-poelinks', 'POE submission helpers', '<p class="muted">Loading…</p>'));
       parts.push(section('m-staff', 'Staff and roles', '<p class="muted">Loading…</p>'));
       if (window.Health?.allowed()) parts.push(section('m-health', 'System health', Health.html()));
       parts.push(section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
       parts.push(section('m-drive', 'Google Drive', '<p class="muted">Loading…</p>'));
-    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
+    } else if (hasRole('HOD')) parts.push(section('m-requests', 'Students waiting for the MIS Officer', '<p class="muted">Loading…</p>'), section('m-phones', 'Student phones', '<p class="muted">Loading…</p>'), section('m-poelinks', 'POE submission helpers', '<p class="muted">Loading…</p>'), section('m-backup', 'Backup', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD') || hasRole('MIS')) parts.push(section('m-registers', 'Saved registers', regsHtml()));
     box().innerHTML = groupTabs(parts) + parts.join('');
     showGroup_();
     const jobs = [];
     if (hasRole('HOD')) jobs.push(loadSignoffs(), loadOverview());
     if (hasRole('HOD') || hasRole('IAO')) jobs.push(loadMarksheets());
-    if (hasRole('HOD') || hasRole('MIS')) jobs.push(loadRequests(), loadPhones(), loadBackup());
+    if (hasRole('HOD') || hasRole('MIS')) jobs.push(loadRequests(), loadPhones(), loadBackup(), loadPoeLinks());
     if (hasRole('MIS')) jobs.push(loadStaff().then(loadDrive));
     if (window.Health?.allowed()) jobs.push(Health.load());
     await Promise.allSettled(jobs);
@@ -59,7 +60,7 @@ const Admin = (() => {
 
   /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
   const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
-    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-registers']], ['people', 'People', ['m-classes', 'm-staff', 'm-phones']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
+    ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-registers']], ['people', 'People', ['m-classes', 'm-staff', 'm-phones', 'm-poelinks']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
   let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
   function groupTabs(parts) {
     const html = parts.join(''), have = GROUPS.filter(([, , ids]) => ids.some((id) => html.includes(`id="${id}"`)));
@@ -809,6 +810,56 @@ const Admin = (() => {
     } catch (e) { busy(btn, false); toast(e.message, 'err'); }
   }
 
+  /* ---------- POE submission helpers: a classmate submits POE for a device-less student (POE only) ---------- */
+  // A device-less student keeps their own identity everywhere; here we only say which classmate sends their POE, and to
+  // which college email it is also delivered. Everything else (check-in, marks) still needs the student's own phone.
+  const pl = { cls: '', classes: [], students: [], links: [] };
+  async function loadPoeLinks() {
+    try {
+      pl.links = need(await api('poeLinks')).links || [];
+      if (!pl.classes.length) pl.classes = (need(await api('poeClass', {})).classes) || [];
+      drawPoeLinks();
+    } catch (e) { fill('m-poelinks', `<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  const plOpts = (list, sel, blank) => `<option value="">${esc(blank)}</option>${list.map((s) => `<option value="${esc(s.admNo)}"${s.admNo === sel ? ' selected' : ''}>${esc(s.name)} (${esc(s.admNo)})</option>`).join('')}`;
+  function drawPoeLinks() {
+    const links = pl.links.map((l) => `<tr><td><b>${esc(l.beneficiaryName)}</b><br><small class="muted">${esc(l.beneficiaryAdm)}</small></td>
+        <td>${esc(l.classCode)}</td><td>${esc(l.hostName)}<br><small class="muted">${esc(l.hostAdm)}</small></td><td class="small">${esc(l.email)}</td>
+        <td><button type="button" class="btn small ghost danger-text" data-plremove="${esc(l.beneficiaryAdm)}" data-who="${esc(l.beneficiaryName)}">Remove</button></td></tr>`).join('');
+    fill('m-poelinks', `<p class="muted">For a student who has no phone of their own: choose a classmate in the same class to scan and send that student's POE. The work is still filed as the student's own and is also sent to the student's college email. This affects POE only — check-in and marks still need the student's own phone.</p>
+      <form id="plForm" class="pl-form">
+        <label>Class<select id="plClass"><option value="">Choose a class…</option>${pl.classes.map((c) => `<option value="${esc(c)}"${c === pl.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+        <label>Student who needs help<select id="plBen" ${pl.cls ? '' : 'disabled'}>${plOpts(pl.students, '', pl.cls ? 'Choose the student…' : 'Choose a class first')}</select></label>
+        <label>Classmate who will submit for them<select id="plHost" ${pl.cls ? '' : 'disabled'}>${plOpts(pl.students, '', pl.cls ? 'Choose the classmate…' : 'Choose a class first')}</select></label>
+        <label>Student's college Google email<input type="email" id="plEmail" placeholder="name@rvnp.ac.ke" autocomplete="off"></label>
+        <button type="submit" class="btn primary" ${pl.cls ? '' : 'disabled'}>Link them</button>
+      </form>
+      ${pl.links.length ? `<div class="table-wrap"><table class="report-table"><thead><tr><th>Student</th><th>Class</th><th>Submitted by</th><th>Their email</th><th><span class="sr">Remove</span></th></tr></thead><tbody>${links}</tbody></table></div>`
+        : '<p class="muted small">No helpers set up yet.</p>'}`);
+  }
+  async function plClassChange(cls) {
+    pl.cls = cls; pl.students = [];
+    if (cls) { try { pl.students = need(await api('poeClass', { classCode: cls })).students || []; } catch (e) { toast(e.message, 'err'); } }
+    drawPoeLinks();
+  }
+  async function plSave(form) {
+    const beneficiaryAdm = $('#plBen')?.value || '', hostAdm = $('#plHost')?.value || '', email = ($('#plEmail')?.value || '').trim();
+    if (!beneficiaryAdm || !hostAdm) { toast('Choose the student and the classmate', 'err'); return; }
+    if (beneficiaryAdm === hostAdm) { toast('The student and the classmate must be different people', 'err'); return; }
+    const btn = form.querySelector('button[type=submit]'); busy(btn, true, 'Linking…');
+    try {
+      need(await api('poeLinkSave', { beneficiaryAdm, hostAdm, email }));
+      toast('Linked. The classmate can now send this student\'s POE.', 'ok');
+      await loadPoeLinks();
+    } catch (e) { busy(btn, false); toast(e.message, 'err'); }
+  }
+  async function plRemove(btn) {
+    if (!confirm(`Stop ${btn.dataset.who || 'this student'} being submitted for by a classmate? Past POE stays as theirs.`)) return;
+    busy(btn, true, 'Removing…');
+    try { need(await api('poeLinkRemove', { beneficiaryAdm: btn.dataset.plremove })); await loadPoeLinks(); toast('Removed', 'ok'); }
+    catch (e) { busy(btn, false); toast(e.message, 'err'); }
+  }
+
   /* ---------- HOD and MIS: backup of approved evidence into the backup account's Drive ---------- */
   const gb = (n) => (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + ' GB';
   const REPEAT = { off: 'Off', daily: 'Every day', weekly: 'Every week', monthly: 'Every month' };
@@ -1100,6 +1151,7 @@ const Admin = (() => {
     const grp = t.closest('[data-group]'); if (grp) { showGroup(grp.dataset.group); return; }
     const gc = t.closest('[data-grpconn]'); if (gc) { grpConn = gc.dataset.grpconn; $$('#adminDialog [data-grpconn]').forEach((b) => b.classList.toggle('on', b.dataset.grpconn === grpConn)); filterGrp(); return; }
     const rp = t.closest('[data-resetphone]'); if (rp) { resetPhone(rp); return; }
+    const plr = t.closest('[data-plremove]'); if (plr) { plRemove(plr); return; }
     const st = t.closest('.students [data-status]'); if (st) { updateStudent(st.closest('li'), { status: st.dataset.status }); return; }
     const pin = t.closest('.staff [data-pin]');
     if (pin) {
@@ -1148,6 +1200,7 @@ const Admin = (() => {
     }
     if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
     if (t.id === 'nsRole') { $('#nsEndsBox').hidden = t.value !== 'EAO'; $('#nsEnds').required = t.value === 'EAO'; }
+    if (t.id === 'plClass') { plClassChange(t.value); return; }
   });
   document.addEventListener('input', (e) => {
     const t = e.target;
@@ -1200,6 +1253,7 @@ const Admin = (() => {
       if (!/^[0-9]{4,8}$/.test(pin)) { toast('Use 4 to 8 digits for the first-time PIN', 'err'); return; }
       api('setDefaultPin', { pin }).then((r) => { need(r); toast('First-time PIN saved. Tell staff privately.', 'ok'); loadStaff(); }).catch((err) => toast(err.message, 'err'));
     }
+    if (e.target.id === 'plForm') { e.preventDefault(); plSave(e.target); return; }
     if (e.target.id === 'termForm') saveTerm(e);
     if (e.target.id === 'addStaff') {
       e.preventDefault();
