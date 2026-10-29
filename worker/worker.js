@@ -2379,6 +2379,18 @@ async function poeSubject(env, b, opts) {
 /** Students must connect Google before using the app: on unless the MIS Officer switched it off (and only when the server can keep Google sign-ins). */
 const requireGoogle = async (env) => googleReady(env) && (await getMeta(env, 'require_google')) !== '0';
 const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class_code).includes(cls) || u.class_code === cls);
+/* Every loading row across all terms, newest term first - the superset the public unit lookups and file-share
+ * targeting need. It is read on nearly every student/evidence request and scans the whole table, so cache it in
+ * KV keyed by the roster version (bumped on every loading or class change, so it never serves stale rows). With
+ * no KV it just reads D1 as before. This is the single biggest D1-read saving. */
+async function loadingAll(env) {
+  const v = (await kvGet(env, KV_MIRROR.roster_v)) || 'none';
+  const key = 'loadall:' + v;
+  if (kvOn(env)) { const hit = await kvGet(env, key, 'json'); if (hit) return hit; }
+  const rows = await all(env, `SELECT l.class_code, l.unit_code, l.unit_name, l.trainer_code, l.term_id FROM loading l LEFT JOIN terms t ON t.id=l.term_id ORDER BY t.start_date DESC`);
+  if (kvOn(env)) await kvPut(env, key, rows, KV_ROSTER_TTL);
+  return rows;
+}
 /** The class_code strings this student's lessons can carry: their own stream plus any merged/joint lesson code that
  *  includes it. Lets a lesson lookup use the class_code index instead of scanning every session. Loading (all terms)
  *  is the source of every code a session can carry, and classParts() is the same membership rule used elsewhere.
@@ -2399,8 +2411,8 @@ async function classCodesFor(env, cls) {
 async function classUnits(env, cls) {
   if (!cls) fail('Choose a class');
   // Every unit the class has had in any term (a unit can span terms): this term's first, then the earlier ones.
-  const [loading, url, now] = await many(env, [`SELECT l.class_code, l.unit_code, l.unit_name, l.term_id FROM loading l LEFT JOIN terms t ON t.id=l.term_id ORDER BY t.start_date DESC`],
-    ["SELECT value FROM meta WHERE key='drive_url'"], [TERM_SQL]);
+  const [url, now] = await many(env, ["SELECT value FROM meta WHERE key='drive_url'"], [TERM_SQL]);
+  const loading = await loadingAll(env);
   const activeId = now[0]?.id || '', seen = new Map(), units = [];
   for (const u of unitsForClass(loading, cls)) {
     const current = u.term_id === activeId, had = seen.get(u.unit_code);
@@ -2493,9 +2505,12 @@ async function readPlan(env, plan) {
 /** Who should see a student's file: the unit's trainer now (earlier ones are never removed), HODs, MIS Officers and
  *  the backup account. Only people who have connected Google in the staff app have an address to share with. */
 async function shareTargets(env, classCode, unitCode, ctx = {}) {
-  const [loading, staff, archive] = ctx.loading ? [ctx.loading, ctx.staff, ctx.archive] : await many(env,
-    ['SELECT l.class_code, l.unit_code, l.trainer_code, l.term_id FROM loading l LEFT JOIN terms t ON t.id=l.term_id ORDER BY t.start_date DESC'],
-    ["SELECT code, roles, email FROM staff WHERE active=1 AND email IS NOT NULL AND email<>''"], ["SELECT value FROM meta WHERE key='archive_email'"]);
+  let loading, staff, archive;
+  if (ctx.loading) { loading = ctx.loading; staff = ctx.staff; archive = ctx.archive; }
+  else {
+    [staff, archive] = await many(env, ["SELECT code, roles, email FROM staff WHERE active=1 AND email IS NOT NULL AND email<>''"], ["SELECT value FROM meta WHERE key='archive_email'"]);
+    loading = await loadingAll(env);
+  }
   Object.assign(ctx, { loading, staff, archive });
   const byCode = new Map(staff.map((s) => [lower(s.code), s]));
   // The trainer this term; if the unit is not taught this term, whoever had it last.
@@ -2548,8 +2563,8 @@ const STUDENT_ACTIONS = {
     const item = String(b.item || '').toUpperCase();
     if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
     if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
-    const [loading, ver, url] = await many(env, [`SELECT l.unit_code, l.unit_name, l.class_code FROM loading l LEFT JOIN terms t ON t.id=l.term_id WHERE l.unit_code=? ORDER BY t.start_date DESC`, String(b.unitCode || '')],
-      ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item], ["SELECT value FROM meta WHERE key='drive_url'"]);
+    const [ver, url] = await many(env, ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item], ["SELECT value FROM meta WHERE key='drive_url'"]);
+    const loading = (await loadingAll(env)).filter((u) => u.unit_code === String(b.unitCode || ''));
     const unit = unitsForClass(loading, t.class_code)[0];
     if (!unit) fail('That unit has not been taught to your class');
     if (!url[0]) fail('Evidence uploads are not switched on yet (the Google Drive link is not set up). Your scan is kept on this phone.');
@@ -2592,8 +2607,8 @@ const STUDENT_ACTIONS = {
     const item = String(b.item || '').toUpperCase();
     if (!ITEMS.includes(item)) fail('Choose CAT1–CAT4 or PRAC1–PRAC3');
     if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB. Scan fewer pages or use the Document filter.');
-    const [loading, ver] = await many(env, [`SELECT l.unit_code, l.unit_name, l.class_code FROM loading l LEFT JOIN terms t ON t.id=l.term_id WHERE l.unit_code=? ORDER BY t.start_date DESC`, String(b.unitCode || '')],
-      ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item]);
+    const ver = await many(env, ['SELECT MAX(version) AS v FROM evidence WHERE adm_no=? AND unit_code=? AND item=?', t.adm_no, String(b.unitCode || ''), item]).then((r) => r[0]);
+    const loading = (await loadingAll(env)).filter((u) => u.unit_code === String(b.unitCode || ''));
     const unit = unitsForClass(loading, t.class_code)[0];
     if (!unit) fail('That unit has not been taught to your class');
     const v = (Number(ver[0]?.v) || 0) + 1, unitName = unit.unit_name || unit.unit_code;
@@ -2861,7 +2876,7 @@ async function evidenceFor(env, id, me, decide) {
   if (!ok && !decide) ok = await verifiesEvidence(env, me, r);
   if (!ok && decide && !unitsForClass(loading.filter((u) => u.unit_code === r.unit_code), r.class_code).length) {
     // The unit is not taught this term (it has ended or pauses): the trainer who had it last decides.
-    const past = await all(env, 'SELECT l.class_code, l.trainer_code FROM loading l LEFT JOIN terms t ON t.id=l.term_id WHERE l.unit_code=? ORDER BY t.start_date DESC', r.unit_code);
+    const past = (await loadingAll(env)).filter((u) => u.unit_code === r.unit_code);
     const last = unitsForClass(past, r.class_code)[0];
     ok = !!last && lower(last.trainer_code) === lower(me.code);
   }
