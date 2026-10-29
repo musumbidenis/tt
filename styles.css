@@ -833,6 +833,10 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 #tab-reports.marks-mode #marksCard { display: block; }
 #tab-reports.marks-mode > :not(#reportMode):not(.report-filters):not(#marksCard) { display: none !important; }
 #tab-reports.marks-mode .report-filters label:last-child { display: none; }
+/* Absences: its own Report(s) section - only the mode switcher and the absences view show. */
+#alerts { display: none; }
+#tab-reports.absences-mode #alerts { display: block; }
+#tab-reports.absences-mode > :not(#reportMode):not(#alerts) { display: none !important; }
 .marks-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
 .marks-head h2 { margin: 0; }
 .marks-head p { margin: .2rem 0 0; }

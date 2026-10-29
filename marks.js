@@ -404,6 +404,7 @@ const Marks = (() => {
     state.reportMode = mode;
     $$('#reportMode [data-rmode]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.rmode === mode)));
     $('#tab-reports').classList.toggle('marks-mode', mode === 'marks');
+    $('#tab-reports').classList.toggle('absences-mode', mode === 'absences');
     renderReport();
   }
   return { render, wire, syncAll, setMode, state: ms, footerOf, dataFor, xlsxFor, printHtml };

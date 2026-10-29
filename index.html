@@ -160,6 +160,7 @@
     <div id="reportMode" class="view-tabs report-mode" role="group" aria-label="Show">
       <button type="button" data-rmode="attendance" aria-pressed="true">Attendance</button>
       <button type="button" data-rmode="marks" aria-pressed="false">Marks</button>
+      <button type="button" data-rmode="absences" aria-pressed="false" hidden>Absences</button>
     </div>
     <div class="card filters report-filters">
       <label id="rTermBox" hidden>Term<select id="rTerm" aria-label="Term"></select></label>
@@ -196,9 +197,11 @@
       <button class="btn ghost" id="printQR" disabled title="Not available right now">Print QR ID cards</button>
     </div>
 
+    <!-- ABSENCES (HOD and MIS Officer): its own Report(s) section - students who have missed more than the limit -->
+    <div id="alerts"></div>
   </section>
 
-  <!-- POE: students' evidence. POE stats and Absences are hosted inside this tab as sections (see poe-staff.js). -->
+  <!-- POE: students' evidence. POE stats is hosted inside this tab as a section (see poe-staff.js). -->
   <section id="tab-poe" class="tab"><div id="poe"></div></section>
 
   <!-- TOOLS (trainers and HODs): professional tools, coming soon -->

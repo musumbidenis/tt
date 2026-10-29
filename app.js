@@ -1155,6 +1155,7 @@ async function reportSource(classCode, unitCode) {
 }
 
 async function renderReport() {
+  if (state.reportMode === 'absences') return window.Alerts?.render();   // Absences is its own Report(s) section
   if (state.reportMode === 'marks') return Marks.render();
   const codes = reportCodes(), unitCode = $('#rUnit').value;
   const body = $('#reportBody');
@@ -2326,6 +2327,8 @@ function applyRoles() {
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
   $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
+  // Absences is a Report(s) section for the HOD and MIS Officer only.
+  const absBtn = $('#reportMode [data-rmode="absences"]'); if (absBtn) absBtn.hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
   if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : $('.tabs button[data-tab="reports"]').hidden ? 'poe' : 'reports');
   renderIdentity();
