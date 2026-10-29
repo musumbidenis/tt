@@ -2771,15 +2771,18 @@ async function trainerList(env) {
 /** Per class-unit stats for a set of loading rows (one row per class-unit a trainer teaches). */
 async function poeStatsUnits(env, rows) {
   if (!rows.length) return { classes: [], detail: {} };
-  const allClasses = new Set(), pairKeys = new Set(), evOr = [], evParams = [];
+  // All-trainers can span hundreds of class-units, so bind the classes and units as two JSON arrays (two
+  // variables, not two per pair, which overflowed SQLite's ~999-variable limit) and keep only the real pairs.
+  const allClasses = new Set(), allUnits = new Set(), pairKeys = new Set();
   for (const r of rows) for (const c of classParts(r.class_code)) {
-    allClasses.add(c);
-    const k = lower(c) + '|' + lower(r.unit_code);
-    if (!pairKeys.has(k)) { pairKeys.add(k); evOr.push('(class_code=? AND unit_code=?)'); evParams.push(c, r.unit_code); }
+    allClasses.add(c); allUnits.add(r.unit_code); pairKeys.add(lower(c) + '|' + lower(r.unit_code));
   }
-  const [roster, ev] = await many(env,
+  const [roster, evRaw] = await many(env,
     [`SELECT adm_no, name, class_code FROM trainees WHERE status='active' AND class_code IN (SELECT value FROM json_each(?))`, JSON.stringify([...allClasses])],
-    [`SELECT class_code, unit_code, adm_no, status FROM evidence WHERE replaced_at IS NULL AND (${evOr.join(' OR ')})`, ...evParams]);
+    [`SELECT class_code, unit_code, adm_no, status FROM evidence WHERE replaced_at IS NULL
+        AND class_code IN (SELECT value FROM json_each(?1)) AND unit_code IN (SELECT value FROM json_each(?2))`,
+      JSON.stringify([...allClasses]), JSON.stringify([...allUnits])]);
+  const ev = evRaw.filter((e) => pairKeys.has(lower(e.class_code) + '|' + lower(e.unit_code)));
   const rosterByClass = new Map();
   for (const t of roster) { const ck = lower(t.class_code); if (!rosterByClass.has(ck)) rosterByClass.set(ck, []); rosterByClass.get(ck).push(t); }
   const cell = new Map();   // class|unit|adm -> counts
