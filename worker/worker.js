@@ -2384,8 +2384,11 @@ const unitsForClass = (loading, cls) => loading.filter((u) => classParts(u.class
  * KV keyed by the roster version (bumped on every loading or class change, so it never serves stale rows). With
  * no KV it just reads D1 as before. This is the single biggest D1-read saving. */
 async function loadingAll(env) {
-  const v = (await kvGet(env, KV_MIRROR.roster_v)) || 'none';
-  const key = 'loadall:' + v;
+  let v = await kvGet(env, KV_MIRROR.roster_v);
+  // The KV marker lasts only KV_META_TTL; once it lapses, read the real version from D1 (one tiny row) and put it
+  // back. Falling back to a constant key here would let an old cached list be served after the loading changed.
+  if (v === null && kvOn(env)) { v = await getMeta(env, 'roster_v'); if (v) await kvPut(env, KV_MIRROR.roster_v, v, KV_META_TTL); }
+  const key = 'loadall:' + (v || 'none');
   if (kvOn(env)) { const hit = await kvGet(env, key, 'json'); if (hit) return hit; }
   const rows = await all(env, `SELECT l.class_code, l.unit_code, l.unit_name, l.trainer_code, l.term_id FROM loading l LEFT JOIN terms t ON t.id=l.term_id ORDER BY t.start_date DESC`);
   if (kvOn(env)) await kvPut(env, key, rows, KV_ROSTER_TTL);
