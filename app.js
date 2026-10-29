@@ -2312,10 +2312,9 @@ function switchTab(name) {
   state.tabSeq = (state.tabSeq || 0) + 1;
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
-  if (name === 'reports') { renderReport(); window.Alerts?.render(); }   // Absences lives under Report(s), as its last section
+  if (name === 'reports') renderReport();   // Absences moved to the POE tab (a section after Trainer POE)
   if (name === 'manage') window.Admin?.render();
   if (name === 'poe') PoeStaff.render();
-  if (name === 'poestats') PoeStats.render();
   if (name === 'me') { renderDbInfo(); renderMe(); }
 }
 
@@ -2327,8 +2326,6 @@ function applyRoles() {
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
   $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
-  // POE Statistics: every staff role except an EAO-only visitor.
-  $('.tabs button[data-tab="poestats"]').hidden = !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
   if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : $('.tabs button[data-tab="reports"]').hidden ? 'poe' : 'reports');
   renderIdentity();

@@ -17,6 +17,7 @@ const PoeStaff = (() => {
   const visitorOnly = () => hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   const canDecide = () => hasRole('TRAINER') || hasRole('HOD');
   const trainerPoeAllowed = () => hasRole('TRAINER') || hasRole('HOD') || hasRole('MIS') || hasRole('IAO') || hasRole('EAO');
+  const absencesAllowed = () => hasRole('HOD') || hasRole('MIS');   // the Absences section (same as the old Report(s) one)
 
   /** Until this person has connected Google (once), a card at the top of the tab: students' documents open with it. */
   const connectCard = () => (typeof Google !== 'undefined' && Google.on() && !Google.connected('staff')
@@ -39,6 +40,7 @@ const PoeStaff = (() => {
     if (!me()) return;
     if (!ps.status) ps.status = 'submitted';
     if (visitorOnly() && ps.mode !== 'trainer') ps.mode = 'verify';
+    if (ps.mode === 'absences' && !absencesAllowed()) ps.mode = 'unit';
     if (!navigator.onLine) {
       box().innerHTML = '<div class="card notice"><h2>Evidence needs internet</h2><p>The students\' files are in the college Google Drive. Connect to review them.</p></div>';
       return;
@@ -87,10 +89,15 @@ const PoeStaff = (() => {
     : `<div class="view-tabs poe-mode" role="group" aria-label="View">
       <button type="button" data-mode="unit" aria-pressed="${ps.mode === 'unit'}">Evidence</button>
       ${trainerPoeAllowed() ? `<button type="button" data-mode="trainer" aria-pressed="${ps.mode === 'trainer'}">Trainer POE</button>` : ''}
+      <button type="button" data-mode="stats" aria-pressed="${ps.mode === 'stats'}">POE stats</button>
+      ${absencesAllowed() ? `<button type="button" data-mode="absences" aria-pressed="${ps.mode === 'absences'}">Absences</button>` : ''}
       <button type="button" data-mode="verify" aria-pressed="${ps.mode === 'verify'}">Verification</button></div>`);
   function draw() {
     if (ps.mode === 'verify') return Verify.render(box(), modeToggle());
     if (ps.mode === 'trainer' && trainerPoeAllowed()) return PoeTrainer.render(box(), modeToggle());
+    // POE statistics and Absences are self-contained modules; host each under the mode toggle, in its own box.
+    if (ps.mode === 'stats') { box().innerHTML = modeToggle() + '<div id="poestats"></div>'; PoeStats.render(); return; }
+    if (ps.mode === 'absences' && absencesAllowed()) { box().innerHTML = modeToggle() + '<div id="alerts"></div>'; Alerts.render(); return; }
     const all = ps.list, counts = { submitted: 0, approved: 0, returned: 0 };
     for (const e of latestOnly()) counts[e.status] = (counts[e.status] || 0) + 1;
     const chips = [['submitted', canDecide() ? 'To review' : 'With trainers'], ['approved', 'Approved'], ['returned', 'Returned'], ['', 'All']]
