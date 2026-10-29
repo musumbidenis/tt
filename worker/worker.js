@@ -2842,7 +2842,7 @@ async function poeStatsAll(env) {
   }
   const out = [...classes.values()].map((c) => {
     const info = classBy.get(lower(c.classCode)) || {};
-    return { classCode: c.classCode, misClass: info.mis_class || '', name: info.name || '',
+    return { key: c.classCode, classCode: c.classCode, misClass: info.mis_class || '', name: info.name || '',
       students: c.students, submitted: c.submitted, notSubmitted: c.students - c.submitted,
       pct: c.students ? Math.round((c.submitted / c.students) * 100) : 0,
       units: c.units, items: c.items, pending: c.pending, approved: c.approved, returned: c.returned };
