@@ -478,6 +478,7 @@ const ACTIONS = {
   staff: { role: ['MIS'], fn: (env) => listStaff(env) },
   updateStaff: { role: ['MIS'], fn: (env, b, me) => updateStaff(env, b, me) },
   poeList: { fn: (env, b, me) => poeList(env, b, me) },
+  poeStats: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env) => poeStats(env) },
   poeView: { fn: (env, b, me) => poeView(env, b, me) },
   poeChanged: { fn: (env, b, me) => poeChanged(env, b, me) },
   setGoogle: { fn: (env, b, me) => setGoogle(env, b, me) },
@@ -672,7 +673,7 @@ const NUDGE_ACTIONS = new Set(['push', 'deleteSessions', 'marksPush', 'msSubmit'
 // Heavy, non-urgent admin and reporting reads that stand aside only in the hard budget band, so the
 // live path (marking attendance, pulse, roster, check-ins, marks) keeps its remaining read allowance.
 const SHEDDABLE = new Set(['sessionList', 'verifyData', 'verifyPool', 'msList', 'candidates',
-  'absences', 'students', 'phones', 'poeList', 'poeClass', 'tpoeList', 'tpoeGrants', 'poeLinks']);
+  'absences', 'students', 'phones', 'poeList', 'poeStats', 'poeClass', 'tpoeList', 'tpoeGrants', 'poeLinks']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -2738,6 +2739,50 @@ async function poeList(env, b, me) {
   const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
   const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(me.code))?.[1] || '';
   return { ok: true, evidence: list.map(evidenceOut), marks: await marksFor(env, list), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
+}
+/* POE Statistics: who has submitted and who has not, per class and per student. Aggregated in SQL in one
+ * trip (no full evidence pull) so a department-wide view stays cheap on D1 reads. "Submitted" = a student
+ * has at least one current (not replaced) evidence item in a unit. Verification: submitted = still to check,
+ * approved = verified, returned = sent back. Seen by every staff role except an EAO (an external visitor). */
+async function poeStats(env) {
+  const [roster, ev, unitRows, classRows] = await many(env,
+    ["SELECT adm_no, name, class_code FROM trainees WHERE status='active'"],
+    [`SELECT class_code, adm_no, COUNT(DISTINCT unit_code) AS units,
+        SUM(CASE WHEN status='submitted' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN status='approved'  THEN 1 ELSE 0 END) AS approved,
+        SUM(CASE WHEN status='returned'  THEN 1 ELSE 0 END) AS returned,
+        COUNT(*) AS items
+      FROM evidence WHERE replaced_at IS NULL GROUP BY class_code, adm_no`],
+    ['SELECT class_code, COUNT(*) AS n FROM units GROUP BY class_code'],
+    ['SELECT code, name, mis_class FROM classes']);
+  // Each submitting student's evidence, keyed by class|adm, so the roster can be told apart from who submitted.
+  const evBy = new Map();
+  for (const e of ev) evBy.set(lower(e.class_code) + '|' + lower(e.adm_no), e);
+  const unitsBy = new Map(unitRows.map((u) => [lower(u.class_code), u.n]));
+  const classBy = new Map(classRows.map((c) => [lower(c.code), c]));
+  // Build per-class totals and the per-student detail from the active roster (the "who has not submitted" list).
+  const classes = new Map();
+  const detail = {};
+  const blank = () => ({ students: 0, submitted: 0, items: 0, pending: 0, approved: 0, returned: 0, units: 0 });
+  for (const t of roster) {
+    const ck = lower(t.class_code);
+    if (!classes.has(ck)) classes.set(ck, { classCode: t.class_code, ...blank(), units: unitsBy.get(ck) || 0 });
+    const c = classes.get(ck);
+    const e = evBy.get(ck + '|' + lower(t.adm_no));
+    c.students++;
+    const row = { admNo: t.adm_no, name: t.name || t.adm_no, submitted: !!e,
+      units: e ? e.units : 0, pending: e ? e.pending : 0, approved: e ? e.approved : 0, returned: e ? e.returned : 0, items: e ? e.items : 0 };
+    if (e) { c.submitted++; c.items += e.items; c.pending += e.pending; c.approved += e.approved; c.returned += e.returned; }
+    (detail[t.class_code] = detail[t.class_code] || []).push(row);
+  }
+  const out = [...classes.values()].map((c) => {
+    const info = classBy.get(lower(c.classCode)) || {};
+    return { classCode: c.classCode, misClass: info.mis_class || '', name: info.name || '',
+      students: c.students, submitted: c.submitted, notSubmitted: c.students - c.submitted,
+      pct: c.students ? Math.round((c.submitted / c.students) * 100) : 0,
+      units: c.units, items: c.items, pending: c.pending, approved: c.approved, returned: c.returned };
+  }).sort((a, b) => a.classCode.localeCompare(b.classCode));
+  return { ok: true, classes: out, detail, generatedAt: nowIso() };
 }
 async function evidenceFor(env, id, me, decide) {
   const r = await one(env, 'SELECT * FROM evidence WHERE id=?', String(id || ''));
