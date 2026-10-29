@@ -478,7 +478,7 @@ const ACTIONS = {
   staff: { role: ['MIS'], fn: (env) => listStaff(env) },
   updateStaff: { role: ['MIS'], fn: (env, b, me) => updateStaff(env, b, me) },
   poeList: { fn: (env, b, me) => poeList(env, b, me) },
-  poeStats: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env) => poeStats(env) },
+  poeStats: { role: ['TRAINER', 'HOD', 'MIS', 'IAO'], fn: (env, b, me) => poeStats(env, me, b) },
   poeView: { fn: (env, b, me) => poeView(env, b, me) },
   poeChanged: { fn: (env, b, me) => poeChanged(env, b, me) },
   setGoogle: { fn: (env, b, me) => setGoogle(env, b, me) },
@@ -2744,7 +2744,72 @@ async function poeList(env, b, me) {
  * trip (no full evidence pull) so a department-wide view stays cheap on D1 reads. "Submitted" = a student
  * has at least one current (not replaced) evidence item in a unit. Verification: submitted = still to check,
  * approved = verified, returned = sent back. Seen by every staff role except an EAO (an external visitor). */
-async function poeStats(env) {
+/* POE statistics, scoped to who is asking:
+ *  - HOD / MIS / IAO: the whole department, per class (the default), and may also ask for one trainer's units
+ *    (b.trainer = a staff code) or every trainer's units (b.trainer = 'all'), which is mainly for export.
+ *  - a trainer: only the class-units they are loaded to teach this term, per unit - what they must review.
+ * Per-unit rows carry the trainer, class and unit; each row's detail lists the roster so "not submitted" shows. */
+async function poeStats(env, me, b) {
+  b = b || {};
+  if (!seesAll(me)) {
+    const loading = await all(env, `SELECT class_code, unit_code, unit_name, trainer_code, trainer_name FROM loading WHERE term_id=${ACTIVE_TERM} AND lower(trainer_code)=lower(?)`, me.code);
+    return { ok: true, scope: 'trainer', ...(await poeStatsUnits(env, loading)), generatedAt: nowIso() };
+  }
+  if (b.trainer) {
+    const loading = b.trainer === 'all'
+      ? await all(env, `SELECT class_code, unit_code, unit_name, trainer_code, trainer_name FROM loading WHERE term_id=${ACTIVE_TERM} AND trainer_code IS NOT NULL AND trainer_code<>''`)
+      : await all(env, `SELECT class_code, unit_code, unit_name, trainer_code, trainer_name FROM loading WHERE term_id=${ACTIVE_TERM} AND lower(trainer_code)=lower(?)`, b.trainer);
+    return { ok: true, scope: 'trainer', byTrainer: b.trainer, trainers: await trainerList(env), ...(await poeStatsUnits(env, loading)), generatedAt: nowIso() };
+  }
+  return { ...(await poeStatsAll(env)), trainers: await trainerList(env) };
+}
+/** The trainers loaded this term, for the HOD/MIS/IAO picker. */
+async function trainerList(env) {
+  const rows = await all(env, `SELECT DISTINCT trainer_code AS code, trainer_name AS name FROM loading WHERE term_id=${ACTIVE_TERM} AND trainer_code IS NOT NULL AND trainer_code<>'' ORDER BY trainer_name`);
+  return rows.map((r) => ({ code: r.code, name: r.name || r.code }));
+}
+/** Per class-unit stats for a set of loading rows (one row per class-unit a trainer teaches). */
+async function poeStatsUnits(env, rows) {
+  if (!rows.length) return { classes: [], detail: {} };
+  const allClasses = new Set(), pairKeys = new Set(), evOr = [], evParams = [];
+  for (const r of rows) for (const c of classParts(r.class_code)) {
+    allClasses.add(c);
+    const k = lower(c) + '|' + lower(r.unit_code);
+    if (!pairKeys.has(k)) { pairKeys.add(k); evOr.push('(class_code=? AND unit_code=?)'); evParams.push(c, r.unit_code); }
+  }
+  const [roster, ev] = await many(env,
+    [`SELECT adm_no, name, class_code FROM trainees WHERE status='active' AND class_code IN (SELECT value FROM json_each(?))`, JSON.stringify([...allClasses])],
+    [`SELECT class_code, unit_code, adm_no, status FROM evidence WHERE replaced_at IS NULL AND (${evOr.join(' OR ')})`, ...evParams]);
+  const rosterByClass = new Map();
+  for (const t of roster) { const ck = lower(t.class_code); if (!rosterByClass.has(ck)) rosterByClass.set(ck, []); rosterByClass.get(ck).push(t); }
+  const cell = new Map();   // class|unit|adm -> counts
+  for (const e of ev) {
+    const k = lower(e.class_code) + '|' + lower(e.unit_code) + '|' + lower(e.adm_no);
+    const o = cell.get(k) || { pending: 0, approved: 0, returned: 0, items: 0 };
+    o.items++; if (e.status === 'submitted') o.pending++; else if (e.status === 'approved') o.approved++; else if (e.status === 'returned') o.returned++;
+    cell.set(k, o);
+  }
+  const classes = [], detail = {};
+  for (const r of rows) {
+    const parts = classParts(r.class_code), seen = new Set(), rosterR = [];
+    for (const c of parts) for (const t of (rosterByClass.get(lower(c)) || [])) { if (!seen.has(lower(t.adm_no))) { seen.add(lower(t.adm_no)); rosterR.push(t); } }
+    let submitted = 0, pending = 0, approved = 0, returned = 0, items = 0;
+    const list = rosterR.map((t) => {
+      let agg = null;
+      for (const c of parts) { const e = cell.get(lower(c) + '|' + lower(r.unit_code) + '|' + lower(t.adm_no)); if (e) { agg = agg || { pending: 0, approved: 0, returned: 0, items: 0 }; agg.pending += e.pending; agg.approved += e.approved; agg.returned += e.returned; agg.items += e.items; } }
+      const sub = !!agg; if (sub) { submitted++; pending += agg.pending; approved += agg.approved; returned += agg.returned; items += agg.items; }
+      return { admNo: t.adm_no, name: t.name || t.adm_no, submitted: sub, units: sub ? 1 : 0, pending: agg ? agg.pending : 0, approved: agg ? agg.approved : 0, returned: agg ? agg.returned : 0, items: agg ? agg.items : 0 };
+    });
+    const key = [r.trainer_code || '', r.class_code, r.unit_code].join('|');
+    detail[key] = list;
+    classes.push({ key, classCode: r.class_code, unitCode: r.unit_code, unitName: r.unit_name || r.unit_code, trainerCode: r.trainer_code || '', trainerName: r.trainer_name || '',
+      students: rosterR.length, submitted, notSubmitted: rosterR.length - submitted, pct: rosterR.length ? Math.round((submitted / rosterR.length) * 100) : 0,
+      units: 1, items, pending, approved, returned });
+  }
+  classes.sort((a, b) => (a.trainerName || '').localeCompare(b.trainerName || '') || a.classCode.localeCompare(b.classCode) || String(a.unitName).localeCompare(String(b.unitName)));
+  return { classes, detail };
+}
+async function poeStatsAll(env) {
   const [roster, ev, unitRows, classRows] = await many(env,
     ["SELECT adm_no, name, class_code FROM trainees WHERE status='active'"],
     [`SELECT class_code, adm_no, COUNT(DISTINCT unit_code) AS units,
@@ -2782,7 +2847,7 @@ async function poeStats(env) {
       pct: c.students ? Math.round((c.submitted / c.students) * 100) : 0,
       units: c.units, items: c.items, pending: c.pending, approved: c.approved, returned: c.returned };
   }).sort((a, b) => a.classCode.localeCompare(b.classCode));
-  return { ok: true, classes: out, detail, generatedAt: nowIso() };
+  return { ok: true, scope: 'all', classes: out, detail, generatedAt: nowIso() };
 }
 async function evidenceFor(env, id, me, decide) {
   const r = await one(env, 'SELECT * FROM evidence WHERE id=?', String(id || ''));

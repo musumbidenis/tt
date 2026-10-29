@@ -1443,3 +1443,9 @@ details.vcard > :last-child { margin-bottom: 1rem; }
 .ps-drill { padding: .4rem .6rem .8rem; }
 .ps-drill table { margin: 0; background: var(--surface); }
 tr.ps-no td { color: var(--muted); }
+
+/* POE stats: a smaller "only with gaps" toggle, and the HOD/MIS/IAO trainer picker. */
+.chk.small { font-size: .78rem; }
+.chk.small input { transform: scale(.85); transform-origin: left center; }
+.stats-who { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; color: var(--ink-2); }
+.stats-who select { font: inherit; padding: .3rem .4rem; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); }
