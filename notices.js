@@ -7,7 +7,7 @@
 'use strict';
 
 const Notices = (() => {
-  const ns = { inbox: [], sent: [], unread: 0, tab: 'inbox', opts: null, at: 0 };
+  const ns = { inbox: [], sent: [], unread: 0, tab: 'inbox', opts: null, at: 0, host: null, inTab: false };
   const canSend = () => ['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   const TEMPLATES = [
     ['', 'Write my own'],
@@ -27,7 +27,7 @@ const Notices = (() => {
     const r = await api('myNotices', read?.length ? { read } : {});
     if (!r.ok) throw new Error(r.error);
     Object.assign(ns, { inbox: r.inbox, sent: r.sent, unread: r.unread, at: Date.now() });
-    badge();
+    badge(); renderBanner();
   }
   /** On sign-in, and now and then while the app is open. */
   async function tick() { if (Date.now() - ns.at > 5 * 60e3) { try { await refresh(); } catch { /* next time */ } } }
@@ -35,6 +35,7 @@ const Notices = (() => {
 
   async function open() {
     const d = $('#noticeDialog');
+    ns.host = $('#noticeBody'); ns.inTab = false;
     draw('<p class="muted">Loading messages…</p>');
     if (!d.open) d.showModal();
     if (!navigator.onLine) { draw('<div class="notice"><h2>Messages need internet</h2><p class="muted">Connect and open this again.</p></div>'); return; }
@@ -45,8 +46,9 @@ const Notices = (() => {
       if (unread.length) refresh(unread).then(() => { for (const n of ns.inbox) n.read = true; }).catch(() => {});
     } catch (e) { draw(`<p class="err-text">${esc(e.message)}</p>`); }
   }
+  const host = () => ns.host || $('#noticeBody');
   const draw = (inner) => {
-    $('#noticeBody').innerHTML = `<div class="nt-top"><div class="scan-head"><strong>Messages</strong><button type="button" class="btn small ghost" data-nclose>Close</button></div>
+    host().innerHTML = `<div class="nt-top"><div class="scan-head"><strong>Messages</strong>${ns.inTab ? '' : '<button type="button" class="btn small ghost" data-nclose>Close</button>'}</div>
       <div class="view-tabs" role="group" aria-label="Show"><button type="button" data-ntab="inbox" aria-pressed="${ns.tab === 'inbox'}">Inbox${ns.unread ? ` (${ns.unread})` : ''}</button>
       ${canSend() ? `<button type="button" data-ntab="sent" aria-pressed="${ns.tab === 'sent'}">Sent</button><button type="button" data-ntab="new" aria-pressed="${ns.tab === 'new'}">New message</button>` : ''}</div></div>
       <div class="nt-scroll">${inner}</div>`;
@@ -110,7 +112,7 @@ const Notices = (() => {
       const r = await api('noticeAck', { id });
       if (!r.ok) throw new Error(r.error);
       const n = ns.inbox.find((x) => x.id === id); if (n) n.acked = true;
-      draw(body()); toast('Confirmed - thank you', 'ok');
+      if (ns.host) draw(body()); renderBanner(); toast('Confirmed - thank you', 'ok');
     } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
   }
   async function loadOpts() {
@@ -131,10 +133,38 @@ const Notices = (() => {
       ns.tab = 'sent'; await refresh(); draw(body());
     } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
   }
+  /** The same Messages UI, hosted in the Notice Board tab instead of the bell's dialog. */
+  async function renderTab(el) {
+    ns.host = el; ns.inTab = true;
+    if (!me()) { draw('<p class="muted">Sign in to see messages.</p>'); return; }
+    draw('<p class="muted">Loading messages…</p>');
+    if (!navigator.onLine) { draw('<div class="notice"><h2>Messages need internet</h2><p class="muted">Connect and open this again.</p></div>'); return; }
+    try {
+      await refresh();
+      const unread = ns.inbox.filter((n) => !n.read).map((n) => n.id);
+      draw(body());
+      if (unread.length) refresh(unread).then(() => { for (const n of ns.inbox) n.read = true; }).catch(() => {});
+    } catch (e) { draw(`<p class="err-text">${esc(e.message)}</p>`); }
+  }
+  /** A pinned notice that asks for action stays at the very top of the app until this reader confirms it
+   *  (pinnedUntil, if set, is only a hard safeguard). Rendered from the inbox already fetched - no extra read. */
+  const bannerActive = (n) => n.board && n.needAck && !n.acked && (!n.pinnedUntil || n.pinnedUntil >= todayISO());
+  function renderBanner() {
+    const el = $('#boardBanner'); if (!el) return;
+    const items = (ns.inbox || []).filter(bannerActive);
+    el.hidden = !items.length;
+    el.innerHTML = items.map((n) => `<div class="board-pin${n.priority === 'urgent' ? ' urgent' : ''}">
+      <div class="bp-text"><span class="board-tag${n.priority === 'urgent' ? ' urgent' : ''}">${n.priority === 'urgent' ? 'Urgent' : 'Notice'}</span>
+      <b>${esc(n.title)}</b><p>${esc(n.body)}</p><small class="muted">From ${esc(n.from)}</small></div>
+      <button type="button" class="btn small primary bp-ack" data-nack="${esc(n.id)}">I have read this</button></div>`).join('');
+  }
   function wire() {
-    $('#bellBtn').addEventListener('click', open);
+    $('#bellBtn').addEventListener('click', () => {
+      const tabBtn = $('.tabs button[data-tab="board"]');   // posting roles get the full tab; others the quick dialog
+      if (tabBtn && !tabBtn.hidden) switchTab('board'); else open();
+    });
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('#noticeDialog')) return;
+      if (!e.target.closest('#noticeDialog, #board, #boardBanner')) return;
       if (e.target.closest('[data-nclose]')) { $('#noticeDialog').close(); return; }
       const t = e.target.closest('[data-ntab]'); if (t) { ns.tab = t.dataset.ntab; draw(body()); return; }
       const ack = e.target.closest('[data-nack]'); if (ack) { confirmRead(ack.dataset.nack, ack); return; }
@@ -155,5 +185,5 @@ const Notices = (() => {
     document.addEventListener('submit', (e) => { if (e.target.id === 'noticeForm') { e.preventDefault(); send(e.target); } });
   }
   const reset = () => { Object.assign(ns, { inbox: [], sent: [], unread: 0, tab: 'inbox', opts: null, at: 0 }); badge(); };
-  return { wire, refresh, tick, show, reset, state: ns };
+  return { wire, refresh, tick, show, reset, renderTab, renderBanner, state: ns };
 })();

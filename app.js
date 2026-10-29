@@ -2316,6 +2316,7 @@ function switchTab(name) {
   if (name === 'reports') renderReport();   // Absences moved to the POE tab (a section after Trainer POE)
   if (name === 'manage') window.Admin?.render();
   if (name === 'poe') PoeStaff.render();
+  if (name === 'board') Notices.renderTab($('#board'));
   if (name === 'me') { renderDbInfo(); renderMe(); }
 }
 
@@ -2325,6 +2326,8 @@ function applyRoles() {
   $('.tabs button[data-tab="mark"]').hidden = !marks;
   $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
+  // Notice Board: the staff who may post (everyone but an EAO visitor). Others still get messages via the bell.
+  $('.tabs button[data-tab="board"]').hidden = !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
   $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   // Absences is a Report(s) section for the HOD and MIS Officer only.

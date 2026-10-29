@@ -1449,3 +1449,12 @@ tr.ps-no td { color: var(--muted); }
 .chk.small input { transform: scale(.85); transform-origin: left center; }
 .stats-who { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; color: var(--ink-2); }
 .stats-who select { font: inherit; padding: .3rem .4rem; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); }
+
+/* Notice Board: a pinned notice that needs action sits at the very top of the app until the reader confirms. */
+#boardBanner { display: flex; flex-direction: column; gap: .5rem; margin-bottom: .75rem; }
+.board-pin { display: flex; gap: .75rem; align-items: center; justify-content: space-between; padding: .7rem .9rem; border-radius: 12px; background: var(--p-soft); border: 1px solid color-mix(in srgb, var(--p) 55%, var(--line)); }
+.board-pin.urgent { background: var(--a-soft); border-color: color-mix(in srgb, var(--a) 55%, var(--line)); }
+.board-pin .bp-text { min-width: 0; }
+.board-pin .bp-text b { display: block; font-size: .95rem; }
+.board-pin .bp-text p { margin: .15rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.board-pin .bp-ack { flex: none; }
