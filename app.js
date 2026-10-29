@@ -1622,8 +1622,17 @@ function mergeDocs(a, b) {
   out.createdAt = [a.createdAt, b.createdAt].filter(Boolean).sort()[0] || '';
   return out;
 }
-const sameRegister = (a, b) => JSON.stringify([Object.entries(a.marks || {}).sort(), a.notes || ''])
-  === JSON.stringify([Object.entries(b.marks || {}).sort(), b.notes || '']);
+const sameRegister = (a, b) => JSON.stringify([
+  Object.entries(a.marks || {}).sort(),
+  a.notes || '',
+  a.slots || 1, a.kind || 'lesson', a.period || '', a.date || '',
+  a.qr ? 'qr' : '', a.viaQr ? 'viaQr' : '', a.qrFolded ? 'qrFolded' : ''
+]) === JSON.stringify([
+  Object.entries(b.marks || {}).sort(),
+  b.notes || '',
+  b.slots || 1, b.kind || 'lesson', b.period || '', b.date || '',
+  b.qr ? 'qr' : '', b.viaQr ? 'viaQr' : '', b.qrFolded ? 'qrFolded' : ''
+]);
 /** Brings one register from the server into this device, combined with whatever this device has of it. */
 async function takeServerCopy(x) {
   if (!x?.sessionId) return false;

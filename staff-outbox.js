@@ -45,7 +45,7 @@
       notes: s.notes || '', createdAt: s.createdAt || '', updatedAt: s.updatedAt || '',
       edits: (s.editLog || []).length, counts: { P: c.P, A: c.A, L: c.L, E: c.E }, editLog: s.editLog || [], viaQr: s.viaQr || {},
       marks: Object.entries(s.marks || {}).filter(([, v]) => STATUSES[v])
-        .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo], at: s.marksAt?.[admNo] || '' })),
+        .map(([admNo, st]) => ({ admNo, name: s.names?.[admNo] || '', status: STATUSES[st], explicit: !!s.explicit?.[admNo], at: s.marksAt?.[admNo] || '', deviceId: s.deviceId || '' })),
       ...(s.qr ? { qr: { secret: s.qr.secret, intervals: s.qr.intervals } } : {}),
     };
   }

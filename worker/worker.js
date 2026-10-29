@@ -148,7 +148,8 @@ const DATA_MIGRATIONS = [
 
 /* ---------- small helpers ---------- */
 const nowIso = () => new Date().toISOString();
-const todayIso = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10); // Africa/Nairobi
+const EAT_OFFSET_MS = 3 * 3600e3; // East Africa Time (UTC+3), no DST
+const todayIso = () => new Date(Date.now() + EAT_OFFSET_MS).toISOString().slice(0, 10);
 const lower = (s) => String(s ?? '').trim().toLowerCase();
 class Fail extends Error { constructor(message, extra) { super(message); Object.assign(this, extra || {}); } }
 const fail = (message, extra) => { throw new Fail(message, extra); };
@@ -242,7 +243,7 @@ async function kvDel(env, ...keys) {
   try { if (env.CACHE) for (const k of keys) await env.CACHE.delete(k); } catch { /* best-effort */ }
 }
 const KV_META_TTL = 300;      // version markers: short, and refreshed on every write anyway
-const KV_STAFF_TTL = 300;     // a signed-in staff member's status; cleared at once on any staff write
+const KV_STAFF_TTL = 60;     // a signed-in staff member's status; cleared at once on any staff write
 const KV_ROSTER_TTL = 86400;  // a built roster; the key carries roster_v, so a change just makes a new key
 const KV_BUDGET_TTL = 60;     // how long a read of today's D1 total is trusted before re-reading it
 
@@ -1429,8 +1430,8 @@ function mergeRegisters(a, b) {
   const best = new Map();
   [older, newer].forEach((s, rank) => {
     for (const m of s.marks || []) {
-      const at = m.at || s.createdAt || '', k = lower(m.admNo), had = best.get(k);
-      if (!had || at > had.at || (at === had.at && rank >= had.rank)) best.set(k, { m: { ...m, at }, at, rank });
+      const at = m.at || s.createdAt || '', deviceId = m.deviceId || '', k = lower(m.admNo), had = best.get(k);
+      if (!had || at > had.at || (at === had.at && deviceId > had.deviceId)) best.set(k, { m: { ...m, at }, at, deviceId });
     }
   });
   const logs = new Map();
@@ -1439,13 +1440,21 @@ function mergeRegisters(a, b) {
   const counts = { P: 0, A: 0, L: 0, E: 0 };
   for (const m of marks) { const k = STATUS_CODE[m.status]; if (k) counts[k]++; }
   const created = [a.createdAt, b.createdAt].filter(Boolean).sort()[0] || '';
+  // Detect conflicts in non-mark fields
+  const conflictFields = ['slots', 'kind', 'title', 'period', 'date', 'qr', 'viaQr', 'qrFolded'];
+  const conflicts = conflictFields.filter((f) => JSON.stringify(a[f]) !== JSON.stringify(b[f]));
   return { ...older, ...newer, marks, counts, createdAt: created, updatedAt: newer.updatedAt || older.updatedAt || '',
     editLog: [...logs.values()].sort((x, y) => String(x.at).localeCompare(String(y.at))), edits: logs.size,
     viaQr: { ...(older.viaQr || {}), ...(newer.viaQr || {}) }, qrFolded: { ...(older.qrFolded || {}), ...(newer.qrFolded || {}) },
-    qr: newer.qr || older.qr, notes: newer.notes || older.notes || '' };
+    qr: newer.qr || older.qr, notes: newer.notes || older.notes || '', _conflicts: conflicts };
 }
 /** What a trainer sees of a register: whether the merged copy differs from the one a device sent. */
-const registerKey = (s) => JSON.stringify([(s.marks || []).map((m) => `${lower(m.admNo)}=${m.status}`).sort(), s.notes || '']);
+const registerKey = (s) => JSON.stringify([
+  (s.marks || []).map((m) => `${lower(m.admNo)}=${m.status}`).sort(),
+  s.notes || '',
+  s.slots || 1, s.kind || 'lesson', s.period || '', s.date || '',
+  s.qr ? 'qr' : '', s.viaQr ? 'viaQr' : '', s.qrFolded ? 'qrFolded' : ''
+]);
 
 /** Every register this trainer has on the server, a page at a time (in the order they reached it), for their other devices. */
 async function mySessions(env, b, me) {
@@ -1777,9 +1786,7 @@ async function verifyCode(c, s) {
   if (!inRange) {
     const lastEnd = intervals.reduce((m, iv) => Math.max(m, iv[1]), -Infinity);
     if (w <= lastEnd + 1) return false;
-    // Shown after the trainer's phone last uploaded: a genuine code for (about) right now is accepted at once.
-    const nowW = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
-    if (genuine && Math.abs(w - nowW) <= 3) return true;
+    // Trainer has not uploaded this lesson's QR intervals yet: cannot verify, mark pending.
     return null;
   }
   return genuine;
@@ -1817,13 +1824,15 @@ async function receiveCheckins(env, list) {
         const di = devById.get(c.deviceId), ai = devByAdm.get(lower(adm));
         if (di && lower(di.adm_no) !== lower(adm)) { status = 'rejected'; reason = 'device-other-student'; }
         else if (ai && ai.device_id !== c.deviceId) { status = 'rejected'; reason = 'student-other-device'; }
-        else {
-          // Normally registered at first login; a first submission from an unregistered phone registers it too.
-          const reg = { device_id: c.deviceId, adm_no: adm, name: t.name, class_code: t.class_code, registered_at: di?.registered_at || now, last_seen: now };
-          devWrites.set(c.deviceId, reg); devById.set(c.deviceId, reg); devByAdm.set(lower(adm), reg);
+        else if (!di) {
+          // Device not registered: student must use the register flow first (pick class + name).
+          status = 'rejected'; reason = 'device-not-registered';
+        } else {
           const v = await verifyCode({ sessionId: c.sessionId, w: row.w, token: row.code }, sessions.get(c.sessionId));
           status = v === null ? 'pending' : (v ? 'accepted' : 'rejected');
           if (v === false) reason = 'invalid-code';
+          // Update last_seen for registered device
+          devWrites.set(c.deviceId, { ...di, last_seen: now });
         }
       }
       if (!existing.has(id) || row.status !== status || row.reason !== reason) { Object.assign(row, { status, reason, updated_at: now }); ciWrites.push(row); existing.set(id, row); }
@@ -1959,7 +1968,7 @@ const BRIDGE_ACTIONS = {
  * a batch, and reports. It also reports the account's storage: from 80% the HOD and MIS Officer are warned, and at
  * 95% backups pause so the Drive never fills up halfway through. */
 const BACKUP_WARN = 0.8, BACKUP_STOP = 0.95, BACKUP_BATCH = 60, BACKUP_TRIES = 3;
-const nairobi = (iso) => new Date((iso ? Date.parse(iso) : Date.now()) + 3 * 3600e3);   // East Africa Time, no daylight saving
+const nairobi = (iso) => new Date((iso ? Date.parse(iso) : Date.now()) + EAT_OFFSET_MS);   // East Africa Time, no daylight saving
 const readJson = (v, d) => { try { return JSON.parse(v || '') || d; } catch { return d; } };
 function backupDue(plan, rep) {
   if (plan.nowAt && plan.nowAt > (rep.startedAt || '')) return true;
@@ -2902,7 +2911,7 @@ async function bulkTicket(env, b, me) {
   if (!url) fail('The Google Drive link is not set up yet');
   const run = String(b.run || todayIso()).replace(/[\/:*?"<>|]+/g, '-').slice(0, 80);
   await audit(env, me, 'reports in bulk', run);
-  return { ok: true, driveUrl: url, ticket: await signTicket(env, { k: 'bulk', run, by: me.name, exp: Date.now() + 3 * 3600e3 }) };
+  return { ok: true, driveUrl: url, ticket: await signTicket(env, { k: 'bulk', run, by: me.name, exp: Date.now() + EAT_OFFSET_MS }) };
 }
 /* ---------- Trainer POE: a trainer's own portfolio of evidence (schemes, lesson plans, papers, records) ----------
  * The attendance registers, marksheets and student evidence are gathered automatically from what the app already
