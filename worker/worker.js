@@ -3303,7 +3303,9 @@ async function poeLinkSave(env, b, me) {
   const benAdm = String(b.beneficiaryAdm || '').trim(), hostAdm = String(b.hostAdm || '').trim(), email = lower(String(b.email || '').trim());
   if (!benAdm || !hostAdm) fail('Choose the student and the classmate who will submit for them');
   if (lower(benAdm) === lower(hostAdm)) fail('A student cannot be their own POE host');
-  if (!okDomain(env, email)) fail(`Enter the student's college Google email (@${env.GOOGLE_DOMAIN})`);
+  // The email is optional: without it the host just submits and the files stay in the host's Drive (and the archive).
+  // With it, the host's files are shared to the beneficiary and copied into their own Drive (see the Drive bridge).
+  if (email && !okDomain(env, email)) fail(`That is not a college Google email (@${env.GOOGLE_DOMAIN}). Leave it blank if the student has none yet.`);
   const [ben, host] = await many(env, ['SELECT * FROM trainees WHERE adm_no=?', benAdm], ['SELECT * FROM trainees WHERE adm_no=?', hostAdm]);
   const b2 = ben[0], h2 = host[0];
   if (!b2 || !active(b2)) fail('That student is not on the class list');
