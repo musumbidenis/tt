@@ -552,9 +552,11 @@ const ACTIONS = {
 /* ---------- system health (MIS Officer only): requests, speed, errors and the free-plan limits ----------
  * Each running copy of the Worker counts its requests in memory and adds them to sys_stats about once a minute (one
  * database write then, not one per request). Rows read and written come from D1's own figures on every query.
- * Days are UTC days: Cloudflare's daily limits reset at 00:00 UTC (03:00 in Nairobi). On the Free plan D1 refuses
- * queries once a daily limit is passed, so the gauges warn well before. */
-const LIMITS = { requests: 100000, reads: 5000000, writes: 100000, dbBytes: 500 * 1024 ** 2, mail: 1500 };
+ * Days are UTC days: Cloudflare's daily limits reset at 00:00 UTC (03:00 in Nairobi). The gauges warn well before.
+ * These are the Workers Paid included amounts (the account is on the $5/mo plan): 10M requests, 25B rows read and
+ * 50M rows written a day, 5 GB D1 storage. (Free was 100k / 5M / 100k / 500 MB.) The read-budget shedding and the
+ * maintenance screen stay as safety nets but will not fire at these levels. mail is Google's cap, not Cloudflare's. */
+const LIMITS = { requests: 10000000, reads: 25000000000, writes: 50000000, dbBytes: 5 * 1024 ** 3, mail: 1500 };
 const STATS_EVERY = 60e3;
 const STATS = { acts: new Map(), reads: 0, writes: 0, size: 0, flushedAt: Date.now(), errorsAt: [] };
 const utcDay = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
