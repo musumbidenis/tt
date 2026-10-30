@@ -17,7 +17,7 @@
  */
 
 export const VERSION = '7.28.0';
-const SCHEMA_VERSION = '29';
+const SCHEMA_VERSION = '30';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -104,6 +104,8 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // The backup copy of an approved document in the backup account's Drive.
   'ALTER TABLE evidence ADD COLUMN archived_at TEXT', 'ALTER TABLE evidence ADD COLUMN archive_id TEXT', 'ALTER TABLE evidence ADD COLUMN archive_tries INTEGER',
   'ALTER TABLE evidence ADD COLUMN archive_error TEXT',
+  // A host-submitted file, once copied into the device-less beneficiary's own Google Drive (owner transferred).
+  'ALTER TABLE evidence ADD COLUMN owner_copy_at TEXT', 'ALTER TABLE evidence ADD COLUMN owner_copy_id TEXT',
   // Classes taught one unit together ("ICT L6ICT-26J, ICT L6ICT-26M-CT" in the loading): each class's row names them all.
   'ALTER TABLE loading ADD COLUMN joint TEXT',
   // An External Assessment Officer's account stops working after this date.
@@ -2673,6 +2675,39 @@ const STUDENT_ACTIONS = {
       WHERE l.host_adm=? AND l.status='active' ORDER BY t.name`, host.adm_no);
     return { ok: true, admNo: host.adm_no, name: host.name, classCode: host.class_code,
       beneficiaries: links.map((r) => ({ admNo: r.beneficiary_adm, name: r.name || r.beneficiary_adm, email: r.beneficiary_email || '' })) };
+  },
+  /** Copy each POE file the host submitted for a beneficiary into that beneficiary's own Google Drive and hand it
+   *  over (ownership transfer), so the work lives in the student's own Drive. Only the file's owner can transfer it,
+   *  so it runs with the host's Google token. A copy is made first (the original stays with the host for the
+   *  trainer and approval), then the copy is transferred. If the Workspace blocks student-to-student transfer, the
+   *  copy is shared with the beneficiary as an editor instead, so they still get it. A few at a time, per call. */
+  async poeOwnerCopy(env, b) {
+    const host = await studentOf(env, b, { google: false });
+    const token = String(b.accessToken || '');
+    if (!token) return { ok: true, copied: 0 };
+    const pending = await all(env, `SELECT e.id, e.file_id, e.file_name, l.beneficiary_email AS email
+      FROM evidence e JOIN poe_links l ON lower(l.beneficiary_adm)=lower(e.adm_no) AND l.status='active' AND lower(l.host_adm)=lower(e.submitted_by_adm)
+      WHERE lower(e.submitted_by_adm)=lower(?) AND e.source='drive' AND e.file_id IS NOT NULL AND e.replaced_at IS NULL
+        AND e.owner_copy_at IS NULL AND COALESCE(l.beneficiary_email,'')<>'' LIMIT 10`, host.adm_no);
+    let copied = 0;
+    for (const r of pending) {
+      try {
+        const copy = await google(env, `/drive/v3/files/${encodeURIComponent(r.file_id)}/copy?fields=id`, token, { method: 'POST', body: { name: r.file_name } });
+        const copyId = copy?.id;
+        if (!copyId) continue;   // leave owner_copy_at null so it is retried on the host's next open
+        try {
+          await google(env, `/drive/v3/files/${encodeURIComponent(copyId)}/permissions?transferOwnership=true&moveToNewOwnersRoot=true&sendNotificationEmail=false&fields=id`,
+            token, { method: 'POST', body: { role: 'owner', type: 'user', emailAddress: r.email } });
+        } catch (e) {
+          // Same-domain transfer may be switched off; share the copy with the beneficiary as an editor instead.
+          try { await google(env, `/drive/v3/files/${encodeURIComponent(copyId)}/permissions?sendNotificationEmail=false&fields=id`, token, { method: 'POST', body: { role: 'writer', type: 'user', emailAddress: r.email } }); }
+          catch (e2) { console.error('poeOwnerCopy share', r.id, e2.message); }
+        }
+        await run(env, 'UPDATE evidence SET owner_copy_at=?, owner_copy_id=? WHERE id=?', nowIso(), copyId, r.id);
+        copied++;
+      } catch (e) { console.error('poeOwnerCopy', r.id, e.message); }   // retried on the host's next open
+    }
+    return { ok: true, copied };
   },
   /** The student turned notifications on. The address comes from the browser and is only an address:
    *  nothing private is kept, and only this student's registered phone can add or remove one. */

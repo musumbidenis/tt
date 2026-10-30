@@ -429,6 +429,15 @@ const POE = (() => {
         getToken: viaGoogle() ? googleToken : async () => '', onChange: () => render() });
       if (res.failed && !res.needGoogle) window.queueOutbox?.();   // something could not go: the phone tries again later, even with the app closed
       await loadBenes();
+      // Hand each beneficiary (who has a college email) their own copy of the POE this phone submitted for them,
+      // transferred into their own Google Drive. Only files not yet copied are touched, a few per sync.
+      if (viaGoogle() && ps.benes.some((x) => x.email)) {
+        try {
+          const tok = await googleToken(false);
+          if (tok) { const r = await api('POST', null, { action: 'poeOwnerCopy', deviceId: st.deviceId, admNo: p.admNo, accessToken: tok });
+            if (r?.copied && typeof toast === 'function') toast(`Copied ${r.copied} file${r.copied === 1 ? '' : 's'} into your classmate's Drive`, 'ok'); }
+        } catch { /* offline or not connected: tried again next sync */ }
+      }
       await fetchMine('');
       for (const b of ps.benes) await fetchMine(b.admNo);
       ps.server = ps.serverBy[ps.as || ''] || ps.server;
