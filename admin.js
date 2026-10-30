@@ -813,7 +813,7 @@ const Admin = (() => {
   /* ---------- POE submission helpers: a classmate submits POE for a device-less student (POE only) ---------- */
   // A device-less student keeps their own identity everywhere; here we only say which classmate sends their POE, and to
   // which college email it is also delivered. Everything else (check-in, marks) still needs the student's own phone.
-  const pl = { cls: '', classes: [], students: [], links: [] };
+  const pl = { cls: '', classes: [], students: [], classmates: [], links: [] };
   async function loadPoeLinks() {
     try {
       pl.links = need(await api('poeLinks')).links || [];
@@ -822,15 +822,17 @@ const Admin = (() => {
     } catch (e) { fill('m-poelinks', `<p class="err-text">${esc(e.message)}</p>`); }
   }
   const plOpts = (list, sel, blank) => `<option value="">${esc(blank)}</option>${list.map((s) => `<option value="${esc(s.admNo)}"${s.admNo === sel ? ' selected' : ''}>${esc(s.name)} (${esc(s.admNo)})</option>`).join('')}`;
+  // The host list spans every stream of the class; show the stream when it differs from the chosen one.
+  const plHostOpts = (list, blank) => `<option value="">${esc(blank)}</option>${list.map((s) => `<option value="${esc(s.admNo)}">${esc(s.name)} (${esc(s.admNo)})${s.stream && s.stream !== pl.cls ? ' - ' + esc(s.stream) : ''}</option>`).join('')}`;
   function drawPoeLinks() {
     const links = pl.links.map((l) => `<tr><td><b>${esc(l.beneficiaryName)}</b><br><small class="muted">${esc(l.beneficiaryAdm)}</small></td>
         <td>${esc(l.classCode)}</td><td>${esc(l.hostName)}<br><small class="muted">${esc(l.hostAdm)}</small></td><td class="small">${esc(l.email)}</td>
         <td><button type="button" class="btn small ghost danger-text" data-plremove="${esc(l.beneficiaryAdm)}" data-who="${esc(l.beneficiaryName)}">Remove</button></td></tr>`).join('');
-    fill('m-poelinks', `<p class="muted">For a student who has no phone of their own: choose a classmate in the same class to scan and send that student's POE. The work is still filed as the student's own. The email is optional - add it when the student has one and their POE is shared to it and copied into their own Drive. This affects POE only — check-in and marks still need the student's own phone.</p>
+    fill('m-poelinks', `<p class="muted">For a student who has no phone of their own: choose a classmate in the same class (the same stream, or another stream of it) to scan and send that student's POE. The work is still filed as the student's own. The email is optional - add it when the student has one and their POE is shared to it and copied into their own Drive. This affects POE only — check-in and marks still need the student's own phone.</p>
       <form id="plForm" class="pl-form">
         <label>Class<select id="plClass"><option value="">Choose a class…</option>${pl.classes.map((c) => `<option value="${esc(c)}"${c === pl.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
         <label>Student who needs help<select id="plBen" ${pl.cls ? '' : 'disabled'}>${plOpts(pl.students, '', pl.cls ? 'Choose the student…' : 'Choose a class first')}</select></label>
-        <label>Classmate who will submit for them<select id="plHost" ${pl.cls ? '' : 'disabled'}>${plOpts(pl.students, '', pl.cls ? 'Choose the classmate…' : 'Choose a class first')}</select></label>
+        <label>Classmate who will submit for them<select id="plHost" ${pl.cls ? '' : 'disabled'}>${plHostOpts(pl.classmates, pl.cls ? 'Choose the classmate (any stream)…' : 'Choose a class first')}</select></label>
         <label>Student's college Google email <span class="muted">(optional)</span><input type="email" id="plEmail" placeholder="name@rvnp.ac.ke - leave blank if none yet" autocomplete="off"></label>
         <button type="submit" class="btn primary" ${pl.cls ? '' : 'disabled'}>Link them</button>
       </form>
@@ -838,8 +840,8 @@ const Admin = (() => {
         : '<p class="muted small">No helpers set up yet.</p>'}`);
   }
   async function plClassChange(cls) {
-    pl.cls = cls; pl.students = [];
-    if (cls) { try { pl.students = need(await api('poeClass', { classCode: cls })).students || []; } catch (e) { toast(e.message, 'err'); } }
+    pl.cls = cls; pl.students = []; pl.classmates = [];
+    if (cls) { try { const r = need(await api('poeClass', { classCode: cls })); pl.students = r.students || []; pl.classmates = r.classmates || r.students || []; } catch (e) { toast(e.message, 'err'); } }
     drawPoeLinks();
   }
   async function plSave(form) {

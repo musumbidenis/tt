@@ -161,6 +161,8 @@ const levelOf = (code) => { const m = /L(\d)/i.exec(String(code)); return m ? m[
 const classFromSession = (id) => String(id).split(':')[2] || '';
 /** Streams of one class differ only in a last letter ("ICT L6CS-26S-A" / "-B", "ICT L6CS-25SA" / "SB"): the shared part, or null. */
 const streamBase = (code) => { const m = /^(.*\d{2}-?[A-Z])-?([A-H])$/.exec(String(code || '')); return m ? m[1].replace(/-$/, '') : null; };
+/** Two students are in the same class when their class codes match, or are two streams of one class (same base). */
+const sameClass = (a, c) => { if (lower(a) === lower(c)) return true; const ba = streamBase(a), bc = streamBase(c); return !!ba && !!bc && lower(ba) === lower(bc); };
 const unitFromSession = (id) => String(id).split(':')[3] || '';
 /** The loading's two ways of joining classes: "ICT L5LIS-26S/L6LIM-26S" is one class taught together for every unit;
  * "ICT L6ICT-26J, ICT L6ICT-26M-CT" is two classes taught together for that one unit. jointParts gives the classes of the second. */
@@ -3322,8 +3324,14 @@ async function poeClass(env, b) {
   for (const u of unitsForClass(loading, cls)) if (!seen.has(u.unit_code)) { seen.add(u.unit_code); units.push({ code: u.unit_code, name: u.unit_name || u.unit_code }); }
   const students = (await all(env, `SELECT adm_no, name FROM trainees WHERE class_code=? AND COALESCE(status,'') NOT IN ${GONE} ORDER BY name`, cls))
     .map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no }));
+  // A POE host may be in another stream of the same class, so offer every stream's students for the host picker.
+  const base = streamBase(cls);
+  const sibs = base ? [...new Set(classes.filter((c) => lower(c) === lower(cls) || (streamBase(c) && lower(streamBase(c)) === lower(base))))] : [cls];
+  const classmates = sibs.length <= 1 ? students.map((s) => ({ ...s, stream: cls }))
+    : (await all(env, `SELECT adm_no, name, class_code FROM trainees WHERE class_code IN (SELECT value FROM json_each(?)) AND COALESCE(status,'') NOT IN ${GONE} ORDER BY name`, JSON.stringify(sibs)))
+      .map((r) => ({ admNo: r.adm_no, name: r.name || r.adm_no, stream: r.class_code }));
   const marks = (await all(env, `SELECT class_code, unit_code, adm_no, ${MARK_COLS.join(', ')} FROM unit_marks WHERE class_code=?`, cls)).map(markOut);
-  return { ok: true, classes, classCode: cls, units, students, marks };
+  return { ok: true, classes, classCode: cls, units, students, classmates, marks };
 }
 /* ---------- POE host links: a classmate submits POE for a device-less student (POE only; set up by the MIS Officer) ---------- */
 async function poeLinks(env, b) {
@@ -3345,7 +3353,7 @@ async function poeLinkSave(env, b, me) {
   const b2 = ben[0], h2 = host[0];
   if (!b2 || !active(b2)) fail('That student is not on the class list');
   if (!h2 || !active(h2)) fail('That classmate is not on the class list');
-  if (lower(b2.class_code) !== lower(h2.class_code)) fail('Both students must be in the same class');
+  if (!sameClass(b2.class_code, h2.class_code)) fail('The host must be in the same class as the student (the same stream, or another stream of it)');
   const now = nowIso();
   await run(env, `INSERT INTO poe_links (beneficiary_adm,host_adm,class_code,beneficiary_email,authorised_by,created_at,status)
     VALUES (?,?,?,?,?,?,'active') ON CONFLICT(beneficiary_adm) DO UPDATE SET host_adm=excluded.host_adm, class_code=excluded.class_code,
