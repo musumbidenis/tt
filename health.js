@@ -21,14 +21,17 @@ const Health = (() => {
   const num = (n) => Number(n || 0).toLocaleString();
   const size = (b) => (b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(1) + ' GB' : b >= 1024 ** 2 ? (b / 1024 ** 2).toFixed(1) + ' MB' : Math.max(0, Math.round(b / 1024)) + ' KB');
   const pct = (a, b) => (b ? Math.min(100, Math.round((a / b) * 1000) / 10) : 0);
+  // Reads "<0.1%" rather than a bare "0%" when there is some real usage - on the paid plan the daily caps are so
+  // large that normal use rounds to zero, and "0%" next to a big number reads like missing data.
+  const pctText = (a, b) => { const p = pct(a, b); return p > 0 ? p + '%' : (a > 0 ? '<0.1%' : '0%'); };
   const level = (p) => (p >= 95 ? 'full' : p >= 80 ? 'warn' : '');
   const ms = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + ' s' : Math.round(n) + ' ms');
   const ago = (iso) => { if (!iso) return 'never'; const m = Math.round((Date.now() - Date.parse(iso)) / 60e3); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 
   function gauge(label, used, limit, fmt = num, note = '') {
     const p = pct(used, limit);
-    return `<div class="hg"><div class="hg-top"><b>${label}</b><span>${fmt(used)} of ${fmt(limit)} - ${p}%</span></div>
-      <div class="gauge ${level(p)}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}" aria-label="${esc(label)}"><span style="--pct:${p}%"></span></div>
+    return `<div class="hg"><div class="hg-top"><b>${label}</b><span>${fmt(used)} of ${fmt(limit)} - ${pctText(used, limit)}</span></div>
+      <div class="gauge ${level(p)}${used > 0 ? ' some' : ''}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}" aria-label="${esc(label)}"><span style="--pct:${p}%"></span></div>
       ${note ? `<small class="muted">${note}</small>` : ''}</div>`;
   }
   /** What needs a look, worst first. */
@@ -79,7 +82,7 @@ const Health = (() => {
       ${h.actions.length ? `<div class="table-wrap"><table class="report-table h-table"><thead><tr><th>What</th><th class="num">Times</th><th class="num">Rows read</th><th class="num">Average</th><th class="num">Slowest</th><th class="num">Errors</th></tr></thead>
         <tbody>${actions.map((a) => `<tr${a.errors ? ' class="h-bad"' : ''}><td>${esc(LABEL[a.action] || a.action)}</td><td class="num">${num(a.n)}</td><td class="num">${num(a.reads || 0)}</td><td class="num">${ms(a.avgMs)}</td><td class="num${a.maxMs > 5000 ? ' warn-text' : ''}">${ms(a.maxMs)}</td><td class="num">${a.errors || ''}</td></tr>`).join('')}</tbody></table></div>${Tables.bar('health', h.actions)}` : '<p class="muted">Nothing counted yet today.</p>'}
       ${days.length > 1 ? `<details class="fold"><summary>Last ${days.length} days</summary><div class="table-wrap"><table class="report-table h-table"><thead><tr><th>Day</th><th class="num">Requests</th><th class="num">Errors</th><th class="num">Average</th><th class="num">Reads</th><th class="num">Writes</th></tr></thead>
-        <tbody>${days.map((d) => `<tr><td>${esc(fmtShort(d.day))}</td><td class="num">${num(d.requests)} <small class="muted">${pct(d.requests, L.requests)}%</small></td><td class="num">${d.errors || ''}</td><td class="num">${ms(d.avgMs)}</td><td class="num">${num(d.reads)}</td><td class="num">${num(d.writes)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+        <tbody>${days.map((d) => `<tr><td>${esc(fmtShort(d.day))}</td><td class="num">${num(d.requests)} <small class="muted">${pctText(d.requests, L.requests)}</small></td><td class="num">${d.errors || ''}</td><td class="num">${ms(d.avgMs)}</td><td class="num">${num(d.reads)}</td><td class="num">${num(d.writes)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
       <h3 class="h-sub">Errors</h3>
       ${errs.length ? `<ul class="h-errors">${errs.map((e) => `<li><div><b>${esc(SOURCE[e.source] || e.source)}</b> - ${esc(fmtTime(e.at))}${e.who ? ` - ${esc(e.who)}` : ''}<small class="muted"> - ${esc(LABEL[e.action] || e.action)}</small></div>
         <p>${esc(e.message)}</p>${e.detail ? `<details><summary>Details</summary><pre>${esc(e.detail)}</pre></details>` : ''}</li>`).join('')}</ul>

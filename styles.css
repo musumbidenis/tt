@@ -1060,6 +1060,7 @@ body.student .status .btn svg.i { width: 15px; height: 15px; }
 .gauge { height: 12px; border-radius: 999px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; margin: .5rem 0 .25rem; }
 /* The fill grows from empty to its real share each time the page is drawn: a tactile read of "how full". */
 .gauge span { display: block; height: 100%; width: var(--pct, 0); background: var(--p); border-radius: inherit; animation: gaugeGrow .6s cubic-bezier(.2, 0, 0, 1); }
+.gauge.some span { min-width: 3px; }   /* a visible sliver when there is real usage, even if it rounds to 0% of a huge cap */
 .gauge.warn span { background: var(--l); }
 .gauge.full span { background: var(--a); }
 @keyframes gaugeGrow { from { width: 0; } }
