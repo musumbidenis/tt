@@ -8,10 +8,18 @@
 'use strict';
 
 const PoeStats = (() => {
-  const S = { data: null, loaded: false, q: '', only: '', who: '', open: new Set(), seq: 0 };
+  const S = { data: null, loaded: false, q: '', only: '', who: '', dept: '', open: new Set(), seq: 0 };
   const box = () => $('#poestats');
   const pctBar = (p) => `<span class="pbar" title="${p}% submitted"><span style="width:${Math.max(0, Math.min(100, p))}%"></span></span>`;
   const byUnit = () => S.data && S.data.scope === 'trainer';
+  /** Extract department from class code (e.g., "ICT L6CS-26S" -> "ICT"). */
+  const deptOf = (c) => String(c.classCode || '').split(' ')[0] || '';
+  /** Unique departments from the current data. */
+  function departments() {
+    if (!S.data?.classes) return [];
+    const depts = [...new Set(S.data.classes.map(deptOf).filter(Boolean))].sort();
+    return depts;
+  }
 
   async function render() {
     if (!me()) return;
@@ -35,6 +43,7 @@ const PoeStats = (() => {
   function rows() {
     const q = S.q.trim().toLowerCase();
     let list = S.data.classes;
+    if (S.dept) list = list.filter((c) => deptOf(c) === S.dept);
     if (q) list = list.filter((c) => `${c.classCode} ${c.misClass || ''} ${c.name || ''} ${c.unitName || ''} ${c.trainerName || ''}`.toLowerCase().includes(q));
     if (S.only === 'behind') list = list.filter((c) => c.notSubmitted > 0);
     return list;
@@ -91,6 +100,7 @@ const PoeStats = (() => {
         <p class="muted small">${intro}</p>
         <div class="filters">
           ${whoPicker()}
+          ${!byUnit() && S.data.trainers ? `<label class="stats-dept">Department<select id="statsDept"><option value="">All departments</option>${departments().map((d) => `<option value="${esc(d)}"${S.dept === d ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select></label>` : ''}
           <input type="search" id="statsQ" placeholder="${byUnit() ? 'Find a unit, class or trainer…' : 'Find a class…'}" value="${esc(S.q)}" aria-label="Filter">
           <label class="chk small"><input type="checkbox" id="statsBehind"${S.only === 'behind' ? ' checked' : ''}> Only with gaps</label>
         </div>
@@ -138,21 +148,22 @@ const PoeStats = (() => {
   }
   const scopeTitle = () => byUnit() ? ('POE statistics - ' + (S.data.byTrainer === 'all' ? 'all trainers' : (S.data.classes[0]?.trainerName || 'trainer'))) : 'POE statistics';
   function exportXlsx() {
-    const C = cols(), summary = S.data.classes.map(C.row);
+    const C = cols(), list = sorted();  // Use filtered/sorted list
+    const summary = list.map(C.row);
     const detail = [];
-    for (const c of S.data.classes) for (const r of studentsOf(c.key)) detail.push(C.drow(c, r));
+    for (const c of list) for (const r of studentsOf(c.key)) detail.push(C.drow(c, r));
     Tables.exportXlsx(scopeTitle(), C.head, [...summary, [], ['STUDENT DETAIL'], C.dhead, ...detail]);
   }
   function exportPdf() {
-    const C = cols();
+    const C = cols(), list = sorted();  // Use filtered/sorted list
     const tr = (cells, head) => `<tr>${cells.map((x) => `<${head ? 'th' : 'td'}>${esc(x ?? '')}</${head ? 'th' : 'td'}>`).join('')}</tr>`;
-    const detail = S.data.classes.map((c) => {
-      const list = studentsOf(c.key); if (!list.length) return '';
+    const detail = list.map((c) => {
+      const students = studentsOf(c.key); if (!students.length) return '';
       return `<h2>${esc(rowLabel(c))}${byUnit() && c.trainerName ? ' - ' + esc(c.trainerName) : ''} - ${c.submitted}/${c.students} submitted (${c.pct}%)</h2>
-        <table><thead>${tr(C.dhead, true)}</thead><tbody>${list.map((r) => tr(C.drow(c, r))).join('')}</tbody></table>`;
+        <table><thead>${tr(C.dhead, true)}</thead><tbody>${students.map((r) => tr(C.drow(c, r))).join('')}</tbody></table>`;
     }).join('');
     $('#printArea').innerHTML = `<div class="tbl-print"><h1>${esc(scopeTitle().toUpperCase())}</h1><p>Rift Valley National Polytechnic - Department of Computing and Informatics</p>
-      <table><thead>${tr(C.head, true)}</thead><tbody>${S.data.classes.map((c) => tr(C.row(c))).join('')}</tbody></table>${detail}</div>`;
+      <table><thead>${tr(C.head, true)}</thead><tbody>${list.map((c) => tr(C.row(c))).join('')}</tbody></table>${detail}</div>`;
     document.body.classList.add('printing', 'print-table');
     const done = () => { document.body.classList.remove('printing', 'print-table'); window.removeEventListener('afterprint', done); };
     window.addEventListener('afterprint', done);
@@ -178,6 +189,7 @@ const PoeStats = (() => {
   document.addEventListener('change', (e) => {
     if (e.target.id === 'statsBehind') { S.only = e.target.checked ? 'behind' : ''; Tables.reset('poeStats'); draw(); return; }
     if (e.target.id === 'statsWho') { S.who = e.target.value; S.open.clear(); Tables.reset('poeStats'); S.loaded = false; render(); return; }
+    if (e.target.id === 'statsDept') { S.dept = e.target.value; Tables.reset('poeStats'); draw(); return; }
   });
   Tables.on('poeStats', draw);
 

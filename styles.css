@@ -796,6 +796,18 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
 .poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
 .poe-view2-more { display: flex; gap: .4rem; }
+/* Marks editor in POE dialog */
+.poe-marks-editor { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .4rem; padding: .5rem 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: .25rem 0; }
+.mk-row { display: flex; flex-direction: column; gap: .2rem; }
+.mk-label { font: 600 .7rem var(--display); color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
+.mk-input { font: 600 1rem var(--display); padding: .35rem .5rem; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); text-align: center; }
+.mk-input:focus { outline: none; border-color: var(--p); box-shadow: 0 0 0 2px var(--p-soft); }
+.mk-input.locked { background: var(--sunk); color: var(--muted); cursor: not-allowed; }
+.mk-input.bad { border-color: var(--d); background: #fff0f0; }
+.mk-input.dirty { border-color: var(--l); background: #f0f8ff; }
+@media (prefers-color-scheme: dark) {
+  .mk-input.dirty { background: #081a2a; border-color: var(--l); }
+}
 .drive-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 1rem; }
 .drive-list select { width: auto; max-width: 100%; margin: 0; }
 /* POE by student */
@@ -1450,6 +1462,8 @@ tr.ps-no td { color: var(--muted); }
 .chk.small input { transform: scale(.85); transform-origin: left center; }
 .stats-who { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; color: var(--ink-2); }
 .stats-who select { font: inherit; padding: .3rem .4rem; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); }
+.stats-dept { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; color: var(--ink-2); }
+.stats-dept select { font: inherit; padding: .3rem .4rem; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); }
 
 /* Notice Board: a pinned notice that needs action sits at the very top of the app until the reader confirms. */
 #boardBanner { display: flex; flex-direction: column; gap: .5rem; margin-bottom: .75rem; }
