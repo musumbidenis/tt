@@ -317,30 +317,21 @@ const PoeStaff = (() => {
     const hasPending = studentItems.some((x) => x.status === 'submitted');
     const canAct = canDecide() && (hasPending || hasRole('HOD') || studentItems.some((x) => x.decidedName === me().name));
     const marksHtml = marksEditor(first.classCode, first.unitCode, first.admNo);
-    // Group items: CATs first (CAT1-CAT4), then Practicals (PRAC1-PRAC3), each in ITEMS order
-    const catItems = studentItems.filter((e) => e.item.startsWith('CAT')).sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
-    const pracItems = studentItems.filter((e) => e.item.startsWith('PRAC')).sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
-    // Build running PDF HTML: single scroll area with all pages concatenated
-    const renderSection = (items, sectionTitle, sectionClass) => {
-      if (!items.length) return '';
-      return `
-        <div class="poe-run-section ${sectionClass}">
-          <div class="poe-run-section-title">${sectionTitle}</div>
-          ${items.map((e) => `
-            <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
-              <div class="poe-run-item-header">
-                <span class="item-tag ${e.item.startsWith('CAT') ? 'cat-tag' : 'prac-tag'}">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
-                <span class="poe-view2-mark">Mark <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
-                ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
-                ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
-              </div>
-              ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
-              <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
-            </div>
-          `).join('')}
-        </div>`;
-    };
-    const itemsHtml = renderSection(catItems, 'Continuous Assessment Tests (CATs)', 'cat-section') + renderSection(pracItems, 'Practicals', 'prac-section');
+    // Sort items: CATs first (CAT1-CAT4), then Practicals (PRAC1-PRAC3), each in ITEMS order
+    const allItems = studentItems.sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
+    // Build running PDF HTML: single flat list in one scroll area
+    const itemsHtml = allItems.map((e) => `
+      <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
+        <div class="poe-run-item-header">
+          <span class="item-tag ${e.item.startsWith('CAT') ? 'cat-tag' : 'prac-tag'}">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
+          <span class="poe-view2-mark">Mark <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
+          ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
+          ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
+        </div>
+        ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
+        <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
+      </div>
+    `).join('');
     // Position indicator: student X of Y
     const posHtml = order.length > 1 ? `<span class="muted tiny poe-view2-pos">${i + 1} / ${order.length}</span>` : '';
     $('#poeDialogBody').innerHTML = `
