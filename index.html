@@ -207,20 +207,45 @@
   <section id="tab-poe" class="tab"><div id="poe"></div></section>
   <section id="tab-board" class="tab"><div id="board"></div></section>
 
-  <!-- TOOLS (trainers and HODs): professional tools, coming soon -->
+  <!-- TOOLS (trainers and HODs): learning plans, session plans, assessment tools -->
   <section id="tab-tools" class="tab">
-    <div class="card tools-intro">
-      <h2>Professional tools</h2>
-      <p class="muted">Your learning plans, session plans and assessment tools in one place, made from your loading and timetable and kept in your Drive folder.</p>
+    <div class="card">
+      <div class="msec-head">
+        <div>
+          <h2>Professional tools</h2>
+          <p class="muted small">Learning plans, session plans and assessment tools — made from your loading and timetable, kept in your Drive folder.</p>
+        </div>
+        <button type="button" class="btn primary" id="toolsNewBtn">
+          <svg class="i" aria-hidden="true"><use href="#i-add"/></svg>New tool
+        </button>
+      </div>
+
+      <div class="filters tools-filters">
+        <label>Search<input type="search" id="toolsSearch" placeholder="Search title or class"></label>
+        <label>Type<select id="toolsTypeFilter"><option value="">All types</option><option value="learning-plan">Learning plan</option><option value="session-plan">Session plan</option><option value="assessment-tool">Assessment tool</option><option value="marking-scheme">Marking scheme</option></select></label>
+        <label>Status<select id="toolsStatusFilter"><option value="">All statuses</option><option value="draft">Draft</option><option value="ready">Ready</option><option value="submitted">Submitted</option><option value="approved">Approved</option></select></label>
+      </div>
+
+      <div class="table-wrap" id="toolsTableWrap">
+        <table class="report-table tools-table">
+          <thead>
+            <tr>
+              <th class="sn">#</th>
+              <th>Type</th>
+              <th>Title</th>
+              <th>Class / unit</th>
+              <th class="num">Status</th>
+              <th class="num">Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="toolsTableBody"></tbody>
+        </table>
+      </div>
+      <div id="toolsEmpty" class="empty" hidden>
+        <p>No tools yet. Tap <b>New tool</b> to create a learning plan, session plan, assessment tool or marking scheme.</p>
+      </div>
     </div>
-    <ul class="tool-cards">
-      <li class="card tool-card"><span class="soon">Coming soon</span><h3>Learning plans</h3>
-        <p>One for each unit you teach this term, started for you from the loading, the term's weeks and the CAT weeks. Sent to the HOD to approve.</p></li>
-      <li class="card tool-card"><span class="soon">Coming soon</span><h3>Session plans</h3>
-        <p>One for each lesson on your timetable. The register shows when a lesson's plan is ready, and last term's plans can be reused.</p></li>
-      <li class="card tool-card"><span class="soon">Coming soon</span><h3>Assessment tools</h3>
-        <p>The written, practical and oral papers with their marking guides. The Internal Assessment Officer receives each one before the CAT, linked to its CAT register and its column in Marks.</p></li>
-    </ul>
   </section>
 
 
@@ -337,6 +362,7 @@
 <dialog id="delRegsDialog" class="sheet-dialog wide" aria-label="Delete registers"><div id="delRegsBody"></div></dialog>
 <dialog id="adminDialog" class="sheet-dialog wide" aria-label="Manage"><div id="adminDialogBody"></div></dialog>
 <dialog id="noticeDialog" class="sheet-dialog wide" aria-label="Messages"><div id="noticeBody"></div></dialog>
+<dialog id="toolsDialog" class="sheet-dialog wide" aria-label="Tool details"><div id="toolsDialogBody"></div></dialog>
 
 <!-- Kept for one release: lets phones still running version 3.x start up on this page and update themselves. -->
 <div id="legacyShim" hidden aria-hidden="true"><form id="sheetsForm"><input id="setName"><input id="setStaff"><input id="setSheetsUrl"><input id="setSheetsToken"><button type="button" id="testSheets"></button></form><input type="file" id="importTrainees"><input type="file" id="importUnits"><input type="date" id="rFrom"><input type="date" id="rTo"><button type="button" id="exportReport"></button><table id="reportTable"></table></div>

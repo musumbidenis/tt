@@ -1492,3 +1492,45 @@ tr.ps-no td { color: var(--muted); }
 .board-pin .bp-text b { display: block; font-size: .95rem; }
 .board-pin .bp-text p { margin: .15rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .board-pin .bp-ack { flex: none; }
+
+/* ---------- tools tab: list / table workflow ---------- */
+.tools-filters { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin-bottom: .75rem; }
+.tools-filters label { margin: 0; }
+.tools-filters input, .tools-filters select { margin: 0; height: 40px; font-size: .875rem; }
+@media (max-width: 640px) { .tools-filters { grid-template-columns: 1fr 1fr; } .tools-filters label:last-child { grid-column: 1 / -1; } }
+
+.tools-table td { vertical-align: middle; font-size: .875rem; }
+.tools-table td.type { font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .02em; }
+.tools-table td.status { position: relative; }
+.tools-table .tool-pill { display: inline-flex; align-items: center; gap: .25rem; font-size: .78rem; font-weight: 600; padding: .15rem .5rem; border-radius: 99px; border: 1px solid var(--line-strong); white-space: nowrap; }
+.tools-table .tool-pill.draft { background: var(--sunk); color: var(--ink-2); border-color: var(--line-strong); }
+.tools-table .tool-pill.ready { background: var(--p-soft); color: var(--p); border-color: var(--p); }
+.tools-table .tool-pill.submitted { background: var(--l-soft); color: var(--l); border-color: var(--l); }
+.tools-table .tool-pill.approved { background: var(--e-soft); color: var(--e); border-color: var(--e); }
+.tools-table .tool-actions { display: flex; gap: .3rem; flex-wrap: wrap; }
+.tools-table .tool-actions .btn.small { min-height: 30px; padding: .15rem .6rem; font-size: .78rem; }
+
+.tools-table td.type.learning-plan { color: var(--p); }
+.tools-table td.type.session-plan { color: var(--forest); }
+.tools-table td.type.assessment-tool { color: var(--a); }
+.tools-table td.type.marking-scheme { color: var(--l); }
+
+/* Dialog form fields for tools */
+.tools-form { display: grid; gap: .75rem; max-width: 34rem; }
+.tools-form label { margin: 0; font-size: .875rem; font-weight: 600; color: var(--ink-2); }
+.tools-form input, .tools-form select, .tools-form textarea {
+  width: 100%; margin-top: .3rem; height: 40px;
+  font: 400 1rem var(--text); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: .45rem .6rem;
+}
+.tools-form textarea { height: 70px; resize: vertical; }
+.tools-form .kind-hint { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+.tools-form .status-chips { display: flex; gap: .3rem; flex-wrap: wrap; margin-top: .3rem; }
+.tools-form .status-chip { font-size: .8rem; font-weight: 600; padding: .15rem .5rem; border-radius: 99px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.tools-form .status-chip.active { border-color: var(--forest); color: var(--forest); }
+.tools-form .status-chip.active.ready { background: var(--p-soft); color: var(--p); border-color: var(--p); }
+.tools-form .status-chip.active.submitted { background: var(--l-soft); color: var(--l); border-color: var(--l); }
+.tools-form .status-chip.active.approved { background: var(--e-soft); color: var(--e); border-color: var(--e); }
+.tools-form .conditional-field { padding: .6rem .75rem; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--sunk); margin-top: .4rem; }
+.tools-form .conditional-field h4 { margin: 0 0 .5rem; font-size: .875rem; font-weight: 600; color: var(--ink-2); }
+.tools-form .conditional-field.hidden { display: none; }

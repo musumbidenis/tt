@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tools Tab UI Designer — The ARK</title>
+<style>
+/* Import the same design tokens as styles.css so the designer matches the real app */
+@import url("styles.css");
+
+:root {
+  --app-dark: #0b5d33;
+  --app-green: #23ab5f;
+  --app-red: #e7363e;
+  --surface: #ffffff;
+  --paper: #f2f5f3;
+  --sunk: #e9efeb;
+  --line: #d3ddd6;
+  --ink: #16211b;
+  --ink-2: #33433a;
+  --muted: #5b6b62;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 16px/1.5 var(--text); height: 100vh; overflow: hidden;
+}
+a { color: var(--forest); }
+.muted { color: var(--muted); }
+.err-text { color: var(--app-red); font-weight: 600; }
+.small { font-size: .8rem; }
+[hidden] { display: none !important; }
+svg.i { width: 20px; height: 20px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- layout shell: designer sidebar + live preview ---------- */
+.designer-shell { display: flex; height: 100vh; }
+.designer-sidebar {
+  width: 420px; background: var(--surface); border-right: 1px solid var(--line);
+  overflow-y: auto; padding: 1rem; flex-shrink: 0;
+}
+.designer-main { flex: 1; overflow-y: auto; background: var(--paper); padding: 1rem; }
+
+/* sidebar title */
+.sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: 1rem; padding-bottom: .75rem; border-bottom: 1px solid var(--line); }
+.sidebar-head h2 { margin: 0; font-size: 1.125rem; font-family: var(--display); font-weight: 600; }
+.sidebar-head .ver { font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--sunk); padding: .05rem .4rem; border-radius: 99px; }
+
+.section-title { font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 1.25rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
+.section-title:first-of-type { margin-top: 0; border: 0; }
+
+/* ---------- component palette ---------- */
+.palette-item { border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: .55rem .75rem; margin-bottom: .5rem; cursor: grab; background: var(--surface); transition: border-color .15s, box-shadow .15s; user-select: none; }
+.palette-item:hover { border-color: var(--ink-2); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.palette-item:active { cursor: grabbing; }
+.palette-item .drag-handle { display: inline-block; margin-right: .4rem; color: var(--muted); font-size: 1.2rem; line-height: 1; }
+.palette-item strong { display: block; font-size: .875rem; font-weight: 600; margin-bottom: .1rem; }
+.palette-item p { margin: 0; font-size: .8rem; color: var(--muted); }
+
+.palette-item[data-kind="learning-plan"] { border-left: 4px solid var(--app-green); }
+.palette-item[data-kind="session-plan"] { border-left: 4px solid var(--forest); }
+.palette-item[data-kind="assessment-tool"] { border-left: 4px solid var(--app-red); }
+.palette-item[data-kind="marking-scheme"] { border-left: 4px solid var(--l); }
+
+/* ---------- live preview ---------- */
+.preview-frame { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); height: 100%; }
+.preview-inner { padding: 1rem; }
+
+.preview-header { position: sticky; top: 0; background: var(--forest); color: #fff; padding: .55rem 1rem .55rem; border-top: 5px solid var(--app-red); display: flex; align-items: center; gap: .7rem; z-index: 10; }
+.preview-brand { display: flex; align-items: center; gap: .7rem; min-width: 0; flex: 1 1 auto; }
+.preview-crest { flex-shrink: 0; width: 44px; height: 44px; border-radius: 8px; background: #fff; padding: 2px; display: grid; place-items: center; }
+.preview-crest img { width: 40px; height: 40px; display: block; }
+.preview-brand > div { min-width: 0; }
+.preview-brand strong { font-family: var(--display); font-weight: 600; font-size: 1.0625rem; line-height: 1.2; }
+.preview-brand span { font-size: .875rem; color: #cfe6d8; }
+
+.preview-tabs { display: flex; background: var(--surface); border-bottom: 1px solid var(--line); padding: 0 .5rem; margin-bottom: 1rem; }
+.preview-tabs button {
+  appearance: none; border: 0; background: none; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; gap: .45rem; min-height: 48px; padding: 0 1rem;
+  font: 500 .9375rem var(--display); border-bottom: 3px solid transparent; margin-bottom: -1px;
+}
+.preview-tabs button.active { color: var(--ink); border-bottom-color: var(--app-green); font-weight: 600; }
+.preview-tabs button.active svg.i { color: var(--forest); }
+
+.preview-main { max-width: 840px; margin: 0 auto; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1rem; margin-bottom: 1rem; }
+@media (min-width: 560px) { .card { padding: 1.25rem; } }
+.soon { display: inline-block; margin-bottom: .45rem; font-size: .75rem; font-weight: 700; letter-spacing: .02em; padding: .15rem .55rem; border-radius: 99px; background: var(--e-soft); color: var(--e); }
+
+.tool-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: .75rem; }
+@media (min-width: 760px) { .tool-cards { grid-template-columns: repeat(3, 1fr); } }
+.tool-card { position: relative; margin: 0; border: 2px dashed transparent; border-radius: var(--r-lg); background: var(--surface); padding: 1rem; transition: transform .1s, border-color .15s; }
+.tool-card:hover { border-color: var(--forest); background: var(--sunk); }
+.tool-card h3 { margin: .1rem 0 .35rem; font: 600 1.0625rem var(--display); }
+.tool-card p { margin: 0; color: var(--muted); font-size: .9375rem; line-height: 1.45; }
+
+/* component on canvas */
+.canvas-item { border: 2px solid var(--forest); border-radius: var(--r-lg); background: var(--surface); margin-bottom: 1rem; padding: .75rem; position: relative; }
+.canvas-item.selected { border-color: var(--app-red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-red) 25%, transparent); }
+.canvas-item .drag-handle { position: absolute; top: .3rem; right: .5rem; color: var(--muted); cursor: move; font-size: 1rem; }
+.canvas-item .drag-handle:hover { color: var(--forest); }
+.canvas-item-remove { position: absolute; top: .35rem; right: .35rem; opacity: 0; transition: opacity .15s; }
+.canvas-item.selected .canvas-item-remove { opacity: 1; }
+.canvas-item-remove button { appearance: none; border: 0; background: var(--app-red); color: #fff; width: 26px; height: 26px; border-radius: 50%; font: 700 14px var(--display); cursor: pointer; line-height: 1; padding: 0; }
+.canvas-item-body { padding-right: 2rem; }
+
+/* ---------- property inspector ---------- */
+.property { margin-bottom: .75rem; padding-bottom: .5rem; border-bottom: 1px solid var(--line); }
+.property:last-child { border: 0; margin-bottom: 0; }
+.property label { display: block; font-size: .8rem; font-weight: 600; color: var(--ink-2); margin-bottom: .3rem; }
+.property input, .property select, .property textarea {
+  width: 100%; height: 36px; font: 400 1rem var(--text); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: .45rem .6rem;
+}
+.property textarea { height: 70px; resize: vertical; }
+.property .tag-pills { display: flex; gap: .3rem; flex-wrap: wrap; }
+.property .tag-pill { font-size: .8rem; font-weight: 600; padding: .15rem .45rem; border-radius: 99px; background: var(--sunk); color: var(--ink-2); border: 1px solid var(--line-strong); cursor: pointer; }
+.property .tag-pill.active { background: var(--forest); color: #fff; border-color: var(--forest); }
+
+.property.help { font-size: .8rem; color: var(--muted); border: 0; margin-bottom: 1rem; padding: .4rem .7rem; background: var(--sunk); border-radius: var(--r-sm); }
+
+/* ---------- toolbar / actions ---------- */
+.app-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; align-items: center; }
+.btn {
+  appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+  min-height: 44px; padding: .5rem 1rem; border-radius: var(--r-sm);
+  font: 600 .9375rem/1.2 var(--display); cursor: pointer; white-space: nowrap; text-decoration: none;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); transition: background-color .15s;
+}
+.btn:hover { border-color: var(--ink-2); }
+.btn.primary { background: var(--forest); border-color: var(--forest); color: #fff; }
+.btn.primary:hover { background: color-mix(in srgb, var(--forest) 82%, var(--app-dark)); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--sunk); }
+.btn.danger { color: var(--app-red); border-color: var(--app-red); }
+.btn.small { min-height: 40px; padding: .35rem .8rem; font-size: .875rem; }
+
+.export-section { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.preview-json { background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r-sm); padding: .75rem; font: 11px/1.4 "Source Sans 3", monospace; color: var(--ink-2); max-height: 200px; overflow: auto; white-space: pre-wrap; }
+
+/* empty state */
+.empty-canvas { display: flex; flex-direction: column; align-items: center; gap: .3rem; text-align: center; padding: 3rem 1rem; color: var(--muted); background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); }
+.empty-canvas .i { width: 2rem; height: 2rem; color: var(--app-green); }
+.empty-canvas b { color: var(--ink); font: 600 1.05rem var(--display); }
+
+/* toast */
+#toast { position: fixed; left: 50%; bottom: calc(1.25rem); transform: translate(-50%, 1rem); background: var(--ink); color: var(--paper); border: 1px solid var(--line-strong); padding: .75rem 1.1rem; border-radius: var(--r-sm); max-width: min(92vw, 30rem); font-size: .9375rem; font-weight: 500; opacity: 0; pointer-events: none; z-index: 100; transition: transform .25s ease-out, opacity .25s ease-out; }
+#toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+/* responsive */
+@media (max-width: 900px) {
+  .designer-shell { flex-direction: column; height: auto; }
+  .designer-sidebar { width: 100%; height: 45vh; border-right: 0; border-bottom: 1px solid var(--line); overflow-y: auto; }
+  .designer-main { height: 55vh; }
+}
+</style>
+</head>
+<body>
+
+<div class="designer-shell">
+
+  <!-- Sidebar: component palette + inspector -->
+  <aside class="designer-sidebar">
+    <div class="sidebar-head">
+      <h2>Tools UI Designer</h2>
+      <span class="ver">v1 · brainstorm</span>
+    </div>
+
+    <div class="section-title">Component palette</div>
+    <p class="muted small" style="margin-bottom: .75rem;">Drag a component into the preview pane on the right. Components match the app's existing design language.</p>
+
+    <div class="palette-item" data-kind="learning-plan" draggable="true">
+      <span class="drag-handle">⠿</span>
+      <strong>Learning Plan</strong>
+      <p>One per unit taught this term, seeded from loading, term weeks and CAT weeks. Sent to HOD for approval.</p>
+    </div>
+
+    <div class="palette-item" data-kind="session-plan" draggable="true">
+      <span class="drag-handle">⠿</span>
+      <strong>Session Plan</strong>
+      <p>One per lesson on the timetable. Register shows when a lesson's plan is ready; last term's plans can be reused.</p>
+    </div>
+
+    <div class="palette-item" data-kind="assessment-tool" draggable="true">
+      <span class="drag-handle">⠿</span>
+      <strong>Assessment Tool</strong>
+      <p>Written, practical and oral papers with their marking guides. Sent to the Internal Assessment Officer before the CAT.</p>
+    </div>
+
+    <div class="palette-item" data-kind="marking-scheme" draggable="true">
+      <span class="drag-handle">⠿</span>
+      <strong>Marking Scheme</strong>
+      <p>Attached to an assessment tool: question breakdown, marks per question, total and grade boundaries.</p>
+    </div>
+
+    <div class="section-title">Layout helpers</div>
+    <div class="palette-item" data-kind="grid-row" draggable="true">
+      <span class="drag-handle">⠿</span>
+      <strong>Grid row</strong>
+      <p>Places components side by side on wide screens, stacked on phones.</p>
+    </div>
+    <div class="palette-item" data-kind="card" draggable="true">
+      <span class="drag-handle">⠿</span>
+      <strong>Card wrapper</strong>
+      <p>Groups related components in a bordered card.</p>
+    </div>
+
+    <div class="export-section">
+      <div class="section-title">Export</div>
+      <button class="btn ghost small" id="btnCopyJson">Copy JSON</button>
+      <button class="btn primary small" id="btnDownloadJson">Download JSON</button>
+      <div class="property help">Paste this JSON into the Tools tab implementation. It describes each component's kind, title, body and order.</div>
+      <div class="preview-json" id="jsonOutput">{}</div>
+    </div>
+  </aside>
+
+  <!-- Main: live preview -->
+  <main class="designer-main">
+    <div class="app-toolbar">
+      <div style="display:flex;align-items:center;gap:.5rem;">
+        <span style="font-weight:600;color:var(--ink-2);font-size:.875rem;">Live preview</span>
+        <span id="previewCount" style="background:var(--sunk);color:var(--ink-2);padding:.1rem .5rem;border-radius:99px;font-size:.75rem;">0 components</span>
+      </div>
+      <button class="btn ghost small" id="btnClear">Clear canvas</button>
+      <button class="btn primary small" id="btnApplyToApp">Apply to app</button>
+    </div>
+
+    <div class="preview-frame">
+      <div class="preview-header">
+        <div class="preview-brand">
+          <div class="preview-crest"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg></div>
+          <div>
+            <strong>The ARK</strong>
+            <span>Academic Records Keeper · Tools</span>
+          </div>
+        </div>
+      </div>
+      <div class="preview-tabs" role="tablist">
+        <button data-tab="mark" class="active" role="tab"><svg class="i" aria-hidden="true"><use href="#i-mark"/></svg>ATT</button>
+        <button data-tab="reports" role="tab"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Report(s)</button>
+        <button data-tab="poe" role="tab"><svg class="i" aria-hidden="true"><use href="#i-poe"/></svg>POE</button>
+        <button data-tab="tools" role="tab" class="active"><svg class="i" aria-hidden="true"><use href="#i-tools"/></svg>Tools</button>
+        <button data-tab="me" role="tab"><svg class="i" aria-hidden="true"><use href="#i-me"/></svg>Profile</button>
+      </div>
+      <div class="preview-main">
+        <section id="tab-tools-preview" class="tab active">
+          <div id="canvasDropZone" style="min-height: 200px;">
+            <div class="empty-canvas" id="emptyState">
+              <svg class="i" aria-hidden="true"><use href="#i-tools"/></svg>
+              <b>Drag components here</b>
+              <p class="muted small" style="margin-top:.25rem;">Build your Tools tab layout. Select a component to edit its properties below.</p>
+            </div>
+          </div>
+          <div id="canvas"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<script>
+/* ---------- state ---------- */
+let components = [];
+let selectedId = null;
+
+/* ---------- component definitions ---------- */
+const COMPONENT_DEFS = {
+  'learning-plan': {
+    label: 'Learning Plan',
+    icon: 'i-chart',
+    default: { kind: 'learning-plan', title: 'Learning Plan — Unit', body: 'Seeded from loading, term weeks and CAT weeks. Sent to HOD to approve.', status: 'draft' }
+  },
+  'session-plan': {
+    label: 'Session Plan',
+    icon: 'i-list',
+    default: { kind: 'session-plan', title: 'Session Plan — Lesson', body: 'One per lesson on the timetable. Reuse last term’s plans.', status: 'ready' }
+  },
+  'assessment-tool': {
+    label: 'Assessment Tool',
+    icon: 'i-print',
+    default: { kind: 'assessment-tool', title: 'Assessment Tool — Paper', body: 'Written / practical / oral paper with marking guide. Sent to IAO before the CAT.', status: 'submitted' }
+  },
+  'marking-scheme': {
+    label: 'Marking Scheme',
+    icon: 'i-grid',
+    default: { kind: 'marking-scheme', title: 'Marking Scheme', body: 'Question breakdown, marks per question, total and grade boundaries.', status: 'approved' }
+  },
+  'grid-row': {
+    label: 'Grid Row',
+    icon: 'i-grid',
+    default: { kind: 'grid-row', title: 'Grid Row', body: '', status: '' }
+  },
+  'card': {
+    label: 'Card Wrapper',
+    icon: 'i-rows',
+    default: { kind: 'card', title: 'Card', body: '', status: '' }
+  }
+};
+
+function uuid() {
+  return crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+  });
+}
+
+function newComponent(kind) {
+  return { id: uuid(), ...COMPONENT_DEFS[kind].default, order: Date.now() };
+}
+
+/* ---------- rendering ---------- */
+function render() {
+  const canvas = $('#canvas');
+  const empty = $('#emptyState');
+  const zone = $('#canvasDropZone');
+  canvas.innerHTML = '';
+
+  if (components.length === 0) {
+    empty.hidden = false;
+    zone.style.display = 'block';
+  } else {
+    empty.hidden = true;
+    zone.style.display = 'block';
+
+    [...components].sort((a, b) => a.order - b.order).forEach(comp => {
+      const el = document.createElement('div');
+      el.className = 'canvas-item' + (selectedId === comp.id ? ' selected' : '');
+      el.dataset.id = comp.id;
+      el.draggable = true;
+
+      el.innerHTML = `
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+        <button class="canvas-item-remove" title="Remove"><span aria-hidden="true">×</span><span class="sr">Remove</span></button>
+        <div class="canvas-item-body">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;">
+            <strong style="font-size:1rem;">${esc(comp.title)}</strong>
+            <span class="tag chip-${comp.status || 'draft'}" style="font-size:.7rem;padding:.1rem .4rem;border-radius:99px;background:var(--sunk);color:var(--ink-2);border:1px solid var(--line-strong);">${esc(comp.status || 'draft')}</span>
+          </div>
+          <p style="margin:.35rem 0 0;font-size:.85rem;color:var(--ink-2);">${esc(comp.body)}</p>
+          <div style="margin-top:.5rem;font-size:.75rem;color:var(--muted);">${esc(comp.kind)} · order ${comp.order}</div>
+        </div>
+      `;
+
+      // select on click
+      el.addEventListener('click', e => {
+        if (e.target.closest('.canvas-item-remove')) return;
+        selectComponent(comp.id);
+      });
+
+      // remove
+      el.querySelector('.canvas-item-remove').addEventListener('click', e => {
+        e.stopPropagation();
+        removeComponent(comp.id);
+      });
+
+      // drag reorder within canvas
+      el.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', comp.id);
+        e.dataTransfer.effectAllowed = 'move';
+        el.classList.add('dragging');
+      });
+      el.addEventListener('dragend', () => {
+        el.classList.remove('dragging');
+        document.querySelectorAll('.canvas-item.dragover').forEach(x => x.classList.remove('dragover'));
+      });
+
+      canvas.appendChild(el);
+    })
+  }
+
+  $('#previewCount').textContent = components.length + ' component' + (components.length !== 1 ? 's' : '');
+  renderInspector();
+  renderJson();
+}
+
+function selectComponent(id) {
+  selectedId = id;
+  render();
+}
+
+function deselect() {
+  selectedId = null;
+  render();
+}
+
+function addComponent(kind) {
+  components.push(newComponent(kind));
+  selectedId = components[components.length - 1].id;
+  render();
+  toast('Added ' + COMPONENT_DEFS[kind].label);
+}
+
+function removeComponent(id) {
+  components = components.filter(c => c.id !== id);
+  if (selectedId === id) selectedId = null;
+  render();
+  toast('Removed component');
+}
+
+function updateSelected(patch) {
+  if (!selectedId) return;
+  const comp = components.find(c => c.id === selectedId);
+  if (comp) Object.assign(comp, patch);
+  render();
+}
+
+/* ---------- inspector ---------- */
+function renderInspector() {
+  const container = $('#inspector');
+  if (!selectedId) {
+    container.innerHTML = `
+      <div class="property help">Select a component on the canvas to edit its title, body and status.</div>
+    `;
+    return;
+  }
+  const comp = components.find(c => c.id === selectedId);
+  const def = COMPONENT_DEFS[comp.kind];
+
+  container.innerHTML = `
+    <div class="property">
+      <label>Component kind</label>
+      <select id="inpKind" disabled>${def.label}</select>
+    </div>
+    <div class="property">
+      <label>Title</label>
+      <input id="inpTitle" value="${escAttr(comp.title)}">
+    </div>
+    <div class="property">
+      <label>Body / description</label>
+      <textarea id="inpBody">${esc(comp.body)}</textarea>
+    </div>
+    <div class="property">
+      <label>Status</label>
+      <div class="tag-pills">
+        <span class="tag-pill${comp.status === 'draft' ? ' active' : ''}" data-v="draft">Draft</span>
+        <span class="tag-pill${comp.status === 'ready' ? ' active' : ''}" data-v="ready">Ready</span>
+        <span class="tag-pill${comp.status === 'submitted' ? ' active' : ''}" data-v="submitted">Submitted</span>
+        <span class="tag-pill${comp.status === 'approved' ? ' active' : ''}" data-v="approved">Approved</span>
+      </div>
+    </div>
+    <div class="property help">Status colour follows the app's conventions: draft / ready / submitted / approved.</div>
+  `;
+
+  // wire inputs
+  $('#inpTitle').addEventListener('input', e => updateSelected({ title: e.target.value }));
+  $('#inpBody').addEventListener('input', e => updateSelected({ body: e.target.value }));
+  $('#inpBody').addEventListener('change', e => updateSelected({ body: e.target.value }));
+
+  $('#inspector .tag-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      $('#inspector .tag-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      updateSelected({ status: pill.dataset.v });
+    });
+  });
+}
+
+/* ---------- palette drag & drop ---------- */
+$('#palette').addEventListener('dragstart', e => {
+  const item = e.target.closest('.palette-item');
+  if (!item) return;
+  e.dataTransfer.setData('text/plain', item.dataset.kind);
+  e.dataTransfer.effectAllowed = 'copy';
+});
+
+const dropZone = $('#canvasDropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const kind = e.dataTransfer.getData('text/plain');
+  if (COMPONENT_DEFS[kind]) addComponent(kind);
+});
+
+/* canvas reorder drop */
+$('#canvas').addEventListener('dragover', e => { e.preventDefault(); });
+$('#canvas').addEventListener('drop', e => {
+  e.preventDefault();
+  const id = e.dataTransfer.getData('text/plain');
+  const comp = components.find(c => c.id === id);
+  if (!comp) return;
+  // move to end (simple reorder: append logic)
+  components = components.filter(c => c.id !== id);
+  comp.order = Date.now();
+  components.push(comp);
+  render();
+});
+
+/* ---------- actions ---------- */
+$('#btnClear').addEventListener('click', () => {
+  if (components.length && !confirm('Clear all components from the canvas?')) return;
+  components = []; selectedId = null; render();
+  toast('Canvas cleared');
+});
+
+$('#btnCopyJson').addEventListener('click', () => {
+  const json = JSON.stringify(components, null, 2);
+  navigator.clipboard.writeText(json).then(() => toast('JSON copied to clipboard'));
+});
+
+$('#btnDownloadJson').addEventListener('click', () => {
+  const json = JSON.stringify(components, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'tools-tab-layout.json'; a.click();
+  URL.revokeObjectURL(url);
+  toast('Layout downloaded');
+});
+
+$('#btnApplyToApp').addEventListener('click', () => {
+  const json = JSON.stringify(components, null, 2);
+  navigator.clipboard.writeText(json).then(() => {
+    toast('Layout copied — paste it into app.js / index.html Tools tab');
+  });
+});
+
+/* ---------- helpers ---------- */
+function $(s, el = document) { return el.querySelector(s); }
+function $$(s, el = document) { return [...el.querySelectorAll(s)]; }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+function escAttr(s) { return String(s ?? '').replace(/"/g, '&quot;'); }
+
+function renderJson() {
+  $('#jsonOutput').textContent = JSON.stringify(components, null, 2) || '{}';
+}
+
+function toast(msg, kind = '') {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'show ' + kind;
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => { t.className = ''; }, kind === 'err' ? 6000 : 3000);
+}
+
+/* ---------- init ---------- */
+render();
+</script>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mark" viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16.5" rx="2"/><path d="M9 3h6v3H9z"/><path d="M9 13.5l2 2 4-4.5"/></symbol>
+  <symbol id="i-tools" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8.5 10h7M8.5 13.5h7M8.5 17h4"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01" stroke-width="3"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M6 20v-6M12 20V5M18 20v-9M3 20h18"/></symbol>
+  <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 9V4h10v5M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><rect x="7" y="14" width="10" height="6"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/></symbol>
+  <symbol id="i-rows" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  <symbol id="i-me" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.4 3.6-5.5 7-5.5s6.2 2.1 7 5.5"/></symbol>
+  <symbol id="i-poe" viewBox="0 0 24 24"><path d="M3.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M8.5 13l2.5 2.5 4.5-5"/></symbol>
+</svg>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+</body>
+</html>

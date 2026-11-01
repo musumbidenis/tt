@@ -28,6 +28,24 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const LUNCH_AFTER = 3; // a double is two slots in the same morning or afternoon
 const LUNCH_SLOT = 7, LUNCH_TIME = ['12.00', '13.00']; // lunch can hold a CAT or extra attendance, never a lesson
 const KIND_LABEL = { lesson: 'Lesson', cat: 'CAT', extra: 'Extra CAT attendance' };
+
+/* Tools tab: kinds and statuses */
+const TOOL_KINDS = {
+  'learning-plan': { label: 'Learning plan', icon: 'i-chart', color: 'var(--p)', desc: 'One per unit per term, from loading & CAT weeks. HOD approves.' },
+  'session-plan': { label: 'Session plan', icon: 'i-list', color: 'var(--forest)', desc: 'One per lesson on timetable. Reuse last term\'s plans.' },
+  'assessment-tool': { label: 'Assessment tool', icon: 'i-print', color: 'var(--a)', desc: 'CAT1-4 or PRAC1-3 paper with marking guide. IAO reviews before CAT.' },
+  'marking-scheme': { label: 'Marking scheme', icon: 'i-grid', color: 'var(--l)', desc: 'Question breakdown, marks per question, grade boundaries for linked assessment.' }
+};
+
+const ASSESSMENT_TYPES = [
+  { code: 'CAT1', label: 'CAT 1' }, { code: 'CAT2', label: 'CAT 2' },
+  { code: 'CAT3', label: 'CAT 3' }, { code: 'CAT4', label: 'CAT 4' },
+  { code: 'PRAC1', label: 'PRAC 1' }, { code: 'PRAC2', label: 'PRAC 2' },
+  { code: 'PRAC3', label: 'PRAC 3' }
+];
+const TOOL_STATUSES = ['draft', 'ready', 'submitted', 'approved'];
+const TOOL_STATUS_LABEL = { draft: 'Draft', ready: 'Ready', submitted: 'Submitted', approved: 'Approved' };
+
 const PERIODS = [
   { code: 'L1', label: 'Lesson 1' }, { code: 'L2', label: 'Lesson 2' },
   { code: 'L3', label: 'Lesson 3' }, { code: 'L4', label: 'Lesson 4' },
@@ -41,6 +59,7 @@ const state = {
   auth: null,             // { token, staff: { code, name, roles }, mustChange }
   deviceId: '',
   classes: [], units: [], trainees: [], addreqs: [],
+  tools: [],              // learning plans, session plans, assessment tools, marking schemes
   meta: { term: null, weeks: [], pending: [], rejected: [], aliases: [], staff: {}, terms: [], unlocks: [], archived: [] },
   current: null,          // session document open in the Mark tab
   dirty: false,           // unsaved changes in the open register
@@ -50,6 +69,7 @@ const state = {
   activeTab: 'mark',
   report: null,           // last report shown, for export
   reportFilter: 'all',
+  toolsFilter: { type: '', status: '', search: '' },
 };
 
 /* ---------------- small helpers ---------------- */
@@ -2416,6 +2436,346 @@ function fillSettingsForms() {
   if (server) server.value = s.serverUrl || '';
 }
 
+/* ==================== TOOLS TAB: professional tools ==================== */
+
+// ---- tool persistence (PouchDB) ----
+async function loadTools() {
+  try {
+    const r = await db.allDocs({ include_docs: true, startkey: 'tool:', endkey: 'tool:￿' });
+    state.tools = r.rows.map((x) => x.doc).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    state.tools = [];
+  }
+}
+
+function toolId(kind, title) {
+  return 'tool:' + kind + ':' + title.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40) + '-' + Date.now().toString(36);
+}
+
+async function saveTool(doc) {
+  doc._id = doc._id || toolId(doc.kind, doc.title);
+  doc.updatedAt = nowISO();
+  if (!doc.createdAt) doc.createdAt = doc.updatedAt;
+  const res = await db.put(doc);
+  doc._rev = res.rev;
+  await loadTools();
+  renderTools();
+  return doc;
+}
+
+async function deleteTool(id) {
+  const doc = state.tools.find((t) => t._id === id);
+  if (!doc) return;
+  await db.remove(doc);
+  await loadTools();
+  renderTools();
+  toast('Tool deleted', 'ok');
+}
+
+function toolsForClassUnit(classCode, unitCode) {
+  return state.tools.filter((t) => t.classCode === classCode && t.unitCode === unitCode);
+}
+
+// ---- rendering the tools table ----
+function renderTools() {
+  const body = $('#toolsTableBody');
+  const wrap = $('#toolsTableWrap');
+  const empty = $('#toolsEmpty');
+  if (!body) return;
+
+  const { type, status, search } = state.toolsFilter;
+  let filtered = state.tools;
+
+  if (type) filtered = filtered.filter((t) => t.kind === type);
+  if (status) filtered = filtered.filter((t) => t.status === status);
+  if (search) {
+    const q = search.toLowerCase();
+    filtered = filtered.filter((t) => t.title.toLowerCase().includes(q) ||
+      (t.classCode?.toLowerCase().includes(q)) ||
+      (t.unitCode?.toLowerCase().includes(q)) ||
+      (t.description?.toLowerCase().includes(q)));
+  }
+
+  if (filtered.length === 0) {
+    body.innerHTML = '';
+    wrap.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  wrap.hidden = false;
+  empty.hidden = true;
+
+  body.innerHTML = filtered.map((t, i) => {
+    const kind = TOOL_KINDS[t.kind] || { label: t.kind, icon: 'i-tools', color: 'var(--muted)' };
+    const statusLabel = TOOL_STATUS_LABEL[t.status] || t.status;
+    const updated = t.updatedAt ? fmtShort(t.updatedAt) : '';
+    const classUnit = t.classCode && t.unitCode ? `${t.classCode} / ${t.unitCode}` : (t.classCode || t.unitCode || '—');
+    // Show assessment type for assessment tools
+    const typeLabel = t.kind === 'assessment-tool' && t.assessmentType ? `${kind.label} (${t.assessmentType})` : kind.label;
+    return `
+      <tr data-id="${esc(t._id)}">
+        <td class="sn">${i + 1}</td>
+        <td class="type ${esc(t.kind)}">
+          <svg class="i" aria-hidden="true"><use href="#${kind.icon}"/></svg>
+          ${esc(typeLabel)}
+        </td>
+        <td><b>${esc(t.title)}</b>${t.description ? '<br><small class="muted">' + esc(t.description).slice(0, 80) + (t.description.length > 80 ? '…' : '') + '</small>' : ''}</td>
+        <td>${esc(classUnit)}</td>
+        <td class="num"><span class="tool-pill ${esc(t.status)}">${esc(statusLabel)}</span></td>
+        <td class="num">${esc(updated)}</td>
+        <td>
+          <div class="tool-actions">
+            <button type="button" class="btn ghost small tool-view" data-id="${esc(t._id)}" title="View"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg></button>
+            <button type="button" class="btn ghost small tool-edit" data-id="${esc(t._id)}" title="Edit"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg></button>
+            ${t.status !== 'approved' ? `<button type="button" class="btn ghost small tool-submit" data-id="${esc(t._id)}" title="Submit">${t.status === 'draft' ? '<svg class="i" aria-hidden="true"><use href="#i-send"/></svg>' : '<svg class="i" aria-hidden="true"><use href="#i-send"/></svg>'}</button>` : ''}
+            <button type="button" class="btn ghost small danger tool-delete" data-id="${esc(t._id)}" title="Delete"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // wire row actions
+  $$('#toolsTableBody .tool-view').forEach((b) => b.addEventListener('click', () => openToolsDialog(b.dataset.id, 'view')));
+  $$('#toolsTableBody .tool-edit').forEach((b) => b.addEventListener('click', () => openToolsDialog(b.dataset.id, 'edit')));
+  $$('#toolsTableBody .tool-submit').forEach((b) => b.addEventListener('click', () => submitTool(b.dataset.id)));
+  $$('#toolsTableBody .tool-delete').forEach((b) => b.addEventListener('click', () => confirmDeleteTool(b.dataset.id)));
+}
+
+// ---- dialog: create / edit / view ----
+function openToolsDialog(id, mode = 'create') {
+  const dialog = $('#toolsDialog');
+  const body = $('#toolsDialogBody');
+  if (!dialog || !body) return;
+
+  let tool = null;
+  if (id) tool = state.tools.find((t) => t._id === id);
+  const isNew = !tool;
+  const kind = isNew ? 'learning-plan' : tool.kind;
+  const kindInfo = TOOL_KINDS[kind];
+
+  const title = isNew ? 'New ' + kindInfo.label : (mode === 'view' ? 'View ' + kindInfo.label : 'Edit ' + kindInfo.label);
+
+  // build form
+  const classOpts = state.classes.map((c) => ({ value: c.code, label: classLabel(c) }));
+  const unitOpts = state.units.map((u) => ({ value: u.code, label: u.code + ' - ' + u.name }));
+
+  let kindFields = '';
+  switch (kind) {
+    case 'learning-plan':
+      kindFields = `
+        <div class="conditional-field">
+          <h4>Learning plan details</h4>
+          <label>Term weeks covered<input type="text" name="weeksCovered" value="${esc(tool?.weeksCovered || '')}" placeholder="e.g. 1–12"></label>
+          <label>CAT weeks<input type="text" name="catWeeks" value="${esc(tool?.catWeeks || '')}" placeholder="e.g. 4, 8, 12"></label>
+          <label>Objectives<textarea name="objectives" rows="3">${esc(tool?.objectives || '')}</textarea></label>
+          <label>Content outline<textarea name="contentOutline" rows="3">${esc(tool?.contentOutline || '')}</textarea></label>
+          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
+        </div>
+      `;
+      break;
+    case 'session-plan':
+      kindFields = `
+        <div class="conditional-field">
+          <h4>Session plan details</h4>
+          <label>Lesson date<input type="date" name="lessonDate" value="${esc(tool?.lessonDate || todayISO())}"></label>
+          <label>Period<select name="period">${PERIODS.map(p => `<option value="${p.code}"${tool?.period === p.code ? ' selected' : ''}>${p.label}</option>`).join('')}</select></label>
+          <label>Slots<select name="slots"><option value="1"${tool?.slots === 1 ? ' selected' : ''}>1 (single)</option><option value="2"${tool?.slots === 2 ? ' selected' : ''}>2 (double)</option></select></label>
+          <label>Learning objectives<textarea name="objectives" rows="3">${esc(tool?.objectives || '')}</textarea></label>
+          <label>Lesson content<textarea name="content" rows="3">${esc(tool?.content || '')}</textarea></label>
+          <label>Resources / materials<textarea name="resources" rows="2">${esc(tool?.resources || '')}</textarea></label>
+          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
+        </div>
+      `;
+      break;
+    case 'assessment-tool':
+      kindFields = `
+        <div class="conditional-field">
+          <h4>Assessment tool details</h4>
+          <label>Assessment type<select name="assessmentType">${ASSESSMENT_TYPES.map(a => `<option value="${a.code}"${tool?.assessmentType === a.code ? ' selected' : ''}>${a.label}</option>`).join('')}</select></label>
+          <label>CAT week<input type="number" name="catWeek" min="1" max="12" value="${esc(tool?.catWeek || '')}"></label>
+          <label>Paper description<textarea name="paperDesc" rows="3">${esc(tool?.paperDesc || '')}</textarea></label>
+          <label>Duration (minutes)<input type="number" name="duration" min="15" max="180" value="${esc(tool?.duration || '')}"></label>
+          <label class="check"><input type="checkbox" name="linkedToCatRegister"${tool?.linkedToCatRegister ? ' checked' : ''}> Link to CAT register (auto-populate marks column)</label>
+          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
+        </div>
+      `;
+      break;
+    case 'marking-scheme':
+      kindFields = `
+        <div class="conditional-field">
+          <h4>Marking scheme details</h4>
+          <label>Linked assessment tool<select name="linkedToolId"><option value="">Select an assessment tool…</option>${state.tools.filter(t => t.kind === 'assessment-tool').map(t => `<option value="${t._id}"${tool?.linkedToolId === t._id ? ' selected' : ''}>${esc(t.title)} [${t.assessmentType || 'CAT'}] (${t.classCode}/${t.unitCode})</option>`).join('')}</select></label>
+          <label>Question breakdown<textarea name="questions" rows="4" placeholder="Q1: 10 marks - Describe...&#10;Q2: 15 marks - Calculate...&#10;Q3: 5 marks - Define...">${esc(tool?.questions || '')}</textarea></label>
+          <label>Marks per question<textarea name="marksBreakdown" rows="3" placeholder="Q1: 10&#10;Q2: 15&#10;Q3: 5">${esc(tool?.marksBreakdown || '')}</textarea></label>
+          <label>Total marks<input type="number" name="totalMarks" min="1" value="${esc(tool?.totalMarks || '')}"></label>
+          <label>Grade boundaries<textarea name="gradeBoundaries" rows="3" placeholder="A: 80%&#10;B: 65%&#10;C: 50%&#10;D: 40%">${esc(tool?.gradeBoundaries || '')}</textarea></label>
+          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
+        </div>
+      `;
+      break;
+  }
+
+  body.innerHTML = `
+    <div class="scan-head">
+      <strong>${esc(title)}</strong>
+      <button type="button" class="btn small ghost" id="toolsDialogClose">Cancel</button>
+    </div>
+    <form id="toolsForm" method="dialog">
+      <input type="hidden" name="id" value="${esc(tool?._id || '')}">
+      <input type="hidden" name="kind" value="${esc(kind)}">
+      <input type="hidden" name="createdAt" value="${esc(tool?.createdAt || '')}">
+
+      <label>Type<select name="kind"${isNew ? '' : ' disabled'}>${Object.entries(TOOL_KINDS).map(([k, v]) => `<option value="${k}"${k === kind ? ' selected' : ''}>${v.label}</option>`).join('')}</select></label>
+
+      <label>Class<select name="classCode" required>${classOpts.map(o => `<option value="${o.value}"${tool?.classCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
+
+      <label>Unit<select name="unitCode" required>${unitOpts.map(o => `<option value="${o.value}"${tool?.unitCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
+
+      <label>Status
+        <div class="status-chips">
+          ${TOOL_STATUSES.map(s => `<span class="status-chip${tool?.status === s ? ' active ' + s : ''}" data-status="${s}">${TOOL_STATUS_LABEL[s]}</span>`).join('')}
+        </div>
+      </label>
+
+      ${kindFields}
+
+      <p id="toolsMsg" class="err-text small" role="alert"></p>
+
+      <div class="row-actions">
+        ${isNew ? `<button type="button" class="btn ghost" id="toolsCancelBtn">Cancel</button>` : ''}
+        ${mode !== 'view' ? `<button type="submit" class="btn primary" id="toolsSaveBtn">${isNew ? 'Create' : 'Save'}</button>` : ''}
+        ${mode === 'view' && tool?.status !== 'approved' ? `<button type="button" class="btn primary" id="toolsSubmitBtn">Submit for approval</button>` : ''}
+      </div>
+    </form>
+  `;
+
+  // wire status chips
+  $$('#toolsDialogBody .status-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      $$('#toolsDialogBody .status-chip').forEach(c => c.classList.remove('active', 'draft', 'ready', 'submitted', 'approved'));
+      chip.classList.add('active', chip.dataset.status);
+    });
+  });
+
+  // wire kind change (re-render form)
+  const kindSelect = $('#toolsDialogBody select[name="kind"]');
+  if (kindSelect) {
+    kindSelect.addEventListener('change', (e) => {
+      // need to re-render with new kind - simplest: close and reopen with new kind
+      const formData = new FormData($('#toolsForm'));
+      const values = Object.fromEntries(formData.entries());
+      openToolsDialogWithData(values, mode);
+    });
+  }
+
+  // wire close/cancel
+  $('#toolsDialogClose')?.addEventListener('click', () => dialog.close());
+  $('#toolsCancelBtn')?.addEventListener('click', () => dialog.close());
+  $('#toolsSubmitBtn')?.addEventListener('click', () => { dialog.close(); submitTool(tool._id); });
+
+  // wire form submit
+  $('#toolsForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+
+    // get status from active chip
+    const activeChip = $('#toolsDialogBody .status-chip.active');
+    data.status = activeChip?.dataset.status || 'draft';
+
+    // validate
+    if (!data.classCode) { $('#toolsMsg').textContent = 'Class is required'; return; }
+    if (!data.unitCode) { $('#toolsMsg').textContent = 'Unit is required'; return; }
+
+    // auto-generate title from kind + class + unit
+    const kindInfo = TOOL_KINDS[data.kind] || { label: data.kind };
+    const classInfo = state.classes.find(c => c.code === data.classCode);
+    const unitInfo = state.units.find(u => u.code === data.unitCode);
+    const classLabel = classInfo ? classInfo.name || classInfo.code : data.classCode;
+    const unitLabel = unitInfo ? unitInfo.name || unitInfo.code : data.unitCode;
+    data.title = `${kindInfo.label} - ${classLabel} - ${unitLabel}`;
+
+    // save
+    try {
+      await saveTool(data);
+      dialog.close();
+      toast(isNew ? 'Tool created' : 'Tool saved', 'ok');
+    } catch (err) {
+      $('#toolsMsg').textContent = err.message;
+    }
+  });
+
+  dialog.showModal();
+}
+
+function openToolsDialogWithData(data, mode) {
+  // create a temporary tool object and open dialog
+  const tempTool = { _id: data.id || '', kind: data.kind, ...data };
+  state._tempTool = tempTool;
+  openToolsDialog(data.id, mode);
+  delete state._tempTool;
+}
+
+async function submitTool(id) {
+  const tool = state.tools.find((t) => t._id === id);
+  if (!tool) return;
+  const nextStatus = { draft: 'ready', ready: 'submitted', submitted: 'approved' }[tool.status];
+  if (!nextStatus) return;
+
+  if (nextStatus === 'submitted' && tool.kind === 'assessment-tool' && !navigator.onLine) {
+    toast('Submitting assessment tools needs internet (IAO notification)', 'err'); return;
+  }
+  if (nextStatus === 'approved' && !hasRole('HOD') && !hasRole('MIS') && !hasRole('IAO')) {
+    toast('Only HOD, MIS Officer or IAO can approve', 'err'); return;
+  }
+
+  tool.status = nextStatus;
+  await saveTool(tool);
+  toast(`Tool marked as ${TOOL_STATUS_LABEL[nextStatus]}`, 'ok');
+}
+
+function confirmDeleteTool(id) {
+  if (!confirm('Delete this tool permanently?')) return;
+  deleteTool(id);
+}
+
+// ---- wire tools tab ----
+function wireTools() {
+  // new tool button
+  $('#toolsNewBtn')?.addEventListener('click', () => openToolsDialog(null, 'create'));
+
+  // filters
+  $('#toolsSearch')?.addEventListener('input', debounce(() => {
+    state.toolsFilter.search = $('#toolsSearch').value.trim();
+    renderTools();
+  }, 200));
+
+  $('#toolsTypeFilter')?.addEventListener('change', (e) => {
+    state.toolsFilter.type = e.target.value;
+    renderTools();
+  });
+
+  $('#toolsStatusFilter')?.addEventListener('change', (e) => {
+    state.toolsFilter.status = e.target.value;
+    renderTools();
+  });
+
+  // re-render when tools tab becomes active
+  const originalSwitchTab = window.switchTab;
+  window.switchTab = function(tab) {
+    originalSwitchTab(tab);
+    if (tab === 'tools') renderTools();
+  };
+}
+
+// ---- init tools on startup ----
+async function initTools() {
+  await loadTools();
+  wireTools();
+}
+
 function wire() {
   $('#googleConnect')?.addEventListener('click', () => connectGoogle(!!me()?.email));
   // On wide screens the tabs become a side bar that starts just under the header, so it needs the header's height.
@@ -2618,6 +2978,7 @@ async function init() {
   updateNet();
   wire();
   await loadRoster();
+  await initTools();
   applyRoles();
   await resolveConflicts();
   refreshPending();
