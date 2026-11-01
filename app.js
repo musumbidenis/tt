@@ -2544,7 +2544,7 @@ function renderTools() {
 }
 
 // ---- dialog: create / edit / view ----
-function openToolsDialog(id, mode = 'create') {
+function openToolsDialog(id, mode = 'create', preSelectedKind) {
   const dialog = $('#toolsDialog');
   const body = $('#toolsDialogBody');
   if (!dialog || !body) return;
@@ -2552,14 +2552,15 @@ function openToolsDialog(id, mode = 'create') {
   let tool = null;
   if (id) tool = state.tools.find((t) => t._id === id);
   const isNew = !tool;
-  const kind = isNew ? 'learning-plan' : tool.kind;
+  const kind = isNew ? (preSelectedKind || 'learning-plan') : tool.kind;
   const kindInfo = TOOL_KINDS[kind];
 
   const title = isNew ? 'New ' + kindInfo.label : (mode === 'view' ? 'View ' + kindInfo.label : 'Edit ' + kindInfo.label);
 
-  // build form
-  const classOpts = state.classes.map((c) => ({ value: c.code, label: classLabel(c) }));
-  const unitOpts = state.units.map((u) => ({ value: u.code, label: u.code + ' - ' + u.name }));
+  // build form - filter classes/units by trainer's loading
+  const isTrainer = hasRole('TRAINER');
+  const classOpts = (isTrainer ? markClasses() : state.classes).map((c) => ({ value: c.code, label: classLabel(c) }));
+  const unitOpts = (isTrainer ? markableUnits() : state.units).map((u) => ({ value: u.code, label: u.code + ' - ' + u.name }));
 
   let kindFields = '';
   switch (kind) {
@@ -2697,6 +2698,16 @@ function openToolsDialog(id, mode = 'create') {
     const unitLabel = unitInfo ? unitInfo.name || unitInfo.code : data.unitCode;
     data.title = `${kindInfo.label} - ${classLabel} - ${unitLabel}`;
 
+    // handle file upload - convert to base64
+    const fileInput = $('#toolsForm input[name="document"]');
+    if (fileInput?.files?.[0]) {
+      const file = fileInput.files[0];
+      data.documentName = file.name;
+      data.documentType = file.type;
+      data.documentSize = file.size;
+      data.documentData = await fileToBase64(file);
+    }
+
     // save
     try {
       await saveTool(data);
@@ -2707,6 +2718,16 @@ function openToolsDialog(id, mode = 'create') {
     }
   });
 
+// helper: convert File to base64
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
   dialog.showModal();
 }
 
@@ -2714,7 +2735,7 @@ function openToolsDialogWithData(data, mode) {
   // create a temporary tool object and open dialog
   const tempTool = { _id: data.id || '', kind: data.kind, ...data };
   state._tempTool = tempTool;
-  openToolsDialog(data.id, mode);
+  openToolsDialog(data.id, mode, data.kind);
   delete state._tempTool;
 }
 
