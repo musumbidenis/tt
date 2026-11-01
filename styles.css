@@ -802,7 +802,7 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .item-tag { padding: .1rem .4rem; border-radius: 4px; font: 600 .7rem var(--display); margin-right: .4rem; }
 .item-tag.cat-tag { background: var(--cat-soft, #eff6ff); color: var(--cat-color, #2563eb); }
 .item-tag.prac-tag { background: var(--prac-soft, #fff7ed); color: var(--prac-color, #ea580c); }
-.poe-run-pages { margin: 0; }
+.poe-run-pages { max-height: none !important; overflow: visible !important; margin: 0; padding: 0; background: transparent; }
 .poe-run-pages .poe-page { margin: 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 4px; }
 .poe-changed { color: var(--d); font-size: .75rem; margin: 0; }
 .poe-changed.small { font-size: .7rem; }
