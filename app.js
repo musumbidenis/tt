@@ -2560,63 +2560,13 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
   // build form - filter classes/units by trainer's loading
   const isTrainer = hasRole('TRAINER');
   const classOpts = (isTrainer ? markClasses() : state.classes).map((c) => ({ value: c.code, label: classLabel(c) }));
-  const unitOpts = (isTrainer ? markableUnits() : state.units).map((u) => ({ value: u.code, label: u.code + ' - ' + u.name }));
 
-  let kindFields = '';
-  switch (kind) {
-    case 'learning-plan':
-      kindFields = `
-        <div class="conditional-field">
-          <h4>Learning plan details</h4>
-          <label>Term weeks covered<input type="text" name="weeksCovered" value="${esc(tool?.weeksCovered || '')}" placeholder="e.g. 1–12"></label>
-          <label>CAT weeks<input type="text" name="catWeeks" value="${esc(tool?.catWeeks || '')}" placeholder="e.g. 4, 8, 12"></label>
-          <label>Objectives<textarea name="objectives" rows="3">${esc(tool?.objectives || '')}</textarea></label>
-          <label>Content outline<textarea name="contentOutline" rows="3">${esc(tool?.contentOutline || '')}</textarea></label>
-          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
-        </div>
-      `;
-      break;
-    case 'session-plan':
-      kindFields = `
-        <div class="conditional-field">
-          <h4>Session plan details</h4>
-          <label>Lesson date<input type="date" name="lessonDate" value="${esc(tool?.lessonDate || todayISO())}"></label>
-          <label>Period<select name="period">${PERIODS.map(p => `<option value="${p.code}"${tool?.period === p.code ? ' selected' : ''}>${p.label}</option>`).join('')}</select></label>
-          <label>Slots<select name="slots"><option value="1"${tool?.slots === 1 ? ' selected' : ''}>1 (single)</option><option value="2"${tool?.slots === 2 ? ' selected' : ''}>2 (double)</option></select></label>
-          <label>Learning objectives<textarea name="objectives" rows="3">${esc(tool?.objectives || '')}</textarea></label>
-          <label>Lesson content<textarea name="content" rows="3">${esc(tool?.content || '')}</textarea></label>
-          <label>Resources / materials<textarea name="resources" rows="2">${esc(tool?.resources || '')}</textarea></label>
-          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
-        </div>
-      `;
-      break;
-    case 'assessment-tool':
-      kindFields = `
-        <div class="conditional-field">
-          <h4>Assessment tool details</h4>
-          <label>Assessment type<select name="assessmentType">${ASSESSMENT_TYPES.map(a => `<option value="${a.code}"${tool?.assessmentType === a.code ? ' selected' : ''}>${a.label}</option>`).join('')}</select></label>
-          <label>CAT week<input type="number" name="catWeek" min="1" max="12" value="${esc(tool?.catWeek || '')}"></label>
-          <label>Paper description<textarea name="paperDesc" rows="3">${esc(tool?.paperDesc || '')}</textarea></label>
-          <label>Duration (minutes)<input type="number" name="duration" min="15" max="180" value="${esc(tool?.duration || '')}"></label>
-          <label class="check"><input type="checkbox" name="linkedToCatRegister"${tool?.linkedToCatRegister ? ' checked' : ''}> Link to CAT register (auto-populate marks column)</label>
-          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
-        </div>
-      `;
-      break;
-    case 'marking-scheme':
-      kindFields = `
-        <div class="conditional-field">
-          <h4>Marking scheme details</h4>
-          <label>Linked assessment tool<select name="linkedToolId"><option value="">Select an assessment tool…</option>${state.tools.filter(t => t.kind === 'assessment-tool').map(t => `<option value="${t._id}"${tool?.linkedToolId === t._id ? ' selected' : ''}>${esc(t.title)} [${t.assessmentType || 'CAT'}] (${t.classCode}/${t.unitCode})</option>`).join('')}</select></label>
-          <label>Question breakdown<textarea name="questions" rows="4" placeholder="Q1: 10 marks - Describe...&#10;Q2: 15 marks - Calculate...&#10;Q3: 5 marks - Define...">${esc(tool?.questions || '')}</textarea></label>
-          <label>Marks per question<textarea name="marksBreakdown" rows="3" placeholder="Q1: 10&#10;Q2: 15&#10;Q3: 5">${esc(tool?.marksBreakdown || '')}</textarea></label>
-          <label>Total marks<input type="number" name="totalMarks" min="1" value="${esc(tool?.totalMarks || '')}"></label>
-          <label>Grade boundaries<textarea name="gradeBoundaries" rows="3" placeholder="A: 80%&#10;B: 65%&#10;C: 50%&#10;D: 40%">${esc(tool?.gradeBoundaries || '')}</textarea></label>
-          <label>Upload document<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx"></label>
-        </div>
-      `;
-      break;
-  }
+  // All units with classCode for filtering
+  const allUnitOpts = (isTrainer ? markableUnits() : state.units).map((u) => ({
+    value: u.code,
+    label: u.code + ' - ' + u.name,
+    classCode: u.classCode
+  }));
 
   body.innerHTML = `
     <div class="scan-head">
@@ -2632,7 +2582,7 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
 
       <label>Class<select name="classCode" required>${classOpts.map(o => `<option value="${o.value}"${tool?.classCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
 
-      <label>Unit<select name="unitCode" required>${unitOpts.map(o => `<option value="${o.value}"${tool?.unitCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
+      <label>Unit<select name="unitCode" required>${allUnitOpts.filter(u => !tool?.classCode || u.classCode === tool.classCode).map(o => `<option value="${o.value}"${tool?.unitCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
 
       <label>Status
         <div class="status-chips">
@@ -2640,7 +2590,7 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
         </div>
       </label>
 
-      ${kindFields}
+      <label>Document (Word for Google Docs preview)<input type="file" name="document" accept=".doc,.docx" required></label>
 
       <p id="toolsMsg" class="err-text small" role="alert"></p>
 
@@ -2659,6 +2609,17 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
       chip.classList.add('active', chip.dataset.status);
     });
   });
+
+  // wire unit dropdown to filter by class
+  const classSelect = $('#toolsDialogBody select[name="classCode"]');
+  const unitSelect = $('#toolsDialogBody select[name="unitCode"]');
+  if (classSelect && unitSelect) {
+    classSelect.addEventListener('change', () => {
+      const selectedClass = classSelect.value;
+      const filteredUnits = allUnitOpts.filter(u => !selectedClass || u.classCode === selectedClass);
+      unitSelect.innerHTML = filteredUnits.map(o => `<option value="${o.value}"${tool?.unitCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('');
+    });
+  }
 
   // wire kind change (re-render form)
   const kindSelect = $('#toolsDialogBody select[name="kind"]');
