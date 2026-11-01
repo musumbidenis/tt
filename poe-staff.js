@@ -302,9 +302,8 @@ const PoeStaff = (() => {
     const itemsHtml = allItems.map((e) => `
       <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
         <span class="poe-view2-mark">${esc(e.item)} - <input type="number" class="mk-input-inline" inputmode="numeric" min="0" max="100" step="1" value="${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}" data-cls="${esc(e.classCode)}" data-unit="${esc(e.unitCode)}" data-adm="${esc(e.admNo)}" data-col="${esc(e.item)}" aria-label="${esc(e.item)} mark"></span>
-        ${e.status === 'returned' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}</span>` : ''}
         ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
-        ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small" style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;"><b>Note:</b> ${esc(e.comment)}${e.decidedName ? `<span class="poe-approved-by">Approved by ${esc(e.decidedName)}</span>` : ''}</p>` : ''}
+        ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small" style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;"><b>Note:</b> ${esc(e.comment)}${e.decidedName ? `<span class="poe-approved-by">${e.status === 'approved' ? 'Approved' : 'Returned'} by ${esc(e.decidedName)}</span>` : ''}</p>` : ''}
         <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
       </div>
     `).join('');
