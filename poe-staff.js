@@ -100,16 +100,14 @@ const PoeStaff = (() => {
     if (ps.mode === 'stats') { box().innerHTML = modeToggle() + '<div id="poestats"></div>'; PoeStats.render(); return; }
     const all = ps.list, counts = { submitted: 0, approved: 0, returned: 0 };
     for (const e of latestOnly()) counts[e.status] = (counts[e.status] || 0) + 1;
-    const chips = [['submitted', canDecide() ? 'To review' : 'With trainers'], ['approved', 'Approved'], ['returned', 'Returned'], ['', 'All']]
-      .map(([k, l]) => `<button type="button" class="chipbtn${ps.status === k ? ' on' : ''}" data-status="${k}">${l}${k && counts[k] ? ` <span class="n">${counts[k]}</span>` : ''}</button>`).join('');
+    const statusOptions = [['', 'All'], ['submitted', canDecide() ? 'To review' : 'With trainers'], ['approved', 'Approved'], ['returned', 'Returned']]
+      .map(([v, l]) => `<option value="${v}"${v === ps.status ? ' selected' : ''}>${l}${v && counts[v] ? ` (${counts[v]})` : ''}</option>`).join('');
     const classes = [...new Set(all.map((e) => e.classCode))].sort();
     // Start scoped to one class and unit (simpler than everything at once); the person can still switch to All.
     if (!ps.defaulted && classes.length) { ps.defaulted = true; if (!ps.cls) ps.cls = classes[0]; }
     const units = [...new Map(all.filter((e) => !ps.cls || e.classCode === ps.cls).map((e) => [e.unitCode, e.unitName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
     if (!ps.unitDefaulted && ps.cls && units.length) { ps.unitDefaulted = true; if (!ps.unit) ps.unit = units[0][0]; }
     const students = sortedStudents();
-    const links = [ps.sheetUrl && `<a class="btn small" href="${esc(ps.sheetUrl)}" target="_blank" rel="noopener">My attendance sheet in Drive</a>`,
-      ps.indexUrl && `<a class="btn small" href="${esc(ps.indexUrl)}" target="_blank" rel="noopener">Evidence index sheet</a>`].filter(Boolean).join('');
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
@@ -118,9 +116,8 @@ const PoeStaff = (() => {
         <p class="muted small">${canDecide() ? 'Students send CAT and practical evidence from the student app. Pick a class and unit, open a student to review what they sent, then approve or return each item.'
           : 'Students send CAT and practical evidence from the student app; their trainers approve it or return it with a note.'}</p>
         ${ps.driveReady ? '' : '<p class="warn-text small">The Google Drive bridge has not reported in yet, so students cannot upload. The MIS Officer sets it up once (see the README).</p>'}
-        ${links ? `<div class="row-actions">${links}</div>` : ''}
-        <div class="chips poe-chips" role="group" aria-label="Show">${chips}</div>
         <div class="poe-filters">
+          <select id="poeStatus" aria-label="Status">${statusOptions}</select>
           <select id="poeClass" aria-label="Class">${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="poeUnitF" aria-label="Unit">${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
           <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
@@ -472,6 +469,7 @@ const PoeStaff = (() => {
       if (ps.mode === 'trainer' && t.closest('#poe')) { PoeTrainer.onChange(t); return; }
       if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; ps.unitDefaulted = !t.value; Tables.reset('poeUnit'); draw(); }
       if (t.id === 'poeUnitF') { ps.unit = t.value; Tables.reset('poeUnit'); draw(); }
+      if (t.id === 'poeStatus') { ps.status = t.value; Tables.reset('poeUnit'); draw(); }
     });
     document.addEventListener('input', (e) => {
       if (e.target.id !== 'poeSearch') return;
