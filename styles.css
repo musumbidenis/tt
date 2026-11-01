@@ -789,13 +789,15 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-view2 { display: flex; flex-direction: column; gap: .5rem; overflow-y: auto; max-height: 85vh; }
 .poe-view2-top { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
 .poe-view2-item { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .6rem; }
+.poe-view2-mark { display: flex; align-items: center; gap: .4rem; padding: .5rem 0; }
 .poe-view2-mark b { font-size: 1.05rem; }
+.mk-input-inline { width: 5.5ch; font: 600 1rem var(--display); padding: .25rem .4rem; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); text-align: center; }
+.mk-input-inline:focus { outline: none; border-color: var(--p); box-shadow: 0 0 0 2px var(--p-soft); }
 .poe-view2-pos { margin-left: auto; }
 .poe-view2-note textarea { width: 100%; }
 .poe-view2-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 .poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
 .poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
-.poe-view2-more { display: flex; gap: .4rem; font-size: .8rem; }
 /* Running PDF preview: ONE continuous scroll, no visual breaks between items */
 .poe-run-container { display: flex; flex-direction: column; gap: 0; max-height: none; overflow: visible; padding-right: .5rem; }
 .poe-run-item { padding: 0; margin: 0; display: contents; }

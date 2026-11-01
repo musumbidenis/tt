@@ -258,6 +258,23 @@ const PoeStaff = (() => {
     return job;
   }
   const prefetch = (ids) => { for (const x of ids) if (x && navigator.onLine) fetchFile(x).catch(() => {}); };
+  async function saveInlineMark(inp) {
+    if (!navigator.onLine) { toast('Marks need internet to sync', 'err'); return; }
+    const col = inp.dataset.col, cls = inp.dataset.cls, unit = inp.dataset.unit, adm = inp.dataset.adm;
+    const val = inp.value === '' ? null : Number(inp.value);
+    if (val !== null && (val < 0 || val > 100 || !Number.isInteger(val))) { inp.classList.add('bad'); toast('Marks are whole numbers 0–100', 'err'); return; }
+    inp.classList.remove('bad');
+    const k = markKey(cls, unit, adm);
+    const row = ps.marks.get(k) || { c: cls, u: unit, a: adm };
+    row[col] = val; row.updatedAt = nowISO(); row.updatedBy = me().code;
+    ps.marks.set(k, row);
+    try {
+      await api('marksPush', { classCode: cls, unitCode: unit, rows: [{ admNo: adm, [col]: val, updatedAt: row.updatedAt, updatedBy: row.updatedBy }] });
+      toast('Mark saved', 'ok');
+    } catch (err) {
+      toast('Could not save: ' + err.message, 'err');
+    }
+  }
   /** Student-level navigation: open all evidence for a student for the selected unit, displayed as a running PDF. */
   async function openViewer(idOrAdm, order) {
     // First, resolve to a student (by admission number)
@@ -284,7 +301,7 @@ const PoeStaff = (() => {
     // Build running PDF HTML: single flat list in one scroll area, no visual breaks
     const itemsHtml = allItems.map((e) => `
       <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
-        <span class="poe-view2-mark">${esc(e.item)} - <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
+        <span class="poe-view2-mark">${esc(e.item)} - <input type="number" class="mk-input-inline" inputmode="numeric" min="0" max="100" step="1" value="${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}" data-cls="${esc(e.classCode)}" data-unit="${esc(e.unitCode)}" data-adm="${esc(e.admNo)}" data-col="${esc(e.item)}" aria-label="${esc(e.item)} mark"></span>
         ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
         ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
         ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
@@ -304,10 +321,6 @@ const PoeStaff = (() => {
             <button type="button" class="btn small" data-nav="${order[i + 1] || ''}" ${i >= 0 && i < order.length - 1 ? '' : 'disabled'} aria-label="Next">Next ›</button></div>
           ${canAct ? `<div class="poe-decide2"><button type="button" class="btn danger small" data-decide="returned">Return</button>
             <button type="button" class="btn primary small" data-decide="approved">${studentItems.some((x) => x.status === 'approved') ? 'Approved ✓' : 'Approve'}</button></div>` : ''}
-          <div class="poe-view2-more">
-            ${studentItems.filter((x) => x.status === 'approved' && x.approvalRef).map((x) => `<button type="button" class="btn small ghost" data-act="slip" data-slip="${esc(x.id)}">Slip (${esc(x.item)})</button>`).join('')}
-            ${studentItems.map((x) => `<a class="btn small ghost" href="https://drive.google.com/file/d/${esc(x.fileId)}/view" target="_blank" rel="noopener">Drive (${esc(x.item)})</a>`).join('')}
-          </div>
         </div>
       </div>`;
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
@@ -348,6 +361,7 @@ const PoeStaff = (() => {
     }
     const lib = await Imports.pdfLib();
     const doc = await lib.getDocument({ data: file.bytes.slice() }).promise;
+    holder.innerHTML = '';
     const width = Math.min(holder.clientWidth || 640, 1100), dpr = Math.min(window.devicePixelRatio || 1, 2), QUALITY = 1.6;
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
@@ -464,6 +478,14 @@ const PoeStaff = (() => {
       if (e.target.id !== 'poeSearch') return;
       ps.q = e.target.value; Tables.reset('poeUnit');
       clearTimeout(ps.qt); ps.qt = setTimeout(() => { const pos = e.target.selectionStart; draw(); const s = $('#poeSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } }, 200);
+    });
+    document.addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.matches('#poeDialog .mk-input-inline') && !t.readOnly) saveInlineMark(t);
+    });
+    document.addEventListener('keydown', (e) => {
+      const t = e.target;
+      if (t.matches('#poeDialog .mk-input-inline') && e.key === 'Enter' && !t.readOnly) { e.preventDefault(); saveInlineMark(t); t.blur(); }
     });
     document.addEventListener('submit', (e) => {
       if (ps.mode !== 'verify' || !e.target.closest('#poe')) return;
