@@ -295,14 +295,15 @@ const PoeStaff = (() => {
       toast('Could not save: ' + err.message, 'err');
     }
   }
-  /** Student-level navigation: open all evidence for a student at once. */
+  /** Student-level navigation: open all evidence for a student for the selected unit, displayed as a running PDF. */
   async function openViewer(idOrAdm, order) {
     // First, resolve to a student (by admission number)
     let admNo = idOrAdm;
     let firstEvidence = ps.list.find((x) => x.id === idOrAdm);
     if (firstEvidence) admNo = firstEvidence.admNo;
-    // Get all evidence for this student (matching current filters)
-    const studentItems = ps.list.filter((x) => lower(x.admNo) === lower(admNo));
+    // Get evidence for this student in the currently selected unit (ps.unit from filters)
+    const unitFilter = ps.unit || (firstEvidence?.unitCode);
+    const studentItems = ps.list.filter((x) => lower(x.admNo) === lower(admNo) && (!unitFilter || x.unitCode === unitFilter));
     if (!studentItems.length) return;
     // Use the first item for student metadata
     const first = studentItems[0];
@@ -316,32 +317,39 @@ const PoeStaff = (() => {
     const hasPending = studentItems.some((x) => x.status === 'submitted');
     const canAct = canDecide() && (hasPending || hasRole('HOD') || studentItems.some((x) => x.decidedName === me().name));
     const marksHtml = marksEditor(first.classCode, first.unitCode, first.admNo);
-    // Build the items list HTML - show all evidence for this student
-    const itemsHtml = studentItems.map((e, idx) => {
-      const decided = e.status !== 'submitted';
-      const mark = fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item));
-      const changedNote = (e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : '';
+    // Group items: CATs first (CAT1-CAT4), then Practicals (PRAC1-PRAC3), each in ITEMS order
+    const catItems = studentItems.filter((e) => e.item.startsWith('CAT')).sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
+    const pracItems = studentItems.filter((e) => e.item.startsWith('PRAC')).sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
+    // Build running PDF HTML: single scroll area with all pages concatenated
+    const renderSection = (items, sectionTitle, sectionClass) => {
+      if (!items.length) return '';
       return `
-        <div class="poe-student-item" data-evidence-id="${esc(e.id)}">
-          <div class="poe-student-item-header">
-            <span class="item-tag">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
-            <span class="poe-view2-mark">Mark <b>${mark}</b></span>
-            ${decided ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
-            ${changedNote}
-          </div>
-          ${decided && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
-          <div id="poePages-${esc(e.id)}" class="poe-pages-view" aria-live="polite"><p class="muted">Loading…</p></div>
+        <div class="poe-run-section ${sectionClass}">
+          <div class="poe-run-section-title">${sectionTitle}</div>
+          ${items.map((e) => `
+            <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
+              <div class="poe-run-item-header">
+                <span class="item-tag ${e.item.startsWith('CAT') ? 'cat-tag' : 'prac-tag'}">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
+                <span class="poe-view2-mark">Mark <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
+                ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
+                ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
+              </div>
+              ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
+              <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
+            </div>
+          `).join('')}
         </div>`;
-    }).join('');
+    };
+    const itemsHtml = renderSection(catItems, 'Continuous Assessment Tests (CATs)', 'cat-section') + renderSection(pracItems, 'Practicals', 'prac-section');
     // Position indicator: student X of Y
     const posHtml = order.length > 1 ? `<span class="muted tiny poe-view2-pos">${i + 1} / ${order.length}</span>` : '';
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view2">
         <div class="poe-view2-top">
-          <div><b>${esc(first.name)}</b> <span class="muted small">${esc(first.admNo)} · ${esc(first.classCode)}</span>${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}${posHtml}</div>
+          <div><b>${esc(first.name)}</b> <span class="muted small">${esc(first.admNo)} · ${esc(first.classCode)} · ${esc(first.unitName || unitFilter)}</span>${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}${posHtml}</div>
           <button type="button" class="btn small ghost" data-act="close" aria-label="Close">✕</button>
         </div>
-        <div class="poe-student-items">${itemsHtml}</div>
+        <div class="poe-run-container">${itemsHtml}</div>
         ${marksHtml}
         ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})"></textarea></div>` : ''}
         <div class="poe-view2-actions">
@@ -358,14 +366,15 @@ const PoeStaff = (() => {
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
     Imports.pdfLib().catch(() => {});            // the PDF reader loads while the file is on its way
     // Load all files for this student in parallel
-    const loadPromises = studentItems.map(async (e, idx) => {
+    const allItems = [...catItems, ...pracItems];
+    const loadPromises = allItems.map(async (e, idx) => {
       try {
         const file = await fetchFile(e.id);
         // Prefetch adjacent students' first files (only once, for the first item)
         if (idx === 0) {
           const adjAdms = [order[i - 1], order[i + 1]].filter(Boolean);
           for (const a of adjAdms) {
-            const adjItems = ps.list.filter((x) => lower(x.admNo) === lower(a));
+            const adjItems = ps.list.filter((x) => lower(x.admNo) === lower(a) && (!unitFilter || x.unitCode === unitFilter));
             if (adjItems.length) prefetch([adjItems[0].id]);
           }
         }

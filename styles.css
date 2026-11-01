@@ -796,14 +796,35 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
 .poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
 .poe-view2-more { display: flex; gap: .4rem; }
-/* Student items in preview: multiple evidence pieces for one student */
-.poe-student-items { display: flex; flex-direction: column; gap: .75rem; }
-.poe-student-item { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; background: var(--surface); }
-.poe-student-item-header { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .6rem; margin-bottom: .5rem; }
-.poe-student-item .poe-pages-view { margin-top: .5rem; }
-.poe-student-item .poe-page { margin: .25rem 0; }
+/* Running PDF preview: continuous scroll with CAT/Practical sections */
+.poe-run-container { display: flex; flex-direction: column; gap: 1.5rem; max-height: 70vh; overflow-y: auto; padding-right: .5rem; }
+.poe-run-section { display: flex; flex-direction: column; gap: .75rem; }
+.poe-run-section-title { font: 600 .85rem var(--display); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding-bottom: .4rem; border-bottom: 2px solid var(--line); margin-bottom: .5rem; }
+.poe-run-section.cat-section .poe-run-section-title { border-color: var(--cat-color, #2563eb); color: var(--cat-color, #2563eb); }
+.poe-run-section.prac-section .poe-run-section-title { border-color: var(--prac-color, #ea580c); color: var(--prac-color, #ea580c); }
+.poe-run-item { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; background: var(--surface); }
+.poe-run-item-header { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .6rem; margin-bottom: .5rem; }
+.item-tag.cat-tag { background: var(--cat-soft, #eff6ff); color: var(--cat-color, #2563eb); border: 1px solid var(--cat-color, #2563eb); }
+.item-tag.prac-tag { background: var(--prac-soft, #fff7ed); color: var(--prac-color, #ea580c); border: 1px solid var(--prac-color, #ea580c); }
+.poe-run-pages { margin-top: .5rem; }
+.poe-run-pages .poe-page { margin: .25rem 0; }
 .poe-changed { color: var(--d); font-size: .8rem; margin: .25rem 0 .5rem; }
 .poe-changed.small { font-size: .7rem; }
+/* CSS variables for CAT/Practical colors */
+:root {
+  --cat-color: #2563eb;
+  --cat-soft: #eff6ff;
+  --prac-color: #ea580c;
+  --prac-soft: #fff7ed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cat-color: #60a5fa;
+    --cat-soft: #1e3a5f;
+    --prac-color: #fb923c;
+    --prac-soft: #3d2408;
+  }
+}
 /* Marks editor in POE dialog */
 .poe-marks-editor { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .4rem; padding: .5rem 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: .25rem 0; }
 .mk-row { display: flex; flex-direction: column; gap: .2rem; }
