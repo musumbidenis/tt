@@ -319,15 +319,13 @@ const PoeStaff = (() => {
     const marksHtml = marksEditor(first.classCode, first.unitCode, first.admNo);
     // Sort items: CATs first (CAT1-CAT4), then Practicals (PRAC1-PRAC3), each in ITEMS order
     const allItems = studentItems.sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
-    // Build running PDF HTML: single flat list in one scroll area
+    // Build running PDF HTML: single flat list in one scroll area, no visual breaks
     const itemsHtml = allItems.map((e) => `
       <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
-        <div class="poe-run-item-header">
-          <span class="item-tag ${e.item.startsWith('CAT') ? 'cat-tag' : 'prac-tag'}">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
-          <span class="poe-view2-mark">Mark <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
-          ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
-          ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
-        </div>
+        <span class="item-tag ${e.item.startsWith('CAT') ? 'cat-tag' : 'prac-tag'}">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
+        <span class="poe-view2-mark">Mark <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
+        ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
+        ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
         ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
         <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
       </div>

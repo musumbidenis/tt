@@ -796,16 +796,15 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
 .poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
 .poe-view2-more { display: flex; gap: .4rem; }
-/* Running PDF preview: ONE continuous scroll for the selected unit */
-.poe-run-container { display: flex; flex-direction: column; gap: .75rem; max-height: 70vh; overflow-y: auto; padding-right: .5rem; }
-.poe-run-item { padding: .25rem 0; }
-.poe-run-item-header { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .6rem; margin-bottom: .25rem; font-size: .85rem; }
-.item-tag { padding: .1rem .4rem; border-radius: 4px; font: 600 .7rem var(--display); }
+/* Running PDF preview: ONE continuous scroll, no visual breaks between items */
+.poe-run-container { display: flex; flex-direction: column; gap: 0; max-height: 70vh; overflow-y: auto; padding-right: .5rem; }
+.poe-run-item { padding: 0; margin: 0; display: contents; }
+.item-tag { padding: .1rem .4rem; border-radius: 4px; font: 600 .7rem var(--display); margin-right: .4rem; }
 .item-tag.cat-tag { background: var(--cat-soft, #eff6ff); color: var(--cat-color, #2563eb); }
 .item-tag.prac-tag { background: var(--prac-soft, #fff7ed); color: var(--prac-color, #ea580c); }
-.poe-run-pages { margin-top: .25rem; }
-.poe-run-pages .poe-page { margin: .25rem 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 4px; }
-.poe-changed { color: var(--d); font-size: .75rem; margin: .25rem 0 .5rem; }
+.poe-run-pages { margin: 0; }
+.poe-run-pages .poe-page { margin: 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 4px; }
+.poe-changed { color: var(--d); font-size: .75rem; margin: 0; }
 .poe-changed.small { font-size: .7rem; }
 /* CSS variables for CAT/Practical colors */
 :root {
