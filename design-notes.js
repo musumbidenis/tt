@@ -120,8 +120,11 @@
   style.textContent = `
     #dn-bar, #dn-pop, #dn-list { font: 500 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; box-sizing: border-box; }
     #dn-bar * , #dn-pop *, #dn-list * { box-sizing: border-box; }
+    /* Bar on page: fixed at top of viewport */
     #dn-bar { position: fixed; inset: 0 0 auto 0; z-index: 2147483000; display: flex; align-items: center; gap: .5rem;
       padding: .4rem .6rem; background: #14202b; color: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.35); flex-wrap: wrap; }
+    /* Bar inside a dialog: sticky at top of dialog content, above backdrop */
+    dialog[open] > #dn-bar { position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
     #dn-bar b { font-weight: 700; margin-right: .2rem; }
     #dn-bar .sp { flex: 1 1 auto; }
     #dn-bar button { font: inherit; padding: .3rem .6rem; border-radius: 6px; border: 1px solid #40596e;
@@ -164,12 +167,41 @@
     <button id="dn-copy">Copy</button>
     <button id="dn-clear">Clear</button>
     <button id="dn-off" title="Leave the page as it normally is">Close</button>`;
+  // Initially append to body; will be moved into dialog when one opens
   document.body.appendChild(bar);
   document.body.classList.add('dn-on');
   const measure = () => document.documentElement.style.setProperty('--dn-h', bar.offsetHeight + 'px');
   measure();
   window.addEventListener('resize', measure);
   new ResizeObserver(measure).observe(bar);
+
+  /* ---------- dialog tracking: move bar into open dialog so it sits above the backdrop ---------- */
+  function repositionBar() {
+    const container = notesContainer();
+    if (container !== bar.parentElement) {
+      // Move bar to the new container (dialog or body)
+      container.appendChild(bar);
+      // Re-measure height since layout may change
+      measure();
+    }
+  }
+  // Watch for dialogs opening/closing
+  const dialogObserver = new MutationObserver(() => repositionBar());
+  dialogObserver.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open', 'hidden', 'style', 'class'] });
+  // Also catch programmatic showModal()/close()
+  const originalShowModal = HTMLDialogElement.prototype.showModal;
+  const originalClose = HTMLDialogElement.prototype.close;
+  HTMLDialogElement.prototype.showModal = function(...args) {
+    const ret = originalShowModal.apply(this, args);
+    repositionBar();
+    return ret;
+  };
+  HTMLDialogElement.prototype.close = function(...args) {
+    const ret = originalClose.apply(this, args);
+    // Slight delay to let the 'open' attribute be removed
+    setTimeout(repositionBar, 0);
+    return ret;
+  };
 
   let toastTimer;
   function toast(msg) {
@@ -407,6 +439,7 @@
       unhover();
       closeBox();
       $('#dn-list')?.remove();
+      dialogObserver.disconnect();
       bar.remove();
       style.remove();
       document.body.classList.remove('dn-on');
