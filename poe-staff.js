@@ -357,7 +357,6 @@ const PoeStaff = (() => {
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
     Imports.pdfLib().catch(() => {});            // the PDF reader loads while the file is on its way
     // Load all files for this student in parallel
-    const allItems = [...catItems, ...pracItems];
     const loadPromises = allItems.map(async (e, idx) => {
       try {
         const file = await fetchFile(e.id);
