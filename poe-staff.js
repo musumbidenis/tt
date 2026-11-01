@@ -81,6 +81,8 @@ const PoeStaff = (() => {
     items: (r) => r.items.length, pending: (r) => r.counts.submitted }, 'name');
   /** Every shown student's files in display order, so Previous / Next in the preview walk one student then roll on to the next. */
   const evidenceOrder = () => sortedStudents().flatMap((r) => r.items.map((e) => e.id));
+  /** Student-level order for navigation: each student appears once, Prev/Next move between students. */
+  const studentOrder = () => sortedStudents().map((r) => r.admNo);
 
   const modeToggle = () => (visitorOnly()
     ? `<div class="view-tabs poe-mode" role="group" aria-label="View">
@@ -293,60 +295,97 @@ const PoeStaff = (() => {
       toast('Could not save: ' + err.message, 'err');
     }
   }
-  async function openViewer(id, order) {
-    const e = ps.list.find((x) => x.id === id); if (!e) return;
-    ps.open = id;
+  /** Student-level navigation: open all evidence for a student at once. */
+  async function openViewer(idOrAdm, order) {
+    // First, resolve to a student (by admission number)
+    let admNo = idOrAdm;
+    let firstEvidence = ps.list.find((x) => x.id === idOrAdm);
+    if (firstEvidence) admNo = firstEvidence.admNo;
+    // Get all evidence for this student (matching current filters)
+    const studentItems = ps.list.filter((x) => lower(x.admNo) === lower(admNo));
+    if (!studentItems.length) return;
+    // Use the first item for student metadata
+    const first = studentItems[0];
+    ps.open = admNo;
+    // Build or use student-level order (list of admission numbers)
     if (order) ps.order = order;
-    else if (!ps.order.includes(id)) ps.order = evidenceOrder();
+    else if (!ps.order.includes(admNo)) ps.order = studentOrder();
     order = ps.order;
-    const i = order.indexOf(id);
-    const decided = e.status !== 'submitted';
-    const mark = fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item));
-    const canAct = canDecide() && (e.status === 'submitted' || hasRole('HOD') || e.decidedName === me().name);
-    const marksHtml = marksEditor(e.classCode, e.unitCode, e.admNo);
-    // Minimalist: who + item + the mark in the system, the page, then one row of actions (Prev/Next, Approve/Return, Close).
+    const i = order.indexOf(admNo);
+    // Check if any item is still pending (submitted) for action buttons
+    const hasPending = studentItems.some((x) => x.status === 'submitted');
+    const canAct = canDecide() && (hasPending || hasRole('HOD') || studentItems.some((x) => x.decidedName === me().name));
+    const marksHtml = marksEditor(first.classCode, first.unitCode, first.admNo);
+    // Build the items list HTML - show all evidence for this student
+    const itemsHtml = studentItems.map((e, idx) => {
+      const decided = e.status !== 'submitted';
+      const mark = fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item));
+      const changedNote = (e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : '';
+      return `
+        <div class="poe-student-item" data-evidence-id="${esc(e.id)}">
+          <div class="poe-student-item-header">
+            <span class="item-tag">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
+            <span class="poe-view2-mark">Mark <b>${mark}</b></span>
+            ${decided ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
+            ${changedNote}
+          </div>
+          ${decided && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
+          <div id="poePages-${esc(e.id)}" class="poe-pages-view" aria-live="polite"><p class="muted">Loading…</p></div>
+        </div>`;
+    }).join('');
+    // Position indicator: student X of Y
+    const posHtml = order.length > 1 ? `<span class="muted tiny poe-view2-pos">${i + 1} / ${order.length}</span>` : '';
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view2">
         <div class="poe-view2-top">
-          <div><b>${esc(e.name)}</b> <span class="muted small">${esc(e.admNo)} · ${esc(e.unitName)}</span>${e.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(e.submittedByName)} on this student's behalf</span>` : ''}</div>
+          <div><b>${esc(first.name)}</b> <span class="muted small">${esc(first.admNo)} · ${esc(first.classCode)}</span>${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}${posHtml}</div>
           <button type="button" class="btn small ghost" data-act="close" aria-label="Close">✕</button>
         </div>
-        <div class="poe-view2-item">
-          <span class="item-tag">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
-          <span class="poe-view2-mark">Mark <b>${mark}</b></span>
-          ${decided ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
-          ${order.length > 1 ? `<span class="muted tiny poe-view2-pos">${i + 1} / ${order.length}</span>` : ''}
-        </div>
+        <div class="poe-student-items">${itemsHtml}</div>
         ${marksHtml}
-        ${decided && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
-        <div id="poePages" class="poe-pages-view" aria-live="polite"><p class="muted">Opening…</p></div>
-        ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})">${esc(e.status === 'returned' ? e.comment : '')}</textarea></div>` : ''}
+        ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})"></textarea></div>` : ''}
         <div class="poe-view2-actions">
           <div class="poe-nav"><button type="button" class="btn small" data-nav="${order[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous">‹ Prev</button>
             <button type="button" class="btn small" data-nav="${order[i + 1] || ''}" ${i >= 0 && i < order.length - 1 ? '' : 'disabled'} aria-label="Next">Next ›</button></div>
           ${canAct ? `<div class="poe-decide2"><button type="button" class="btn danger small" data-decide="returned">Return</button>
-            <button type="button" class="btn primary small" data-decide="approved">${e.status === 'approved' ? 'Approved ✓' : 'Approve'}</button></div>` : ''}
-          <div class="poe-view2-more">${e.status === 'approved' && e.approvalRef ? '<button type="button" class="btn small ghost" data-act="slip">Slip</button>' : ''}
-            <a class="btn small ghost" href="https://drive.google.com/file/d/${esc(e.fileId)}/view" target="_blank" rel="noopener">Drive</a></div>
+            <button type="button" class="btn primary small" data-decide="approved">${studentItems.some((x) => x.status === 'approved') ? 'Approved ✓' : 'Approve'}</button></div>` : ''}
+          <div class="poe-view2-more">
+            ${studentItems.filter((x) => x.status === 'approved' && x.approvalRef).map((x) => `<button type="button" class="btn small ghost" data-act="slip" data-slip="${esc(x.id)}">Slip (${esc(x.item)})</button>`).join('')}
+            ${studentItems.map((x) => `<a class="btn small ghost" href="https://drive.google.com/file/d/${esc(x.fileId)}/view" target="_blank" rel="noopener">Drive (${esc(x.item)})</a>`).join('')}
+          </div>
         </div>
       </div>`;
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
     Imports.pdfLib().catch(() => {});            // the PDF reader loads while the file is on its way
-    try {
-      const file = await fetchFile(id);
-      prefetch([order[i + 1], order[i - 1]]);
-      if (ps.open !== id) return;
-      if (file.changed || e.changedAt) $('#poePages').insertAdjacentHTML('beforebegin', '<p class="poe-changed">This file was changed in the student\'s Drive after it was sent. Check it carefully before deciding.</p>');
-      await showPdf(file);
-    } catch (err) {
-      if (ps.open !== id) return;
-      $('#poePages').innerHTML = err.needGoogle
-        ? `<p>${esc(err.message)} Students now save their documents in their own college Google Drive and share them with you.</p><button type="button" class="btn primary" data-act="gconnect">Connect Google</button>`
-        : `<p class="err-text">${esc(err.message)}</p><p class="muted small">You can still open it in Drive.</p>`;
-    }
+    // Load all files for this student in parallel
+    const loadPromises = studentItems.map(async (e, idx) => {
+      try {
+        const file = await fetchFile(e.id);
+        // Prefetch adjacent students' first files (only once, for the first item)
+        if (idx === 0) {
+          const adjAdms = [order[i - 1], order[i + 1]].filter(Boolean);
+          for (const a of adjAdms) {
+            const adjItems = ps.list.filter((x) => lower(x.admNo) === lower(a));
+            if (adjItems.length) prefetch([adjItems[0].id]);
+          }
+        }
+        if (ps.open !== admNo) return;
+        const holder = $(`#poePages-${esc(e.id)}`);
+        if (!holder) return;
+        if (file.changed || e.changedAt) holder.insertAdjacentHTML('beforebegin', '<p class="poe-changed">This file was changed in the student\'s Drive after it was sent. Check it carefully before deciding.</p>');
+        await showPdfInHolder(file, holder);
+      } catch (err) {
+        if (ps.open !== admNo) return;
+        const holder = $(`#poePages-${esc(e.id)}`);
+        if (!holder) return;
+        holder.innerHTML = err.needGoogle
+          ? `<p>${esc(err.message)} Students now save their documents in their own college Google Drive and share them with you.</p><button type="button" class="btn primary" data-act="gconnect">Connect Google</button>`
+          : `<p class="err-text">${esc(err.message)}</p><p class="muted small">You can still open it in Drive.</p>`;
+      }
+    });
+    await Promise.all(loadPromises);
   }
-  async function showPdf(file) {
-    const holder = $('#poePages');
+  async function showPdfInHolder(file, holder) {
     if (!/pdf/.test(file.mime)) {
       const url = URL.createObjectURL(new Blob([file.bytes], { type: file.mime }));
       holder.innerHTML = /^image\//.test(file.mime) ? `<img src="${url}" alt="Evidence" class="poe-img">` : `<p><a href="${url}" download="${esc(file.name)}">Download ${esc(file.name)}</a></p>`;
@@ -355,8 +394,6 @@ const PoeStaff = (() => {
     const lib = await Imports.pdfLib();
     const doc = await lib.getDocument({ data: file.bytes.slice() }).promise;
     holder.innerHTML = `<p class="muted small">${doc.numPages} page${doc.numPages === 1 ? '' : 's'}</p>`;
-    // Render each page well above its shown size so scanned pages stay crisp (and sharp when zoomed). The page is still
-    // displayed at `width` CSS px; the extra backing pixels are what fixes the blur the old 900px/2x render showed.
     const width = Math.min(holder.clientWidth || 640, 1100), dpr = Math.min(window.devicePixelRatio || 1, 2), QUALITY = 1.6;
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
@@ -411,17 +448,21 @@ const PoeStaff = (() => {
     if (decision === 'returned' && !comment) { toast('Write what needs fixing, then return it', 'err'); $('#poeComment').focus(); return; }
     btn.disabled = true;
     try {
-      const r = decision === 'approved' ? await withPin('Approve this evidence', (pin) => api('poeDecide', { id: ps.open, decision, comment, pin })) : await api('poeDecide', { id: ps.open, decision, comment });
+      // ps.open is now the admission number; find the first pending evidence for this student to act on
+      const studentItems = ps.list.filter((x) => lower(x.admNo) === lower(ps.open));
+      const targetItem = studentItems.find((x) => x.status === 'submitted') || studentItems[0];
+      if (!targetItem) throw new Error('No evidence item to decide on');
+      const r = decision === 'approved' ? await withPin('Approve this evidence', (pin) => api('poeDecide', { id: targetItem.id, decision, comment, pin })) : await api('poeDecide', { id: targetItem.id, decision, comment });
       if (!r) { btn.disabled = false; return; }
       if (!r.ok) throw new Error(r.error);
       const i = ps.list.findIndex((x) => x.id === r.evidence.id); if (i >= 0) ps.list[i] = r.evidence;
       toast(decision === 'approved' ? 'Approved' : 'Returned to the student', 'ok');
       badge();
-      // Walk on along the same order - the current student's next file, then the next student's - so a class reviews in one go.
+      // Walk to the next student in the student order
       const order = ps.order, rest = order.slice(order.indexOf(ps.open) + 1);
-      const nextId = ps.status === 'submitted' ? rest.find((id) => ps.list.find((x) => x.id === id)?.status === 'submitted') : rest[0];
+      const nextAdm = ps.status === 'submitted' ? rest.find((adm) => ps.list.some((x) => lower(x.admNo) === lower(adm) && x.status === 'submitted')) : rest[0];
       draw();
-      if (nextId) openViewer(nextId, order); else $('#poeDialog').close();
+      if (nextAdm) openViewer(nextAdm, order); else $('#poeDialog').close();
     } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
   }
 
@@ -442,15 +483,15 @@ const PoeStaff = (() => {
       const s = t.closest('[data-status]'); if (s && t.closest('#poe')) { ps.status = s.dataset.status; Tables.reset('poeUnit'); draw(); return; }
       const m = t.closest('[data-mode]'); if (m && t.closest('#poe')) { ps.mode = m.dataset.mode; ps.q = ''; ps.seq++; draw(); return; }
       // The row's Review button: open that student's first file and walk every shown student's files from there.
-      const o = t.closest('[data-open]'); if (o) { openViewer(o.dataset.open, evidenceOrder()); return; }
+      const o = t.closest('[data-open]'); if (o) { openViewer(o.dataset.open, studentOrder()); return; }
       const n = t.closest('[data-nav]'); if (n && n.dataset.nav) { openViewer(n.dataset.nav); return; }
       const d = t.closest('[data-decide]'); if (d) { decide(d.dataset.decide, d); return; }
       const a = t.closest('[data-act]');
       if (a?.dataset.act === 'close') $('#poeDialog').close();
       if (a?.dataset.act === 'batch-approve') { batchApprove(a); return; }
       if (a?.dataset.act === 'batch-return') { batchReturn(a); return; }
-      if (a?.dataset.act === 'slip') printSlip(ps.list.find((x) => x.id === ps.open));
-      if (a?.dataset.act === 'gconnect') { const id = ps.open; connectGoogle(false).then((ok) => { if (!ok) return; if (id && $('#poeDialog').open) { ps.files.delete(id); openViewer(id); } else draw(); }); }
+      if (a?.dataset.act === 'slip') { const evId = a.dataset.slip; printSlip(ps.list.find((x) => x.id === evId)); return; }
+      if (a?.dataset.act === 'gconnect') { const adm = ps.open; connectGoogle(false).then((ok) => { if (!ok) return; if (adm && $('#poeDialog').open) { const studentItems = ps.list.filter((x) => lower(x.admNo) === lower(adm)); if (studentItems.length) { ps.files.delete(studentItems[0].id); openViewer(adm); } } else draw(); }); }
       if (a?.dataset.act === 'reload') { ps.files.clear(); ps.roster.clear(); ps.classes = []; Verify.reset(); render(); }
       if (a?.dataset.act === 'unit-xlsx' || a?.dataset.act === 'unit-pdf') {
         const { head, rows } = reportSheet();
