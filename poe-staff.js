@@ -302,25 +302,25 @@ const PoeStaff = (() => {
     const itemsHtml = allItems.map((e) => `
       <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
         <span class="poe-view2-mark">${esc(e.item)} - <input type="number" class="mk-input-inline" inputmode="numeric" min="0" max="100" step="1" value="${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}" data-cls="${esc(e.classCode)}" data-unit="${esc(e.unitCode)}" data-adm="${esc(e.admNo)}" data-col="${esc(e.item)}" aria-label="${esc(e.item)} mark"></span>
-        ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
+        ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}</span>` : ''}
         ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
-        ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
+        ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}${e.decidedName ? ` <span class="poe-approved-by">Approved by ${esc(e.decidedName)}</span>` : ''}</p>` : ''}
         <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
       </div>
     `).join('');
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view2">
         <div class="poe-view2-top">
-          <div><b>${esc(first.name)} - ${esc(first.admNo)}</b>${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}</div>
+          <div><b>${esc(first.name)}</b> - ${esc(first.admNo)}${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}</div>
           <button type="button" class="btn small ghost" data-act="close" aria-label="Close">✕</button>
         </div>
         <div class="poe-run-container">${itemsHtml}</div>
-        ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})"></textarea></div>` : ''}
+        ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student; Needed to return."></textarea></div>` : ''}
         <div class="poe-view2-actions">
           <div class="poe-nav"><button type="button" class="btn small" data-nav="${order[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous">‹ Prev</button>
             <button type="button" class="btn small" data-nav="${order[i + 1] || ''}" ${i >= 0 && i < order.length - 1 ? '' : 'disabled'} aria-label="Next">Next ›</button></div>
-          ${canAct ? `<div class="poe-decide2"><button type="button" class="btn danger small" data-decide="returned">Return</button>
-            <button type="button" class="btn primary small" data-decide="approved">${studentItems.some((x) => x.status === 'approved') ? 'Approved ✓' : 'Approve'}</button></div>` : ''}
+          ${canAct ? `<div class="poe-decide2"><button type="button" class="btn danger small" data-decide="returned" id="poeReturnBtn" disabled>Return</button>
+            <button type="button" class="btn primary small" data-decide="approved">${studentItems.some((x) => x.status === 'approved') ? 'Approved' : 'Approve'}</button></div>` : ''}
         </div>
       </div>`;
     if (!$('#poeDialog').open) $('#poeDialog').showModal();
@@ -486,6 +486,13 @@ const PoeStaff = (() => {
     document.addEventListener('keydown', (e) => {
       const t = e.target;
       if (t.matches('#poeDialog .mk-input-inline') && e.key === 'Enter' && !t.readOnly) { e.preventDefault(); saveInlineMark(t); t.blur(); }
+    });
+    document.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t.id === 'poeComment') {
+        const returnBtn = $('#poeReturnBtn');
+        if (returnBtn) returnBtn.disabled = !t.value.trim();
+      }
     });
     document.addEventListener('submit', (e) => {
       if (ps.mode !== 'verify' || !e.target.closest('#poe')) return;
