@@ -802,6 +802,8 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-view2-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 .poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
 .poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
+#poeClass, #poeStatus { width: 12ch; max-width: 140px; }
+#poeUnitF { width: 16ch; max-width: 180px; }
 /* Running PDF preview: ONE continuous scroll, no visual breaks between items */
 .poe-run-container { display: flex; flex-direction: column; gap: 0; max-height: none; overflow: visible; padding-right: .5rem; }
 .poe-run-item { padding: 0; margin: 0; display: contents; }
