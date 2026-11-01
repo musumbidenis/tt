@@ -498,6 +498,10 @@ const PoeStaff = (() => {
       e.preventDefault(); Verify.onSubmit(e.target);
     });
     $('#poeDialog').addEventListener('close', () => { ps.open = null; });
+    // Close modal when clicking outside (on backdrop)
+    $('#poeDialog').addEventListener('click', (e) => {
+      if (e.target === $('#poeDialog')) $('#poeDialog').close();
+    });
     Tables.on('poeUnit', () => draw());
   }
   /** After sign-in: count what is waiting, for the tab's dot (one small request). */
