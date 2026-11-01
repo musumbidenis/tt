@@ -68,7 +68,7 @@ code { font-size: .875em; background: var(--sunk); padding: .05em .35em; border-
 a { color: var(--link); text-underline-offset: .15em; }
 .muted { color: var(--muted); }
 .err-text { color: var(--a); font-weight: 600; }
-.small { font-size: .875rem; }
+.small { font-size: .8rem; }
 .center { text-align: center; }
 [hidden] { display: none !important; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -795,13 +795,10 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .poe-view2-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 .poe-view2-actions .poe-nav { display: flex; gap: .4rem; }
 .poe-decide2 { display: flex; gap: .4rem; margin-left: auto; }
-.poe-view2-more { display: flex; gap: .4rem; }
+.poe-view2-more { display: flex; gap: .4rem; font-size: .8rem; }
 /* Running PDF preview: ONE continuous scroll, no visual breaks between items */
 .poe-run-container { display: flex; flex-direction: column; gap: 0; max-height: none; overflow: visible; padding-right: .5rem; }
 .poe-run-item { padding: 0; margin: 0; display: contents; }
-.item-tag { padding: .1rem .4rem; border-radius: 4px; font: 600 .7rem var(--display); margin-right: .4rem; }
-.item-tag.cat-tag { background: var(--cat-soft, #eff6ff); color: var(--cat-color, #2563eb); }
-.item-tag.prac-tag { background: var(--prac-soft, #fff7ed); color: var(--prac-color, #ea580c); }
 .poe-run-pages { max-height: none !important; overflow: visible !important; margin: 0; padding: 0; background: transparent; }
 .poe-run-pages .poe-page { margin: 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 4px; }
 .poe-changed { color: var(--d); font-size: .75rem; margin: 0; }
@@ -820,18 +817,6 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
     --prac-color: #fb923c;
     --prac-soft: #3d2408;
   }
-}
-/* Marks editor in POE dialog */
-.poe-marks-editor { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .4rem; padding: .5rem 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: .25rem 0; }
-.mk-row { display: flex; flex-direction: column; gap: .2rem; }
-.mk-label { font: 600 .7rem var(--display); color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
-.mk-input { font: 600 1rem var(--display); padding: .35rem .5rem; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); text-align: center; }
-.mk-input:focus { outline: none; border-color: var(--p); box-shadow: 0 0 0 2px var(--p-soft); }
-.mk-input.locked { background: var(--sunk); color: var(--muted); cursor: not-allowed; }
-.mk-input.bad { border-color: var(--d); background: #fff0f0; }
-.mk-input.dirty { border-color: var(--l); background: #f0f8ff; }
-@media (prefers-color-scheme: dark) {
-  .mk-input.dirty { background: #081a2a; border-color: var(--l); }
 }
 .drive-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 1rem; }
 .drive-list select { width: auto; max-width: 100%; margin: 0; }

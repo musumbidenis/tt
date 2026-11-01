@@ -258,43 +258,6 @@ const PoeStaff = (() => {
     return job;
   }
   const prefetch = (ids) => { for (const x of ids) if (x && navigator.onLine) fetchFile(x).catch(() => {}); };
-  /** All marks for a student in a unit, rendered as editable inputs (for trainers/HOD). */
-  function marksEditor(cls, unit, adm) {
-    const row = ps.marks.get(markKey(cls, unit, adm)) || {};
-    const locked = row.locked || [];
-    const canEdit = canDecide() || hasRole('HOD');
-    const html = COLS.map((c) => {
-      const val = row[c] === undefined || row[c] === null ? '' : row[c];
-      const isLocked = locked.includes(c);
-      const label = HEAD[c];
-      return `<label class="mk-row"${isLocked ? ' title="Locked (entered in a past term)"' : ''}>
-        <span class="mk-label">${label}</span>
-        <input type="number" class="mk-input${isLocked ? ' locked' : ''}" inputmode="numeric" min="0" max="100" step="1"
-          data-col="${c}" data-cls="${esc(cls)}" data-unit="${esc(unit)}" data-adm="${esc(adm)}"
-          value="${val}" ${canEdit && !isLocked ? '' : 'readonly'} aria-label="${label} mark">
-      </label>`;
-    }).join('');
-    return `<div class="poe-marks-editor">${html}</div>`;
-  }
-  async function saveMarks(inp) {
-    if (!navigator.onLine) { toast('Marks need internet to sync', 'err'); return; }
-    const col = inp.dataset.col, cls = inp.dataset.cls, unit = inp.dataset.unit, adm = inp.dataset.adm;
-    const val = inp.value === '' ? null : Number(inp.value);
-    if (val !== null && (val < 0 || val > 100 || !Number.isInteger(val))) { inp.classList.add('bad'); toast('Marks are whole numbers 0–100', 'err'); return; }
-    inp.classList.remove('bad');
-    const k = markKey(cls, unit, adm);
-    const row = ps.marks.get(k) || { c: cls, u: unit, a: adm };
-    row[col] = val; row.updatedAt = nowISO(); row.updatedBy = me().code;
-    ps.marks.set(k, row);
-    inp.closest('.mk-row').classList.add('dirty');
-    try {
-      await api('marksPush', { classCode: cls, unitCode: unit, rows: [{ admNo: adm, [col]: val, updatedAt: row.updatedAt, updatedBy: row.updatedBy }] });
-      inp.closest('.mk-row').classList.remove('dirty');
-      toast('Mark saved', 'ok');
-    } catch (err) {
-      toast('Could not save: ' + err.message, 'err');
-    }
-  }
   /** Student-level navigation: open all evidence for a student for the selected unit, displayed as a running PDF. */
   async function openViewer(idOrAdm, order) {
     // First, resolve to a student (by admission number)
@@ -316,30 +279,25 @@ const PoeStaff = (() => {
     // Check if any item is still pending (submitted) for action buttons
     const hasPending = studentItems.some((x) => x.status === 'submitted');
     const canAct = canDecide() && (hasPending || hasRole('HOD') || studentItems.some((x) => x.decidedName === me().name));
-    const marksHtml = marksEditor(first.classCode, first.unitCode, first.admNo);
     // Sort items: CATs first (CAT1-CAT4), then Practicals (PRAC1-PRAC3), each in ITEMS order
     const allItems = studentItems.sort((a, b) => ITEMS.indexOf(a.item) - ITEMS.indexOf(b.item));
     // Build running PDF HTML: single flat list in one scroll area, no visual breaks
     const itemsHtml = allItems.map((e) => `
       <div class="poe-run-item" data-evidence-id="${esc(e.id)}">
-        <span class="item-tag ${e.item.startsWith('CAT') ? 'cat-tag' : 'prac-tag'}">${esc(e.item)}${e.version > 1 ? ` v${e.version}` : ''}</span>
-        <span class="poe-view2-mark">Mark <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
+        <span class="poe-view2-mark">${esc(e.item)} - <b>${fmtMark(markOf(e.classCode, e.unitCode, e.admNo, e.item))}</b></span>
         ${e.status !== 'submitted' ? `<span class="pill ${statusOf(e)[0]}">${statusOf(e)[1]}${e.decidedName ? ' · ' + esc(e.decidedName) : ''}</span>` : ''}
         ${(e.changedAt || (e.fileId && e.changed)) ? '<span class="poe-changed small">⚠ Changed after sending</span>' : ''}
         ${e.status !== 'submitted' && e.comment ? `<p class="so-quote small"><b>Note:</b> ${esc(e.comment)}</p>` : ''}
         <div id="poePages-${esc(e.id)}" class="poe-pages-view poe-run-pages" aria-live="polite"><p class="muted">Loading…</p></div>
       </div>
     `).join('');
-    // Position indicator: student X of Y
-    const posHtml = order.length > 1 ? `<span class="muted tiny poe-view2-pos">${i + 1} / ${order.length}</span>` : '';
     $('#poeDialogBody').innerHTML = `
       <div class="poe-view2">
         <div class="poe-view2-top">
-          <div><b>${esc(first.name)}</b> <span class="muted small">${esc(first.admNo)} · ${esc(first.classCode)} · ${esc(first.unitName || unitFilter)}</span>${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}${posHtml}</div>
+          <div><b>${esc(first.name)} - ${esc(first.admNo)}</b>${first.submittedByName ? `<br><span class="poe-proxy small">⇄ Submitted by ${esc(first.submittedByName)} on this student's behalf</span>` : ''}</div>
           <button type="button" class="btn small ghost" data-act="close" aria-label="Close">✕</button>
         </div>
         <div class="poe-run-container">${itemsHtml}</div>
-        ${marksHtml}
         ${canAct ? `<div class="poe-view2-note"><textarea id="poeComment" rows="1" maxlength="500" placeholder="Note to the student (needed to return; approve leaves: ${esc(OK_SAID.poe)})"></textarea></div>` : ''}
         <div class="poe-view2-actions">
           <div class="poe-nav"><button type="button" class="btn small" data-nav="${order[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous">‹ Prev</button>
@@ -390,7 +348,6 @@ const PoeStaff = (() => {
     }
     const lib = await Imports.pdfLib();
     const doc = await lib.getDocument({ data: file.bytes.slice() }).promise;
-    holder.innerHTML = `<p class="muted small">${doc.numPages} page${doc.numPages === 1 ? '' : 's'}</p>`;
     const width = Math.min(holder.clientWidth || 640, 1100), dpr = Math.min(window.devicePixelRatio || 1, 2), QUALITY = 1.6;
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
@@ -495,15 +452,6 @@ const PoeStaff = (() => {
         const title = `Evidence ${ps.cls || 'all classes'}${ps.unit ? ' ' + ps.unit : ''}`;
         if (a.dataset.act === 'unit-xlsx') Tables.exportXlsx(title, head, rows); else Tables.print(title, `${rows.length} submissions`, head, rows);
       }
-    });
-    // Marks editor in the POE dialog: save on change (blur or Enter)
-    document.addEventListener('change', (e) => {
-      const t = e.target;
-      if (t.matches('#poeDialog .mk-input') && !t.readOnly) saveMarks(t);
-    });
-    document.addEventListener('keydown', (e) => {
-      const t = e.target;
-      if (t.matches('#poeDialog .mk-input') && e.key === 'Enter' && !t.readOnly) { e.preventDefault(); saveMarks(t); t.blur(); }
     });
     document.addEventListener('change', (e) => {
       const t = e.target;
