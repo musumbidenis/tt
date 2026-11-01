@@ -2508,7 +2508,6 @@ function renderTools() {
 
   body.innerHTML = filtered.map((t, i) => {
     const kind = TOOL_KINDS[t.kind] || { label: t.kind, icon: 'i-tools', color: 'var(--muted)' };
-    const statusLabel = TOOL_STATUS_LABEL[t.status] || t.status;
     const updated = t.updatedAt ? fmtShort(t.updatedAt) : '';
     const classUnit = t.classCode && t.unitCode ? `${t.classCode} / ${t.unitCode}` : (t.classCode || t.unitCode || '—');
     // Show assessment type for assessment tools
@@ -2522,13 +2521,11 @@ function renderTools() {
         </td>
         <td><b>${esc(t.title)}</b>${t.description ? '<br><small class="muted">' + esc(t.description).slice(0, 80) + (t.description.length > 80 ? '…' : '') + '</small>' : ''}</td>
         <td>${esc(classUnit)}</td>
-        <td class="num"><span class="tool-pill ${esc(t.status)}">${esc(statusLabel)}</span></td>
         <td class="num">${esc(updated)}</td>
         <td>
           <div class="tool-actions">
             <button type="button" class="btn ghost small tool-view" data-id="${esc(t._id)}" title="View"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg></button>
             <button type="button" class="btn ghost small tool-edit" data-id="${esc(t._id)}" title="Edit"><svg class="i" aria-hidden="true"><use href="#i-print"/></svg></button>
-            ${t.status !== 'approved' ? `<button type="button" class="btn ghost small tool-submit" data-id="${esc(t._id)}" title="Submit">${t.status === 'draft' ? '<svg class="i" aria-hidden="true"><use href="#i-send"/></svg>' : '<svg class="i" aria-hidden="true"><use href="#i-send"/></svg>'}</button>` : ''}
             <button type="button" class="btn ghost small danger tool-delete" data-id="${esc(t._id)}" title="Delete"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></button>
           </div>
         </td>
@@ -2539,7 +2536,6 @@ function renderTools() {
   // wire row actions
   $$('#toolsTableBody .tool-view').forEach((b) => b.addEventListener('click', () => openToolsDialog(b.dataset.id, 'view')));
   $$('#toolsTableBody .tool-edit').forEach((b) => b.addEventListener('click', () => openToolsDialog(b.dataset.id, 'edit')));
-  $$('#toolsTableBody .tool-submit').forEach((b) => b.addEventListener('click', () => submitTool(b.dataset.id)));
   $$('#toolsTableBody .tool-delete').forEach((b) => b.addEventListener('click', () => confirmDeleteTool(b.dataset.id)));
 }
 
@@ -2584,12 +2580,6 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
 
       <label>Unit<select name="unitCode" required>${allUnitOpts.filter(u => !tool?.classCode || u.classCode === tool.classCode).map(o => `<option value="${o.value}"${tool?.unitCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
 
-      <label>Status
-        <div class="status-chips">
-          ${TOOL_STATUSES.map(s => `<span class="status-chip${tool?.status === s ? ' active ' + s : ''}" data-status="${s}">${TOOL_STATUS_LABEL[s]}</span>`).join('')}
-        </div>
-      </label>
-
       <label>Document (Word for Google Docs preview)<input type="file" name="document" accept=".doc,.docx" required></label>
 
       <p id="toolsMsg" class="err-text small" role="alert"></p>
@@ -2597,18 +2587,9 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
       <div class="row-actions">
         ${isNew ? `<button type="button" class="btn ghost" id="toolsCancelBtn">Cancel</button>` : ''}
         ${mode !== 'view' ? `<button type="submit" class="btn primary" id="toolsSaveBtn">${isNew ? 'Create' : 'Save'}</button>` : ''}
-        ${mode === 'view' && tool?.status !== 'approved' ? `<button type="button" class="btn primary" id="toolsSubmitBtn">Submit for approval</button>` : ''}
       </div>
     </form>
   `;
-
-  // wire status chips
-  $$('#toolsDialogBody .status-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      $$('#toolsDialogBody .status-chip').forEach(c => c.classList.remove('active', 'draft', 'ready', 'submitted', 'approved'));
-      chip.classList.add('active', chip.dataset.status);
-    });
-  });
 
   // wire unit dropdown to filter by class
   const classSelect = $('#toolsDialogBody select[name="classCode"]');
@@ -2642,10 +2623,6 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
     e.preventDefault();
     const formData = new FormData(e.target);
     const data = Object.fromEntries(formData.entries());
-
-    // get status from active chip
-    const activeChip = $('#toolsDialogBody .status-chip.active');
-    data.status = activeChip?.dataset.status || 'draft';
 
     // validate
     if (!data.classCode) { $('#toolsMsg').textContent = 'Class is required'; return; }
