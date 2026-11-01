@@ -25,7 +25,7 @@
   /* Where to look for whatever a note was left on. Fetched through the service worker, so this works
    * with no internet too (these are the files it keeps). */
   const FILES = ['index.html', 'student.html', 'styles.css', 'app.js', 'admin.js', 'poe-staff.js',
-    'marks.js', 'report.js', 'imports.js', 'student.js', 'poe-student.js', 'scanner.js'];
+    'marks.js', 'report.js', 'imports.js', 'student.js', 'poe-student.js', 'scanner.js', 'design-notes.js'];
   // Classes that say what state something is in, not what it is: no use in a selector.
   const STATE_CLASS = /^(dn-|on|active|show|shown|open|hidden|syncing|selected|disabled|err|ok|is-|js-|f-)/;
   const DATA_KEYS = ['tab', 'view', 'mode', 'item', 'status', 'sfilter', 'filter', 'act', 'decide', 'open',
@@ -128,15 +128,14 @@
       background: #1f3040; color: #fff; cursor: pointer; }
     #dn-bar button[aria-pressed="true"] { background: #4fcd84; border-color: #4fcd84; color: #0b2017; font-weight: 700; }
     #dn-bar button:disabled { opacity: .45; cursor: default; }
-    /* How tall the strip turned out to be — it wraps onto two lines on a narrow phone, so it is
-       measured rather than guessed. Both apps keep their heading and tabs in a sticky .chrome at the
-       very top, which would otherwise sit under the strip and be impossible to tap. */
     body.dn-on { padding-top: var(--dn-h, 46px) !important; }
     body.dn-on .chrome { top: var(--dn-h, 46px) !important; }
     .dn-hover { outline: 2px solid #4fcd84 !important; outline-offset: 1px; cursor: crosshair !important; }
     .dn-noted { outline: 2px dashed #ffb02e !important; outline-offset: 1px; }
     #dn-pop, #dn-list { position: fixed; z-index: 2147483001; background: #fff; color: #14202b; border-radius: 10px;
       box-shadow: 0 10px 40px rgba(0,0,0,.4); padding: .75rem; width: min(380px, calc(100vw - 20px)); }
+    /* When inside a <dialog>, use absolute positioning relative to the dialog */
+    dialog[open] #dn-pop, dialog[open] #dn-list { position: absolute; }
     #dn-pop code, #dn-list code { font: 600 12px/1.4 ui-monospace, Consolas, monospace; color: #0b5d33; word-break: break-all; }
     #dn-pop .said { font-size: 12px; color: #5a6b7a; margin: .2rem 0 .5rem; }
     #dn-pop textarea { width: 100%; font: inherit; padding: .5rem; border: 1px solid #c2ccd4; border-radius: 6px; resize: vertical; }
@@ -146,6 +145,7 @@
     #dn-pop button, #dn-list button { font: inherit; padding: .35rem .7rem; border-radius: 6px; border: 1px solid #c2ccd4; background: #f4f7f9; cursor: pointer; }
     #dn-pop button.go { background: #0b5d33; border-color: #0b5d33; color: #fff; font-weight: 700; }
     #dn-list { top: calc(var(--dn-h, 46px) + 6px); right: 10px; max-height: calc(100vh - var(--dn-h, 46px) - 20px); overflow: auto; }
+    dialog[open] #dn-list { top: calc(var(--dn-h, 46px) + 6px); right: 10px; max-height: calc(100% - var(--dn-h, 46px) - 20px); }
     #dn-list ol { margin: .3rem 0 0; padding-left: 1.3rem; }
     #dn-list li { margin-bottom: .6rem; }
     #dn-list .note { white-space: pre-wrap; }
@@ -180,6 +180,32 @@
     toastTimer = setTimeout(() => t.remove(), 2600);
   }
   const mine = (el) => !!el?.closest?.('#dn-bar, #dn-pop, #dn-list, #dn-toast');
+
+  /* ---------- helpers for dialog/popup support ---------- */
+  /** Find the currently open modal dialog, if any. */
+  function openDialog() {
+    // Check for <dialog open> first (native dialog)
+    const native = document.querySelector('dialog[open]');
+    if (native) return native;
+    // Check for elements with role="dialog" and aria-modal="true" that are visible
+    const aria = document.querySelector('[role="dialog"][aria-modal="true"]:not([hidden])');
+    if (aria && getComputedStyle(aria).display !== 'none' && getComputedStyle(aria).visibility !== 'hidden') return aria;
+    return null;
+  }
+
+  /** Get the container to append notes UI to (dialog or body). */
+  function notesContainer() {
+    return openDialog() || document.body;
+  }
+
+  /** Get positioning context: viewport for body, dialog-relative for inside dialog. */
+  function positioningContext(el) {
+    const dlg = openDialog();
+    if (!dlg) return { ref: window, rect: { left: 0, top: 0 } };
+    // For dialog, we position relative to the dialog's content area
+    const dlgRect = dlg.getBoundingClientRect();
+    return { ref: dlg, rect: { left: dlgRect.left, top: dlgRect.top } };
+  }
 
   function refresh() {
     $('#dn-show').textContent = `${notes.length} noted`;
@@ -230,13 +256,23 @@
       <div class="quick">${QUICK.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
       <textarea id="dn-text" rows="3" placeholder="What should change here? For example: make the count bigger and red when it is not zero">${esc(had?.note || '')}</textarea>
       <div class="row">${had ? '<button id="dn-drop">Remove</button>' : ''}<button id="dn-cancel">Cancel</button><button class="go" id="dn-save">Save</button></div>`;
-    // A dialog opened with showModal() sits above everything, whatever the z-index, so to leave a note
-    // on something inside one (a POE submission, the lesson QR) the box has to go inside it.
-    (el.closest('dialog[open]') || document.querySelector('dialog[open]') || document.body).appendChild(box);
-    // Near what was tapped, but always on the screen.
-    const r = el.getBoundingClientRect(), h = box.offsetHeight, w = box.offsetWidth;
-    box.style.top = Math.max(bar.offsetHeight + 6, Math.min(window.innerHeight - h - 10, r.bottom + 8)) + 'px';
-    box.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, r.left)) + 'px';
+    // Append to the dialog (if open) or body, so the note box sits above the dialog content
+    notesContainer().appendChild(box);
+    // Position near what was tapped. Inside a dialog, use dialog-relative coordinates.
+    const ctx = positioningContext(el);
+    const r = el.getBoundingClientRect();
+    const h = box.offsetHeight, w = box.offsetWidth;
+    if (ctx.ref === window) {
+      // Viewport-relative (fixed positioning)
+      box.style.top = Math.max(bar.offsetHeight + 6, Math.min(window.innerHeight - h - 10, r.bottom + 8)) + 'px';
+      box.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, r.left)) + 'px';
+    } else {
+      // Dialog-relative (absolute positioning inside dialog)
+      const top = Math.max(bar.offsetHeight + 6, Math.min(ctx.ref.clientHeight - h - 10, r.bottom - ctx.rect.top + 8));
+      const left = Math.max(10, Math.min(ctx.ref.clientWidth - w - 10, r.left - ctx.rect.left));
+      box.style.top = top + 'px';
+      box.style.left = left + 'px';
+    }
     $('#dn-text').focus();
     box.querySelector('.quick').onclick = (e) => {
       const q = e.target.closest('[data-q]');
@@ -273,7 +309,7 @@
       <button class="del" data-i="${i}" aria-label="Remove note ${i + 1}">✕</button>
       <code>${esc(n.selector)}</code>${n.page !== PAGE ? ` <small>(${esc(n.page)})</small>` : ''}
       <div class="note">${esc(n.note)}</div></li>`).join('')}</ol>`;
-    document.body.appendChild(panel);
+    notesContainer().appendChild(panel);
     panel.onclick = (e) => {
       const b = e.target.closest('.del');
       if (!b) return;
@@ -338,10 +374,20 @@
       // Clipboard blocked (it often is without https): show it to be copied by hand.
       const box = document.createElement('div');
       box.id = 'dn-pop';
-      box.style.top = bar.offsetHeight + 14 + 'px';
       box.innerHTML = '<p class="said">Copying was blocked, so here it is to copy by hand:</p>'
         + `<textarea rows="12" readonly>${esc(out)}</textarea><div class="row"><button class="go" id="dn-cancel">Done</button></div>`;
-      document.body.appendChild(box);
+      notesContainer().appendChild(box);
+      // Position it nicely
+      const ctx = positioningContext(box);
+      if (ctx.ref === window) {
+        box.style.top = bar.offsetHeight + 14 + 'px';
+        box.style.left = '10px';
+        box.style.right = '10px';
+      } else {
+        box.style.top = bar.offsetHeight + 6 + 'px';
+        box.style.left = '10px';
+        box.style.right = '10px';
+      }
       box.querySelector('textarea').select();
       $('#dn-cancel').onclick = closeBox;
     }
