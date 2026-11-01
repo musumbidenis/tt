@@ -794,7 +794,9 @@ body.student[data-view="poe"] .view-poe, body.student[data-view="subs"] .view-su
 .mk-input-inline { width: 6ch; font: 600 .8rem var(--display); padding: .15rem .3rem; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); text-align: center; -moz-appearance: textfield; }
 .mk-input-inline::-webkit-outer-spin-button, .mk-input-inline::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .mk-input-inline:focus { outline: none; border-color: var(--p); box-shadow: 0 0 0 2px var(--p-soft); }
-.poe-approved-by { color: var(--p); font-weight: 600; font-size: .75rem; white-space: nowrap; }
+.poe-decided-by { font-weight: 600; font-size: .75rem; white-space: nowrap; }
+.poe-decided-by.approved { color: var(--p); }
+.poe-decided-by.returned { color: var(--d); }
 .poe-view2-pos { margin-left: auto; }
 .poe-view2-note textarea { width: 100%; }
 .poe-view2-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
