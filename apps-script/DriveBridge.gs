@@ -28,9 +28,12 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.11.2';
+var BRIDGE_VERSION = '1.13.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
+
+// Option 2: Trainer personal Drive "The Ark" folder (OAuth handoff via worker)
+var ARK_FOLDER_NAME = 'The Ark';
 
 /* ---------- setup ---------- */
 function setup() {
@@ -72,6 +75,7 @@ function doPost(e) {
     if (b.action === 'nudge') return json_(nudge_(b));
     if (b.action === 'bulk') return json_(bulkSave_(b));
     if (b.action === 'trash') { var tt = readTicket_(b.ticket, 'trash'), n = 0; (tt.ids || []).forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); n++; } catch (e) { /* gone already */ } }); return json_({ ok: true, trashed: n }); }
+    if (b.action === 'trainerBackupNow') return json_(trainerBackupNow_(b));
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -100,6 +104,115 @@ function readTicket_(ticket, kind) {
 function childFolder_(parent, name) {
   var it = parent.getFoldersByName(name);
   return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+
+/* ---------- Option 2: Trainer personal Drive "The Ark" (OAuth handoff) ---------- */
+/** Fetches fresh access tokens for trainers from the worker. */
+function getTrainerAccessTokens_(trainerCodes) {
+  if (!trainerCodes || trainerCodes.length === 0) return {};
+  var p = PropertiesService.getScriptProperties();
+  var url = p.getProperty('WORKER_URL');
+  var ts = Date.now();
+  var payload = JSON.stringify({ trainerCodes: trainerCodes });
+  var sig = hmacHex_('getTrainerAccessTokens|' + ts + '|' + payload);
+  var res = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'text/plain;charset=utf-8',
+    muteHttpExceptions: true,
+    payload: JSON.stringify({ action: 'getTrainerAccessTokens', ts: ts, body: payload, sig: sig })
+  });
+  var out = JSON.parse(res.getContentText() || '{}');
+  if (!out.ok) throw new Error('Worker getTrainerAccessTokens: ' + out.error);
+  return out.tokens || {};
+}
+
+/** Finds or creates "The Ark" folder in trainer's personal Drive using their access token. */
+function getOrCreatePersonalArkFolder_(accessToken) {
+  var folderName = ARK_FOLDER_NAME;
+  // Search for existing folder
+  var searchRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent("name='" + folderName + "' and mimeType='application/vnd.google-apps.folder' and trashed=false") +
+    '&fields=files(id,name)&spaces=drive', {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    muteHttpExceptions: true
+  });
+  var searchData = JSON.parse(searchRes.getContentText());
+  if (searchData.files && searchData.files.length > 0) {
+    return searchData.files[0].id;
+  }
+  // Create new folder
+  var createRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'post',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    payload: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder' }),
+    muteHttpExceptions: true
+  });
+  var createData = JSON.parse(createRes.getContentText());
+  if (createData.error) throw new Error('Failed to create "The Ark" folder: ' + createData.error.message);
+  return createData.id;
+}
+
+/** Writes a record file to trainer's personal "The Ark" folder using their access token. */
+function writeToPersonalDriveWithToken_(accessToken, fileName, content, mimeType) {
+  var folderId = getOrCreatePersonalArkFolder_(accessToken);
+  // Check if file already exists
+  var searchRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent("name='" + fileName + "' and '" + folderId + "' in parents and trashed=false") +
+    '&fields=files(id,name)', {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    muteHttpExceptions: true
+  });
+  var searchData = JSON.parse(searchRes.getContentText());
+  var existingFile = (searchData.files && searchData.files.length > 0) ? searchData.files[0] : null;
+
+  if (existingFile) {
+    // Update existing file
+    var updateRes = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files/' + existingFile.id + '?uploadType=media', {
+      method: 'patch',
+      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': mimeType },
+      payload: content,
+      muteHttpExceptions: true
+    });
+    var updateData = JSON.parse(updateRes.getContentText());
+    if (updateData.error) throw new Error('Failed to update file: ' + updateData.error.message);
+    return updateData.id;
+  } else {
+    // Create new file
+    var createRes = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'post',
+      headers: { Authorization: 'Bearer ' + accessToken },
+      payload: {
+        'metadata': JSON.stringify({ name: fileName, parents: [folderId] }),
+        'file': Utilities.newBlob(content, mimeType, fileName)
+      },
+      muteHttpExceptions: true
+    });
+    var createData = JSON.parse(createRes.getContentText());
+    if (createData.error) throw new Error('Failed to create file: ' + createData.error.message);
+    return createData.id;
+  }
+}
+
+/** Syncs attendance/marksheet record to trainer's personal "The Ark" folder using their access token. */
+function syncToPersonalDriveWithToken_(accessToken, tr, termName, kind, spreadsheetId, spreadsheetUrl) {
+  try {
+    var record = {
+      term: termName,
+      type: kind === 'marks' ? 'marksheet' : 'attendance',
+      spreadsheetId: spreadsheetId,
+      spreadsheetUrl: spreadsheetUrl,
+      trainerCode: tr.code,
+      trainerName: tr.name,
+      updated: new Date().toISOString()
+    };
+    var fileName = kind === 'marks' ? 'marksheets.json' : 'attendance.json';
+    writeToPersonalDriveWithToken_(accessToken, fileName, JSON.stringify(record, null, 2), 'application/json');
+  } catch (e) {
+    Logger.log('Personal Drive sync failed for ' + (tr.code || tr.name) + ': ' + e);
+    // Don't throw - personal Drive sync is secondary, shared Drive is primary
+  }
 }
 
 /* ---------- "something changed": the database asks for an update ---------- */
@@ -330,14 +443,19 @@ function sync() {
       if (feed.trainers) { trainers = feed.trainers; p.setProperty('TRAINERS', JSON.stringify(trainers)); }
       if (!made && trainers) { made = true; makeFolders_(trainers, folders); }
       if (feed.evidence && feed.evidence.length) writeEvidenceIndex_(feed.evidence);
+      // Fetch trainer access tokens from worker (for personal Drive sync)
+      var trainerCodesWithRefresh = (trainers || []).filter(function (t) { return t.hasRefresh && t.code; }).map(function (t) { return t.code; });
+      var trainerTokens = getTrainerAccessTokens_(trainerCodesWithRefresh);
+
       feed.units.forEach(function (u) {
         var tr = (trainers || []).filter(function (x) { return lowerEq_(x.code, u.trainerCode); })[0] || { code: u.trainerCode, name: u.trainerName, folder: '' };
         var folder = resolveFolder_(tr, folders);
         if (!folder) return;
-        var ss = trainerSheet_(tr, folder, u.termName, sheets);
+        var accessToken = trainerTokens[tr.code] || null;
+        var ss = trainerSheet_(tr, folder, u.termName, sheets, null, accessToken);
         writeRegister_(ss, u);
         if (u.cats && u.cats.length) writeCats_(ss, u);
-        if (u.marksheet) writeMarksheet_(trainerSheet_(tr, folder, u.termName, sheets, 'marks'), u);
+        if (u.marksheet) writeMarksheet_(trainerSheet_(tr, folder, u.termName, sheets, 'marks', accessToken), u);
       });
       p.setProperty('SHEETS', JSON.stringify(sheets));
       if (feed.next === null || feed.next === undefined) { p.setProperty('CURSOR', startNow); p.deleteProperty('PENDING'); break; }
@@ -440,6 +558,106 @@ function backupTrainers_(started) {
   callWorker_('trainerBackupDone', { copied: ctx.copied, same: ctx.same, failed: ctx.failed, errors: ctx.errors, used: ctx.used,
     finished: !ctx.more && !ctx.paused, paused: ctx.paused });
   return ctx.more;
+}
+
+/* ---------- MIS Officer: Backup Now - Personal Drives (Option 2) ---------- */
+/** Copies each trainer's personal "The Ark" folder to the central Archive using their access tokens.
+ * Called by MIS Officer via the web app with a ticket containing trainerCodes array and tokens object. */
+function trainerBackupNow_(b) {
+  var t = readTicket_(b.ticket, 'trainerBackupNow');
+  var trainerCodes = t.trainerCodes || [];
+  var tokens = t.tokens || {};
+  if (!trainerCodes.length) return { ok: true, copied: 0, failed: 0, results: [] };
+
+  var p = PropertiesService.getScriptProperties();
+  var archiveRoot = archiveRoot_(p);
+  var trainersArchive = childFolder_(archiveRoot, 'Trainers');
+  var results = [];
+  var totalCopied = 0, totalFailed = 0;
+
+  trainerCodes.forEach(function (code) {
+    var accessToken = tokens[code];
+    if (!accessToken) {
+      results.push({ code: code, error: 'No access token' });
+      totalFailed++;
+      return;
+    }
+    try {
+      // Find trainer info from bridge feed (we need the name for folder naming)
+      // For now, use code as folder name
+      var trainerFolderName = code;
+      var archiveTrainerFolder = childFolder_(trainersArchive, trainerFolderName);
+
+      // List files in trainer's personal "The Ark" folder
+      var personalFolderId = getOrCreatePersonalArkFolder_(accessToken);
+      var files = listPersonalDriveFolder_(personalFolderId, accessToken);
+
+      // Copy each file to Archive
+      var copied = 0, failed = 0;
+      files.forEach(function (f) {
+        try {
+          // Check if file already exists in Archive with same modified time
+          var existing = findFileInFolder_(archiveTrainerFolder, f.name);
+          if (existing && existing.getLastUpdated() === f.modifiedTime) {
+            return; // already up to date
+          }
+          // Copy file
+          var copyRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + '/copy?fields=id,modifiedTime&supportsAllDrives=true', {
+            method: 'post',
+            headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+            payload: JSON.stringify({ name: f.name, parents: [archiveTrainerFolder.getId()], description: 'Backup from personal Drive by MIS Officer ' + new Date().toISOString() }),
+            muteHttpExceptions: true
+          });
+          var copyData = JSON.parse(copyRes.getContentText());
+          if (copyData.error) throw new Error(copyData.error.message);
+          // Delete old version if exists
+          if (existing) {
+            try { existing.setTrashed(true); } catch (e) { /* keep old */ }
+          }
+          copied++;
+        } catch (e) {
+          failed++;
+          if (failed <= 3) results.push({ code: code, file: f.name, error: String(e && e.message || e) });
+        }
+      });
+      results.push({ code: code, copied: copied, failed: failed });
+      totalCopied += copied;
+      totalFailed += failed;
+    } catch (e) {
+      totalFailed++;
+      results.push({ code: code, error: String(e && e.message || e) });
+    }
+  });
+
+  return { ok: true, copied: totalCopied, failed: totalFailed, results: results };
+}
+
+/** Lists files in a folder in trainer's personal Drive using their access token. */
+function listPersonalDriveFolder_(folderId, accessToken) {
+  var out = [], page = '';
+  do {
+    var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?pageSize=200&fields=' +
+      encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,size)') +
+      '&q=' + encodeURIComponent("'" + folderId + "' in parents and trashed=false") + (page ? '&pageToken=' + encodeURIComponent(page) : ''), {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + accessToken },
+      muteHttpExceptions: true
+    });
+    var data = JSON.parse(res.getContentText());
+    (data.files || []).forEach(function (f) {
+      if (f.mimeType !== 'application/vnd.google-apps.folder') {
+        out.push({ id: f.id, name: f.name, mimeType: f.mimeType, modifiedTime: f.modifiedTime, size: Number(f.size) || 0 });
+      }
+    });
+    page = data.nextPageToken || '';
+  } while (page);
+  return out;
+}
+
+/** Finds a file by name in a folder (using bridge's OAuth). */
+function findFileInFolder_(folder, name) {
+  var it = folder.getFilesByName(name);
+  return it.hasNext() ? it.next() : null;
 }
 
 /* ---------- backup of approved evidence into this account's Drive ---------- */
@@ -554,7 +772,7 @@ function resolveFolder_(tr, folders) {
 }
 
 /* ---------- the trainer's attendance sheet ---------- */
-function trainerSheet_(tr, folder, termName, sheets, kind) {
+function trainerSheet_(tr, folder, termName, sheets, kind, accessToken) {
   var marks = kind === 'marks';
   var key = (marks ? 'M|' : '') + tr.code + '|' + termName, id = sheets[key];
   if (id) { try { return SpreadsheetApp.openById(id); } catch (e) { /* deleted: make a new one */ } }
@@ -572,6 +790,10 @@ function trainerSheet_(tr, folder, termName, sheets, kind) {
     first.getRange(1, 1).setFontWeight('bold').setFontSize(14);
   }
   sheets[key] = ss.getId();
+  // Sync to trainer's personal "The Ark" folder if they have connected Google Drive
+  if (accessToken) {
+    syncToPersonalDriveWithToken_(accessToken, tr, termName, marks ? 'marks' : 'attendance', ss.getId(), ss.getUrl());
+  }
   return ss;
 }
 function tabName_(u, suffix) {

@@ -122,6 +122,8 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   'ALTER TABLE panels ADD COLUMN number INTEGER',
   // Google connected once: the long-lived permission Google gives (kept encrypted), so nobody signs in again.
   'ALTER TABLE trainees ADD COLUMN g_refresh TEXT', 'ALTER TABLE staff ADD COLUMN g_refresh TEXT',
+  // Trainer personal Drive "The Ark" folder ID (for Option 2 OAuth handoff).
+  'ALTER TABLE staff ADD COLUMN personal_drive_folder TEXT',
   // A newer version of the same item was sent: this one leaves the lists and can no longer be decided.
   'ALTER TABLE evidence ADD COLUMN replaced_at TEXT',
   // Notice board: a message can be pinned to a board, given a priority, and require readers to confirm they have read it.
@@ -513,6 +515,8 @@ const ACTIONS = {
   tarchiveTicket: { role: ['TRAINER'], fn: (env, b, me) => tarchiveTicket(env, b, me) },
   tarchiveDone: { role: ['TRAINER'], fn: (env, b, me) => tarchiveDone(env, b, me) },
   tarchiveView: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tarchiveView(env, b, me) },
+  getTrainerAccessTokens: { fn: (env, b) => getTrainerAccessTokens(env, b) },
+  trainerBackupNow: { role: ['MIS'], fn: (env, b, me) => trainerBackupNow(env, b, me) },
   verifyData: { fn: (env, b, me) => verifyData(env, b, me) },
   savePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => savePanel(env, b, me) },
   assignVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => assignVerification(env, b, me) },
@@ -2159,10 +2163,17 @@ async function bridgeFeed(env, q) {
   const page = keys.slice(offset, offset + FEED_PAGE);
   const out = { ok: true, now, term, total: keys.length, next: offset + FEED_PAGE < keys.length ? offset + FEED_PAGE : null, units: [] };
   if (offset === 0) {
-    const [staffRows, ev] = await many(env, ['SELECT code, name, drive_folder FROM staff WHERE active=1'],
+    const [staffRows, ev] = await many(env, ['SELECT code, name, drive_folder, email, g_refresh, personal_drive_folder FROM staff WHERE active=1'],
       ['SELECT * FROM evidence WHERE updated_at > ? ORDER BY updated_at LIMIT 1000', since]);
     const codes = new Set(loading.map((u) => lower(u.trainer_code)));
-    out.trainers = staffRows.filter((r) => codes.has(lower(r.code))).map((r) => ({ code: r.code, name: r.name, folder: r.drive_folder || '' }));
+    out.trainers = staffRows.filter((r) => codes.has(lower(r.code))).map((r) => ({
+      code: r.code,
+      name: r.name,
+      folder: r.drive_folder || '',
+      email: r.email || '',
+      hasRefresh: !!r.g_refresh,
+      personalDriveFolder: r.personal_drive_folder || ''
+    }));
     out.evidence = ev.map(evidenceOut);
   }
   if (!page.length || !term) return out;
@@ -3215,6 +3226,38 @@ async function tarchiveView(env, b, me) {
   const url = await getMeta(env, 'drive_url');
   if (!url) fail('The Google Drive link is not set up yet');
   return { ok: true, driveUrl: url, fileName: b.fileName || 'file', ticket: await signTicket(env, { k: 'view', fileId, exp: Date.now() + 10 * 6e4 }) };
+}
+/** MIS Officer triggers backup of all trainers' personal "The Ark" folders to central Archive. */
+async function trainerBackupNow(env, b, me) {
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  // Get trainers with connected Google
+  const feed = await bridgeFeed(env, { since: '', offset: 0 });
+  const trainers = (feed.trainers || []).filter(t => t.hasRefresh);
+  const trainerCodes = trainers.map(t => t.code);
+  const tokenRes = await getTrainerAccessTokens(env, { trainerCodes });
+  const tokens = tokenRes.tokens || {};
+  const ticket = await signTicket(env, { k: 'trainerBackupNow', id: crypto.randomUUID(), trainerCodes, tokens: Object.fromEntries(Object.entries(tokens).filter(([,v]) => v.accessToken).map(([k,v]) => [k, v.accessToken])), exp: Date.now() + 5 * 60 * 1000 });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'trainerBackupNow', ticket })
+  });
+  const out = await res.json();
+  if (!res.ok || !out.ok) throw new Error(out.error || 'The Drive bridge did not start the backup');
+  return { ok: true, started: out.started, trainers: trainerCodes.length };
+}
+/** Bridge calls this to get fresh access tokens for trainers who have connected Google (for personal Drive writes). */
+async function getTrainerAccessTokens(env, b) {
+  const { trainerCodes } = b;
+  if (!Array.isArray(trainerCodes) || !trainerCodes.length) return { ok: true, tokens: {} };
+  const out = {};
+  for (const code of trainerCodes) {
+    const res = await googleToken(env, 'staff', code);
+    if (res.ok) out[code] = { accessToken: res.accessToken, expiresIn: res.expiresIn, email: res.email };
+    else out[code] = { error: res.error, needConnect: res.needConnect };
+  }
+  return { ok: true, tokens: out };
 }
 /** A trainer's device found the file in the student's Drive no longer matches what was sent. */
 async function poeChanged(env, b, me) {
