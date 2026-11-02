@@ -2584,7 +2584,7 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
 
       <label>Document (Word for Google Docs preview)<input type="file" name="document" accept=".doc,.docx" required></label>
       ` : `
-      <label>Folder (optional)<input type="text" name="folder" placeholder="Subfolder name (e.g. Certificates, Reports)"></label>
+      <label>Folder (optional)<input type="text" name="folder" value="${esc((isNew ? (me()?.driveFolder || '') : (tool?.folder || '')))}" placeholder="Subfolder name (e.g. Certificates, Reports)"></label>
 
       <label>File<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" required></label>
       `}
