@@ -197,7 +197,7 @@ function tupload_(b) {
   } finally { lock.releaseLock(); }
 }
 /** Trainer Archive (new): lists files in the trainer's archive folder (The ARK - Archive / Trainers / <trainer folder>).
- * Excludes auto-generated files (Google Sheets, folders). Returns files with metadata. */
+ * Returns all files except folders. */
 function tarchiveList_(b) {
   var t = readTicket_(b.ticket, 'tarchive');
   var lock = LockService.getScriptLock(); lock.waitLock(30000);
