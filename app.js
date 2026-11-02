@@ -2575,19 +2575,25 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
       <input type="hidden" name="kind" value="${esc(kind)}">
       <input type="hidden" name="createdAt" value="${esc(tool?.createdAt || '')}">
 
-      <label>Type<select name="kind"${isNew ? '' : ' disabled'}>${Object.entries(TOOL_KINDS).map(([k, v]) => `<option value="${k}"${k === kind ? ' selected' : ''}>${v.label}</option>`).join('')}</select></label>
+      <label>Type<select name="kind"${isNew ? '' : ' disabled'}>${Object.entries(TOOL_KINDS).map(([k, v]) => `<option value="${k}"${k === kind ? ' selected' : ''}>${v.label}</option>`).join('')}${isNew ? `<option value="archive-upload"${kind === 'archive-upload' ? ' selected' : ''}>Upload to archive</option>` : ''}</select></label>
 
+      ${kind !== 'archive-upload' ? `
       <label>Class<select name="classCode" required>${classOpts.map(o => `<option value="${o.value}"${tool?.classCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
 
       <label>Unit<select name="unitCode" required>${allUnitOpts.filter(u => !tool?.classCode || u.classCode === tool.classCode).map(o => `<option value="${o.value}"${tool?.unitCode === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}</select></label>
 
       <label>Document (Word for Google Docs preview)<input type="file" name="document" accept=".doc,.docx" required></label>
+      ` : `
+      <label>Folder (optional)<input type="text" name="folder" placeholder="Subfolder name (e.g. Certificates, Reports)"></label>
+
+      <label>File<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" required></label>
+      `}
 
       <p id="toolsMsg" class="err-text small" role="alert"></p>
 
       <div class="row-actions">
         ${isNew ? `<button type="button" class="btn ghost" id="toolsCancelBtn">Cancel</button>` : ''}
-        ${mode !== 'view' ? `<button type="submit" class="btn primary" id="toolsSaveBtn">${isNew ? 'Create' : 'Save'}</button>` : ''}
+        ${mode !== 'view' ? `<button type="submit" class="btn primary" id="toolsSaveBtn">${kind === 'archive-upload' ? 'Upload' : (isNew ? 'Create' : 'Save')}</button>` : ''}
       </div>
     </form>
   `;
@@ -2624,6 +2630,36 @@ function openToolsDialog(id, mode = 'create', preSelectedKind) {
     e.preventDefault();
     const formData = new FormData(e.target);
     const data = Object.fromEntries(formData.entries());
+
+    // archive upload: upload a document to the trainer's archive folder
+    if (data.kind === 'archive-upload') {
+      const fileInput = $('#toolsForm input[name="document"]');
+      const file = fileInput?.files?.[0];
+      if (!file) { $('#toolsMsg').textContent = 'Please select a file'; return; }
+      if (file.size > 20 * 1024 * 1024) { $('#toolsMsg').textContent = 'File is over 20 MB'; return; }
+      $('#toolsMsg').textContent = '';
+      try {
+        toast('Getting upload ticket…');
+        const ticketRes = await api('tarchiveTicket', { folder: data.folder || '', name: file.name, bytes: file.size });
+        if (!ticketRes.ok) throw new Error(ticketRes.error);
+        toast('Uploading to Drive…');
+        const dataUrl = await fileToBase64(file);
+        const uploadRes = await fetch(ticketRes.driveUrl, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'tarchiveUpload', ticket: ticketRes.ticket, mime: file.type || 'application/octet-stream', data: dataUrl.split(',')[1] || '' }),
+          redirect: 'follow'
+        });
+        const uploadOut = await uploadRes.json();
+        if (!uploadOut.ok) throw new Error(uploadOut.error || 'The Drive did not save the file');
+        await api('tarchiveDone', { ticket: ticketRes.ticket, fileId: uploadOut.fileId, fileName: uploadOut.fileName, version: uploadOut.version, sig: uploadOut.sig });
+        toast('Uploaded to archive', 'ok');
+        dialog.close();
+        await loadToolsArchive();
+      } catch (err) {
+        $('#toolsMsg').textContent = err.message || 'Upload failed';
+      }
+      return;
+    }
 
     // validate
     if (!data.classCode) { $('#toolsMsg').textContent = 'Class is required'; return; }
@@ -2708,7 +2744,6 @@ function wireTools() {
 
   // archive buttons
   $('#toolsArchiveReload')?.addEventListener('click', () => loadToolsArchive());
-  $('#toolsArchiveUploadBtn')?.addEventListener('click', () => openArchiveUploadDialog());
 
   // filters
   $('#toolsSearch')?.addEventListener('input', debounce(() => {
@@ -2841,63 +2876,6 @@ async function downloadArchiveFile(fileId, fileName, mimeType) {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     toast('Download started', 'ok');
   } catch (err) { toast(err.message || 'Could not download file', 'err'); }
-}
-
-async function openArchiveUploadDialog() {
-  const dialog = $('#toolsDialog');
-  const body = $('#toolsDialogBody');
-  if (!dialog || !body) return;
-  body.innerHTML = `
-    <div class="scan-head">
-      <strong>Upload to Archive</strong>
-      <button type="button" class="btn small ghost" id="toolsDialogClose">Cancel</button>
-    </div>
-    <form id="toolsArchiveForm" method="dialog">
-      <label>Folder (optional)<input type="text" name="folder" placeholder="Subfolder name (e.g. Certificates, Reports)"></label>
-      <label>File<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" required></label>
-      <p id="toolsMsg" class="err-text small" role="alert"></p>
-      <div class="row-actions">
-        <button type="button" class="btn ghost" id="toolsCancelBtn">Cancel</button>
-        <button type="submit" class="btn primary" id="toolsArchiveUploadBtn">Upload</button>
-      </div>
-    </form>
-  `;
-  $('#toolsDialogClose')?.addEventListener('click', () => dialog.close());
-  $('#toolsCancelBtn')?.addEventListener('click', () => dialog.close());
-  $('#toolsArchiveForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const folder = formData.get('folder') || '';
-    const file = formData.get('document');
-    if (!file || !(file instanceof File)) { $('#toolsMsg').textContent = 'Please select a file'; return; }
-    if (file.size > 20 * 1024 * 1024) { $('#toolsMsg').textContent = 'File is over 20 MB'; return; }
-    $('#toolsMsg').textContent = '';
-    try {
-      toast('Getting upload ticket…');
-      const ticketRes = await api('tarchiveTicket', { folder, name: file.name, bytes: file.size });
-      if (!ticketRes.ok) throw new Error(ticketRes.error);
-      toast('Uploading to Drive…');
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result.split(',')[1] || '';
-        const uploadRes = await fetch(ticketRes.driveUrl, {
-          method: 'POST',
-          body: JSON.stringify({ action: 'tarchiveUpload', ticket: ticketRes.ticket, mime: file.type || 'application/octet-stream', data: base64 }),
-          redirect: 'follow'
-        });
-        const uploadOut = await uploadRes.json();
-        if (!uploadOut.ok) throw new Error(uploadOut.error || 'The Drive did not save the file');
-        await api('tarchiveDone', { ticket: ticketRes.ticket, fileId: uploadOut.fileId, fileName: uploadOut.fileName, version: uploadOut.version, sig: uploadOut.sig });
-        toast('Uploaded to archive', 'ok');
-        dialog.close();
-        await loadToolsArchive();
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
-      $('#toolsMsg').textContent = err.message || 'Upload failed';
-    }
-  });
-  dialog.showModal();
 }
 
 function wire() {
