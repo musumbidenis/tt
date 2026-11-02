@@ -96,6 +96,7 @@ const sessionLabel = (s) => (kindOf(s) === 'lesson' ? '' : `${s.title || KIND_LA
 const fmtDate = (iso) => { if (!iso) return ''; const d = new Date(iso + 'T00:00:00'); return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const fmtShort = (iso) => { if (!iso) return ''; const d = new Date(iso.length === 10 ? iso + 'T00:00:00' : iso); return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const fmtSize = (bytes) => { if (!bytes) return '—'; const units = ['B', 'KB', 'MB', 'GB']; let i = 0; let v = Number(bytes); while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; } return v.toFixed(i === 0 ? 0 : 1) + ' ' + units[i]; };
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -2705,6 +2706,10 @@ function wireTools() {
   // new tool button
   $('#toolsNewBtn')?.addEventListener('click', () => openToolsDialog(null, 'create'));
 
+  // archive buttons
+  $('#toolsArchiveReload')?.addEventListener('click', () => loadToolsArchive());
+  $('#toolsArchiveUploadBtn')?.addEventListener('click', () => openArchiveUploadDialog());
+
   // filters
   $('#toolsSearch')?.addEventListener('input', debounce(() => {
     state.toolsFilter.search = $('#toolsSearch').value.trim();
@@ -2725,7 +2730,10 @@ function wireTools() {
   const originalSwitchTab = window.switchTab;
   window.switchTab = function(tab) {
     originalSwitchTab(tab);
-    if (tab === 'tools') renderTools();
+    if (tab === 'tools') {
+      renderTools();
+      loadToolsArchive();
+    }
   };
 }
 
@@ -2733,6 +2741,163 @@ function wireTools() {
 async function initTools() {
   await loadTools();
   wireTools();
+}
+
+// ---- Trainer Archive ----
+async function loadToolsArchive() {
+  if (!hasRole('TRAINER') && !hasRole('HOD') && !hasRole('MIS') && !hasRole('IAO') && !hasRole('EAO')) return;
+  const loading = $('#toolsArchiveLoading');
+  const wrap = $('#toolsArchiveWrap');
+  const empty = $('#toolsArchiveEmpty');
+  if (loading) loading.hidden = false;
+  if (wrap) wrap.hidden = true;
+  if (empty) empty.hidden = true;
+  try {
+    const res = await api('tarchiveList', {});
+    if (!res.ok) throw new Error(res.error);
+    state.toolsArchive = res.files || [];
+    renderToolsArchive();
+  } catch (err) {
+    console.error('Failed to load archive:', err);
+    if (loading) loading.hidden = true;
+    if (wrap) wrap.hidden = true;
+    if (empty) { empty.hidden = false; empty.querySelector('p').textContent = 'Could not load archive: ' + err.message; }
+  }
+}
+
+function renderToolsArchive() {
+  const body = $('#toolsArchiveBody');
+  const wrap = $('#toolsArchiveWrap');
+  const empty = $('#toolsArchiveEmpty');
+  const loading = $('#toolsArchiveLoading');
+  if (!body) return;
+  if (loading) loading.hidden = true;
+  const files = state.toolsArchive || [];
+  if (files.length === 0) {
+    body.innerHTML = '';
+    wrap.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  wrap.hidden = false;
+  empty.hidden = true;
+  body.innerHTML = files.map((f, i) => {
+    const size = f.size ? fmtSize(f.size) : '—';
+    const modified = f.modifiedTime ? fmtShort(f.modifiedTime) : '—';
+    const path = f.path || '';
+    return `
+      <tr data-id="${esc(f.id)}">
+        <td class="sn">${i + 1}</td>
+        <td><b>${esc(f.name)}</b></td>
+        <td><small class="muted">${esc(path)}</small></td>
+        <td class="num">${esc(size)}</td>
+        <td class="num">${esc(modified)}</td>
+        <td>
+          <div class="tool-actions">
+            <button type="button" class="btn ghost small tool-archive-view" data-id="${esc(f.id)}" data-name="${esc(f.name)}" data-mime="${esc(f.mimeType)}" title="View"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg></button>
+            <button type="button" class="btn ghost small tool-archive-download" data-id="${esc(f.id)}" data-name="${esc(f.name)}" data-mime="${esc(f.mimeType)}" title="Download"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg></button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  // wire actions
+  $$('#toolsArchiveBody .tool-archive-view').forEach((b) => b.addEventListener('click', () => viewArchiveFile(b.dataset.id, b.dataset.name, b.dataset.mime)));
+  $$('#toolsArchiveBody .tool-archive-download').forEach((b) => b.addEventListener('click', () => downloadArchiveFile(b.dataset.id, b.dataset.name, b.dataset.mime)));
+}
+
+async function viewArchiveFile(fileId, fileName, mimeType) {
+  toast('Opening…');
+  try {
+    const v = await api('tarchiveView', { fileId });
+    if (!v.ok) throw new Error(v.error);
+    const res = await fetch(v.driveUrl + (v.driveUrl.includes('?') ? '&' : '?') + 'action=file&ticket=' + encodeURIComponent(v.ticket), { redirect: 'follow' });
+    const out = await res.json();
+    if (!out.ok) throw new Error(out.error || 'The Drive did not send the file');
+    const bin = atob(out.data), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: out.mime || mimeType || 'application/octet-stream' }));
+    const w = window.open(url, '_blank');
+    if (!w) { const a = document.createElement('a'); a.href = url; a.download = out.name || fileName; a.click(); }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) { toast(err.message || 'Could not open file', 'err'); }
+}
+
+async function downloadArchiveFile(fileId, fileName, mimeType) {
+  toast('Downloading…');
+  try {
+    const v = await api('tarchiveView', { fileId });
+    if (!v.ok) throw new Error(v.error);
+    const res = await fetch(v.driveUrl + (v.driveUrl.includes('?') ? '&' : '?') + 'action=file&ticket=' + encodeURIComponent(v.ticket), { redirect: 'follow' });
+    const out = await res.json();
+    if (!out.ok) throw new Error(out.error || 'The Drive did not send the file');
+    const bin = atob(out.data), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: out.mime || mimeType || 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = out.name || fileName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast('Download started', 'ok');
+  } catch (err) { toast(err.message || 'Could not download file', 'err'); }
+}
+
+async function openArchiveUploadDialog() {
+  const dialog = $('#toolsDialog');
+  const body = $('#toolsDialogBody');
+  if (!dialog || !body) return;
+  body.innerHTML = `
+    <div class="scan-head">
+      <strong>Upload to Archive</strong>
+      <button type="button" class="btn small ghost" id="toolsDialogClose">Cancel</button>
+    </div>
+    <form id="toolsArchiveForm" method="dialog">
+      <label>Folder (optional)<input type="text" name="folder" placeholder="Subfolder name (e.g. Certificates, Reports)"></label>
+      <label>File<input type="file" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" required></label>
+      <p id="toolsMsg" class="err-text small" role="alert"></p>
+      <div class="row-actions">
+        <button type="button" class="btn ghost" id="toolsCancelBtn">Cancel</button>
+        <button type="submit" class="btn primary" id="toolsArchiveUploadBtn">Upload</button>
+      </div>
+    </form>
+  `;
+  $('#toolsDialogClose')?.addEventListener('click', () => dialog.close());
+  $('#toolsCancelBtn')?.addEventListener('click', () => dialog.close());
+  $('#toolsArchiveForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const folder = formData.get('folder') || '';
+    const file = formData.get('document');
+    if (!file || !(file instanceof File)) { $('#toolsMsg').textContent = 'Please select a file'; return; }
+    if (file.size > 20 * 1024 * 1024) { $('#toolsMsg').textContent = 'File is over 20 MB'; return; }
+    $('#toolsMsg').textContent = '';
+    try {
+      toast('Getting upload ticket…');
+      const ticketRes = await api('tarchiveTicket', { folder, name: file.name, bytes: file.size });
+      if (!ticketRes.ok) throw new Error(ticketRes.error);
+      toast('Uploading to Drive…');
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1] || '';
+        const uploadRes = await fetch(ticketRes.driveUrl, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'tarchiveUpload', ticket: ticketRes.ticket, mime: file.type || 'application/octet-stream', data: base64 }),
+          redirect: 'follow'
+        });
+        const uploadOut = await uploadRes.json();
+        if (!uploadOut.ok) throw new Error(uploadOut.error || 'The Drive did not save the file');
+        await api('tarchiveDone', { ticket: ticketRes.ticket, fileId: uploadOut.fileId, fileName: uploadOut.fileName, version: uploadOut.version, sig: uploadOut.sig });
+        toast('Uploaded to archive', 'ok');
+        dialog.close();
+        await loadToolsArchive();
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      $('#toolsMsg').textContent = err.message || 'Upload failed';
+    }
+  });
+  dialog.showModal();
 }
 
 function wire() {

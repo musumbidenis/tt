@@ -66,6 +66,8 @@ function doPost(e) {
     var b = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (b.action === 'upload') return json_(upload_(b));
     if (b.action === 'tupload') return json_(tupload_(b));
+    if (b.action === 'tarchiveList') return json_(tarchiveList_(b));
+    if (b.action === 'tarchiveUpload') return json_(tarchiveUpload_(b));
     if (b.action === 'file') return json_(viewFile_(b.ticket));
     if (b.action === 'nudge') return json_(nudge_(b));
     if (b.action === 'bulk') return json_(bulkSave_(b));
@@ -191,6 +193,87 @@ function tupload_(b) {
     var blob = Utilities.newBlob(Utilities.base64Decode(b.data), b.mime || 'application/octet-stream', name);
     var file = folder.createFile(blob);
     file.setDescription('Trainer POE ' + t.slot + (t.unit ? ' for ' + t.unit : '') + ', uploaded ' + new Date().toISOString());
+    return { ok: true, fileId: file.getId(), fileName: name, version: v, sig: hmacHex_('done|' + t.id + '|' + file.getId() + '|' + v + '|' + name) };
+  } finally { lock.releaseLock(); }
+}
+/** Trainer Archive (new): lists files in the trainer's archive folder (The ARK - Archive / Trainers / <trainer folder>).
+ * Excludes auto-generated files (Google Sheets, folders). Returns files with metadata. */
+function tarchiveList_(b) {
+  var t = readTicket_(b.ticket, 'tarchive');
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    var archiveRoot = archiveRoot_(PropertiesService.getScriptProperties());
+    var trainersFolder = archiveRoot.getFoldersByName('Trainers');
+    if (!trainersFolder.hasNext()) return { ok: true, files: [] };
+    var trainerFolder = resolveFolder_(t.trainer || {}, trainerFolders_());
+    if (!trainerFolder) return { ok: true, files: [] };
+    // Find the trainer's folder in the archive
+    var archiveTrainers = trainersFolder.next().getFoldersByName(trainerFolder.getName());
+    if (!archiveTrainers.hasNext()) return { ok: true, files: [] };
+    var archiveTrainerFolder = archiveTrainers.next();
+    // List files (not folders) in the archive trainer folder and subfolders
+    var files = [];
+    listArchiveFiles_(archiveTrainerFolder, files, '');
+    // Filter out auto-generated files (Google Sheets, etc.)
+    var filtered = files.filter(function (f) {
+      var mime = f.mimeType;
+      // Exclude Google Sheets, Docs, Slides, Forms, and folders
+      if (mime === 'application/vnd.google-apps.folder') return false;
+      if (mime === 'application/vnd.google-apps.spreadsheet') return false;
+      if (mime === 'application/vnd.google-apps.document') return false;
+      if (mime === 'application/vnd.google-apps.presentation') return false;
+      if (mime === 'application/vnd.google-apps.form') return false;
+      if (mime === 'application/vnd.google-apps.shortcut') return false;
+      return true;
+    });
+    return { ok: true, files: filtered };
+  } finally { lock.releaseLock(); }
+}
+/** Helper: recursively list files in a folder and subfolders. */
+function listArchiveFiles_(folder, files, prefix) {
+  var it = folder.getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    files.push({
+      id: f.getId(),
+      name: f.getName(),
+      mimeType: f.getMimeType(),
+      size: f.getSize(),
+      modifiedTime: f.getLastUpdated(),
+      description: f.getDescription() || '',
+      path: prefix + f.getName()
+    });
+  }
+  var fit = folder.getFolders();
+  while (fit.hasNext()) {
+    var sub = fit.next();
+    listArchiveFiles_(sub, files, prefix + sub.getName() + '/');
+  }
+}
+/** Trainer Archive (new): uploads a file to the trainer's archive folder.
+ * Creates subfolders as specified in the ticket. */
+function tarchiveUpload_(b) {
+  var t = readTicket_(b.ticket, 'tarchive');
+  if (!b.data) throw new Error('No file was sent');
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    var archiveRoot = archiveRoot_(PropertiesService.getScriptProperties());
+    var trainersFolder = archiveRoot.getFoldersByName('Trainers');
+    if (!trainersFolder.hasNext()) throw new Error('Trainers archive folder not found');
+    var trainerFolder = resolveFolder_(t.trainer || {}, trainerFolders_());
+    if (!trainerFolder) throw new Error('No Drive folder for this trainer yet');
+    // Find or create the trainer's folder in the archive
+    var archiveTrainers = trainersFolder.next().getFoldersByName(trainerFolder.getName());
+    var archiveTrainerFolder = archiveTrainers.hasNext() ? archiveTrainers.next() : trainersFolder.next().createFolder(trainerFolder.getName());
+    // Navigate/create subfolders
+    var folder = archiveTrainerFolder;
+    (t.folders || []).forEach(function (f) { folder = childFolder_(folder, String(f).replace(/[\/:*?"<>|]+/g, '-').slice(0, 90)); });
+    var v = Number(t.v) || 1, name = t.name;
+    var ext = (name.match(/(\.[A-Za-z0-9]{1,5})$/) || ['', ''])[1], stem = name.replace(/ - v\d+(\.[A-Za-z0-9]{1,5})?$/, '');
+    while (folder.getFilesByName(name).hasNext()) { v++; name = stem + ' - v' + v + ext; }
+    var blob = Utilities.newBlob(Utilities.base64Decode(b.data), b.mime || 'application/octet-stream', name);
+    var file = folder.createFile(blob);
+    file.setDescription('Trainer Archive ' + (t.slot || 'document') + ', uploaded ' + new Date().toISOString());
     return { ok: true, fileId: file.getId(), fileName: name, version: v, sig: hmacHex_('done|' + t.id + '|' + file.getId() + '|' + v + '|' + name) };
   } finally { lock.releaseLock(); }
 }

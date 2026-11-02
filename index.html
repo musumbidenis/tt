@@ -21,6 +21,7 @@
   <symbol id="i-poe" viewBox="0 0 24 24"><path d="M3.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M8.5 13l2.5 2.5 4.5-5"/></symbol>
   <symbol id="i-me" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.4 3.6-5.5 7-5.5s6.2 2.1 7 5.5"/></symbol>
   <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.4L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.7 4.4L20 16"/><path d="M20 20.5V16h-4.5"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 8-8V0l4 4-4 4v-2a4 4 0 0 0-4 4"/><path d="M20 12a8 8 0 0 1-8 8v2l-4-4 4-4v2a4 4 0 0 0 4 4"/></symbol>
   <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM19 14h1M14 19h1M18 18h2v2h-2z"/></symbol>
   <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></symbol>
   <symbol id="i-add" viewBox="0 0 24 24"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c.7-3.3 3.3-5.5 6.5-5.5 1.3 0 2.5.3 3.5.9M18 14v6M15 17h6"/></symbol>
@@ -243,6 +244,37 @@
       </div>
       <div id="toolsEmpty" class="empty" hidden>
         <p>No tools yet. Tap <b>New tool</b> to create a learning plan, session plan, assessment tool or marking scheme.</p>
+      </div>
+
+      <!-- Trainer Archive section -->
+      <div class="card" id="toolsArchiveCard" style="margin-top: 1.5rem;">
+        <div class="msec-head">
+          <h3>Trainer Archive</h3>
+          <button type="button" class="btn small ghost" id="toolsArchiveReload" title="Refresh"><svg class="i" aria-hidden="true"><use href="#i-reload"/></svg></button>
+          <button type="button" class="btn small primary" id="toolsArchiveUploadBtn"><svg class="i" aria-hidden="true"><use href="#i-add"/></svg>Upload document</button>
+        </div>
+        <p class="muted small">Your documents in <b>The ARK - Archive / Trainers / <your folder></b>. Auto-generated files (registers, marksheets) are hidden.</p>
+        <div class="table-wrap" id="toolsArchiveWrap" hidden>
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th class="sn">#</th>
+                <th>Name</th>
+                <th>Path</th>
+                <th class="num">Size</th>
+                <th class="num">Modified</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="toolsArchiveBody"></tbody>
+          </table>
+        </div>
+        <div id="toolsArchiveEmpty" class="empty" hidden>
+          <p>No documents in your archive folder yet.</p>
+        </div>
+        <div id="toolsArchiveLoading" class="empty" hidden>
+          <p class="muted">Loading archive…</p>
+        </div>
       </div>
     </div>
   </section>

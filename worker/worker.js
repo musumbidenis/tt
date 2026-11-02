@@ -509,6 +509,10 @@ const ACTIONS = {
   tpoeGrant: { role: ['HOD', 'MIS'], fn: (env, b, me) => tpoeGrant(env, b, me) },
   tpoeGrants: { role: ['HOD', 'MIS'], fn: (env, b, me) => tpoeGrants(env, b, me) },
   tpoeRevoke: { role: ['HOD', 'MIS'], fn: (env, b, me) => tpoeRevoke(env, b, me) },
+  tarchiveList: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tarchiveList(env, b, me) },
+  tarchiveTicket: { role: ['TRAINER'], fn: (env, b, me) => tarchiveTicket(env, b, me) },
+  tarchiveDone: { role: ['TRAINER'], fn: (env, b, me) => tarchiveDone(env, b, me) },
+  tarchiveView: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tarchiveView(env, b, me) },
   verifyData: { fn: (env, b, me) => verifyData(env, b, me) },
   savePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => savePanel(env, b, me) },
   assignVerification: { role: ['MIS', 'IAO'], fn: (env, b, me) => assignVerification(env, b, me) },
@@ -3157,6 +3161,60 @@ async function tpoeDelete(env, b, me) {
   await tpoeWithdrawSignoff(env, r.term_id, r.trainer_code, `${me.name} removed ${r.slot}${r.unit_code ? ' ' + r.unit_code : ''} after sign-off`);
   await audit(env, me, 'trainer POE removed', `${r.slot}${r.unit_code ? ' ' + r.unit_code : ''} v${r.version}`);
   return { ok: true };
+}
+/** Lists files in the trainer's archive folder (The ARK - Archive / Trainers / <trainer folder>). */
+async function tarchiveList(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('There is no active term');
+  const trainer = String(b.trainer || me.code);
+  const access = await tpoeAccess(env, me, trainer);
+  if (!access.view) fail('You do not have access to this trainer\'s archive');
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  const ticket = await signTicket(env, { k: 'tarchive', id: crypto.randomUUID(), trainer: { code: trainer }, exp: Date.now() + 5 * 60 * 1000 });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'tarchiveList', ticket })
+  });
+  const out = await res.json();
+  if (!res.ok || !out.ok) throw new Error(out.error || 'The Drive bridge did not return the file list');
+  return { ok: true, files: out.files };
+}
+/** A trainer asks for a ticket to upload a file to their archive folder, through the bridge. */
+async function tarchiveTicket(env, b, me) {
+  const term = await activeTerm(env);
+  if (!term) fail('There is no active term');
+  const folder = String(b.folder || '');
+  const fileName = String(b.name || '');
+  if (Number(b.bytes) > MAX_EVIDENCE_BYTES) fail('That file is over 20 MB.');
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  const self = await getStaff(env, me.code);
+  const ticket = await signTicket(env, { k: 'tarchive', id: crypto.randomUUID(), trainer: { code: me.code, name: me.name, folder: self?.drive_folder || '' },
+    term: term.id, folders: folder ? [folder] : [], name: fileName, bytes: Number(b.bytes) || 0, exp: Date.now() + 6 * 3600e3 });
+  return { ok: true, ticket, driveUrl: url };
+}
+/** The bridge saved the file and signed what it saved; record it (optional, for audit trail). */
+async function tarchiveDone(env, b, me) {
+  const t = await readTicket(env, b.ticket, 'tarchive', { late: true });
+  if (lower(t.trainer.code) !== lower(me.code)) fail('That ticket is for another trainer');
+  if ((await hmacHex(`done|${t.id}|${b.fileId}|${b.version}|${b.fileName}`, bridgeSecret(env))) !== b.sig) fail('The Drive bridge did not confirm this file');
+  await audit(env, me, 'trainer archive upload', `${b.fileName} v${b.version}`);
+  return { ok: true };
+}
+/** Creates a view ticket for a file in the trainer's archive folder (by Drive file ID). */
+async function tarchiveView(env, b, me) {
+  const fileId = String(b.fileId || '');
+  if (!fileId) fail('File ID is required');
+  const term = await activeTerm(env);
+  if (!term) fail('There is no active term');
+  const trainer = String(b.trainer || me.code);
+  const access = await tpoeAccess(env, me, trainer);
+  if (!access.view) fail('You do not have access to this trainer\'s archive');
+  const url = await getMeta(env, 'drive_url');
+  if (!url) fail('The Google Drive link is not set up yet');
+  return { ok: true, driveUrl: url, fileName: b.fileName || 'file', ticket: await signTicket(env, { k: 'view', fileId, exp: Date.now() + 10 * 6e4 }) };
 }
 /** A trainer's device found the file in the student's Drive no longer matches what was sent. */
 async function poeChanged(env, b, me) {
