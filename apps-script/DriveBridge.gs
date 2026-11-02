@@ -205,10 +205,11 @@ function tarchiveList_(b) {
     var archiveRoot = archiveRoot_(PropertiesService.getScriptProperties());
     var trainersFolder = archiveRoot.getFoldersByName('Trainers');
     if (!trainersFolder.hasNext()) return { ok: true, files: [] };
+    var trainersDir = trainersFolder.next();
     var trainerFolder = resolveFolder_(t.trainer || {}, trainerFolders_());
     if (!trainerFolder) return { ok: true, files: [] };
     // Find the trainer's folder in the archive
-    var archiveTrainers = trainersFolder.next().getFoldersByName(trainerFolder.getName());
+    var archiveTrainers = trainersDir.getFoldersByName(trainerFolder.getName());
     if (!archiveTrainers.hasNext()) return { ok: true, files: [] };
     var archiveTrainerFolder = archiveTrainers.next();
     // List files (not folders) in the archive trainer folder and subfolders
@@ -260,11 +261,12 @@ function tarchiveUpload_(b) {
     var archiveRoot = archiveRoot_(PropertiesService.getScriptProperties());
     var trainersFolder = archiveRoot.getFoldersByName('Trainers');
     if (!trainersFolder.hasNext()) throw new Error('Trainers archive folder not found');
+    var trainersDir = trainersFolder.next();
     var trainerFolder = resolveFolder_(t.trainer || {}, trainerFolders_());
     if (!trainerFolder) throw new Error('No Drive folder for this trainer yet');
     // Find or create the trainer's folder in the archive
-    var archiveTrainers = trainersFolder.next().getFoldersByName(trainerFolder.getName());
-    var archiveTrainerFolder = archiveTrainers.hasNext() ? archiveTrainers.next() : trainersFolder.next().createFolder(trainerFolder.getName());
+    var archiveTrainers = trainersDir.getFoldersByName(trainerFolder.getName());
+    var archiveTrainerFolder = archiveTrainers.hasNext() ? archiveTrainers.next() : trainersDir.createFolder(trainerFolder.getName());
     // Navigate/create subfolders
     var folder = archiveTrainerFolder;
     (t.folders || []).forEach(function (f) { folder = childFolder_(folder, String(f).replace(/[\/:*?"<>|]+/g, '-').slice(0, 90)); });
