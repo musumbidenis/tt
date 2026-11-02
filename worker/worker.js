@@ -3227,7 +3227,8 @@ async function tarchiveView(env, b, me) {
   if (!url) fail('The Google Drive link is not set up yet');
   return { ok: true, driveUrl: url, fileName: b.fileName || 'file', ticket: await signTicket(env, { k: 'view', fileId, exp: Date.now() + 10 * 6e4 }) };
 }
-/** MIS Officer triggers backup of all trainers' personal "The Ark" folders to central Archive. */
+/** MIS Officer triggers backup of all trainers' personal "The Ark" folders to central Archive.
+ * Runs a full sync first (updates attendance/marksheets to personal Drives), then backs up to Archive. */
 async function trainerBackupNow(env, b, me) {
   const url = await getMeta(env, 'drive_url');
   if (!url) fail('The Google Drive link is not set up yet');
@@ -3241,10 +3242,10 @@ async function trainerBackupNow(env, b, me) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'trainerBackupNow', ticket })
+    body: JSON.stringify({ action: 'syncAndBackup', ticket })
   });
   const out = await res.json();
-  if (!res.ok || !out.ok) throw new Error(out.error || 'The Drive bridge did not start the backup');
+  if (!res.ok || !out.ok) throw new Error(out.error || 'The Drive bridge did not start the sync and backup');
   return { ok: true, started: out.started, trainers: trainerCodes.length };
 }
 /** Bridge calls this to get fresh access tokens for trainers who have connected Google (for personal Drive writes). */

@@ -28,7 +28,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.13.0';
+var BRIDGE_VERSION = '1.14.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -44,16 +44,16 @@ function setup() {
   });
   DriveApp.getFolderById(p.getProperty('TRAINERS_FOLDER_ID')).getName();   // checks access
   DriveApp.getFolderById(p.getProperty('POE_FOLDER_ID')).getName();
-  // Out with the old 10-minute trigger (and any one-off left over): the database now pokes this script
-  // after a change, and an hourly run is only the safety net.
+  // Remove all old triggers (hourly, one-off, etc.)
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'sync' || t.getHandlerFunction() === 'syncOnce') ScriptApp.deleteTrigger(t);
   });
   p.deleteProperty('NUDGE_ID'); p.deleteProperty('NUDGE_AT'); p.deleteProperty('NUDGE_WANTED');
-  ScriptApp.newTrigger('sync').timeBased().everyHours(1).create();
+  // Daily trigger at close of work (5:30 PM)
+  ScriptApp.newTrigger('sync').timeBased().atHour(17).nearMinute(30).everyDays(1).create();
   var msg = 'Drive bridge ready.\n\nCopy this SECRET into the Cloudflare Worker as the secret BRIDGE_SECRET:\n\n' + p.getProperty('SECRET') +
-    '\n\nThen Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone). The database then asks for an' +
-    ' update whenever something changes, and an hourly check catches anything missed.';
+    '\n\nThen Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone). Daily sync runs at 17:30.' +
+    '\nManual sync available via "syncAndBackup" action.';
   Logger.log(msg);
   return msg;
 }
@@ -76,6 +76,8 @@ function doPost(e) {
     if (b.action === 'bulk') return json_(bulkSave_(b));
     if (b.action === 'trash') { var tt = readTicket_(b.ticket, 'trash'), n = 0; (tt.ids || []).forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); n++; } catch (e) { /* gone already */ } }); return json_({ ok: true, trashed: n }); }
     if (b.action === 'trainerBackupNow') return json_(trainerBackupNow_(b));
+    if (b.action === 'manualSync') { sync(); return json_({ ok: true, synced: true }); }
+    if (b.action === 'syncAndBackup') { sync(); return json_(trainerBackupNow_(b)); }
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
