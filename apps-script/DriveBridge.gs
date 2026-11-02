@@ -28,7 +28,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.11.0';
+var BRIDGE_VERSION = '1.11.2';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -215,17 +215,9 @@ function tarchiveList_(b) {
     // List files (not folders) in the archive trainer folder and subfolders
     var files = [];
     listArchiveFiles_(archiveTrainerFolder, files, '');
-    // Filter out auto-generated files (Google Sheets, etc.)
+    // Show all documents (exclude folders only)
     var filtered = files.filter(function (f) {
-      var mime = f.mimeType;
-      // Exclude Google Sheets, Docs, Slides, Forms, and folders
-      if (mime === 'application/vnd.google-apps.folder') return false;
-      if (mime === 'application/vnd.google-apps.spreadsheet') return false;
-      if (mime === 'application/vnd.google-apps.document') return false;
-      if (mime === 'application/vnd.google-apps.presentation') return false;
-      if (mime === 'application/vnd.google-apps.form') return false;
-      if (mime === 'application/vnd.google-apps.shortcut') return false;
-      return true;
+      return f.mimeType !== 'application/vnd.google-apps.folder';
     });
     return { ok: true, files: filtered };
   } finally { lock.releaseLock(); }
