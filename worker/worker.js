@@ -136,6 +136,8 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
 const DATA_MIGRATIONS = [
+  // Force relogin for all trainers: clear Google refresh tokens so they reconnect with new scopes (Option 2)
+  `UPDATE staff SET g_refresh=NULL, personal_drive_folder=NULL WHERE g_refresh IS NOT NULL`,
   // Marks used to be kept per term; a unit now has one marksheet for its whole life. Each cell keeps the
   // newest value it had in any term, and remembers the term it was entered in (for the end-of-term lock).
   `INSERT OR IGNORE INTO unit_marks (class_code, unit_code, adm_no, ${MARK_CELLS.join(', ')}, meta, updated_at, updated_by, synced_at)

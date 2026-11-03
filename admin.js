@@ -891,7 +891,7 @@ const Admin = (() => {
         : t.paused ? '<span class="err-text">Stopped because the Drive is nearly full.</span>' : 'Not copied yet - they go with the next backup.';
     const trainersBox = `<h3 class="h-sub">Trainers' files</h3><p class="muted small">Each trainer's Drive folder (attendance and marks sheets, and anything they keep there) and the Reports folder are copied into <b>The ARK - Archive</b> too. A file is copied again only after it changes.</p>
       <p class="small">${tline}</p>${t.errors?.length ? fold('trainerBackupErr', `${t.errors.length} problem${t.errors.length === 1 ? '' : 's'}`, `<ul class="h-facts">${t.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : ''}
-      <div class="row-actions"><button type="button" class="btn" data-act="trainerBackupNow"${t.running ? ' disabled' : ''}>Back up personal Drives now</button></div>`;
+      <div class="row-actions"><button type="button" class="btn" data-act="trainerBackupNow"${t.running ? ' disabled' : ''}>Backup Now - Personal Drives</button></div>`;
     const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}"${h === Number(b.plan.hour) ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
     fill('m-backup', `${banner}
       <p class="muted">Approved POE documents that students keep in their own Drive are copied into <b>The ARK - Archive</b> in ${esc(who)}'s Drive, so the college keeps them after a student leaves.</p>

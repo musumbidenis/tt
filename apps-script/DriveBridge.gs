@@ -28,7 +28,7 @@
  * Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone.
  */
 
-var BRIDGE_VERSION = '1.14.0';
+var BRIDGE_VERSION = '1.15.0';
 var WEEKS = 12, CELLS = WEEKS * 3;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;   // stop and carry on next run before Apps Script's 6-minute limit
 
@@ -439,15 +439,21 @@ function sync() {
     var folders = trainerFolders_(), sheets = JSON.parse(p.getProperty('SHEETS') || '{}');
     var report = { matched: 0, unmatched: [], sheets: {} };
     var trainers = pend ? JSON.parse(p.getProperty('TRAINERS') || '[]') : null, made = false;
+
+    // Fetch trainer access tokens for ALL trainers with connected Google (for personal Drive sync + backup)
+    if (trainers) {
+      var allTrainerCodes = trainers.filter(function (t) { return t.hasRefresh && t.code; }).map(function (t) { return t.code; });
+      var trainerTokens = getTrainerAccessTokens_(allTrainerCodes);
+    } else {
+      var trainerTokens = {};
+    }
+
     while (true) {
       var feed = callWorker_('bridgeFeed', { since: since, offset: offset });
       if (!startNow) startNow = feed.now;
       if (feed.trainers) { trainers = feed.trainers; p.setProperty('TRAINERS', JSON.stringify(trainers)); }
       if (!made && trainers) { made = true; makeFolders_(trainers, folders); }
       if (feed.evidence && feed.evidence.length) writeEvidenceIndex_(feed.evidence);
-      // Fetch trainer access tokens from worker (for personal Drive sync)
-      var trainerCodesWithRefresh = (trainers || []).filter(function (t) { return t.hasRefresh && t.code; }).map(function (t) { return t.code; });
-      var trainerTokens = getTrainerAccessTokens_(trainerCodesWithRefresh);
 
       feed.units.forEach(function (u) {
         var tr = (trainers || []).filter(function (x) { return lowerEq_(x.code, u.trainerCode); })[0] || { code: u.trainerCode, name: u.trainerName, folder: '' };
@@ -485,6 +491,8 @@ function sync() {
     // Backups use whatever time this run has left; unfinished ones carry on in the next run.
     try { if (backup_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('backup: ' + e); problems.push('Backup: ' + (e && e.message || e)); }
     try { if (backupTrainers_(started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('trainer backup: ' + e); problems.push("Trainers' files backup: " + (e && e.message || e)); }
+    // Backup personal "The Ark" folders to Archive (Option 2)
+    try { if (backupPersonalDrives_(trainerTokens, started)) p.setProperty('NUDGE_WANTED', '1'); } catch (e) { Logger.log('personal Drive backup: ' + e); problems.push('Personal Drive backup: ' + (e && e.message || e)); }
   } catch (e) { problems.push('Drive update: ' + (e && e.message || e)); throw e; }
   finally {
     lock.releaseLock();
@@ -560,6 +568,61 @@ function backupTrainers_(started) {
   callWorker_('trainerBackupDone', { copied: ctx.copied, same: ctx.same, failed: ctx.failed, errors: ctx.errors, used: ctx.used,
     finished: !ctx.more && !ctx.paused, paused: ctx.paused });
   return ctx.more;
+}
+
+/* ---------- Daily sync: Backup personal "The Ark" folders to Archive (Option 2) ---------- */
+/** Backs up each trainer's personal "The Ark" folder to the central Archive using their access tokens.
+ * Called from sync() during daily run. Returns true if backup needs more time. */
+function backupPersonalDrives_(trainerTokens, started) {
+  if (!trainerTokens || Object.keys(trainerTokens).length === 0) return false;
+  if (Date.now() - started > TIME_BUDGET_MS) return true;
+
+  var p = PropertiesService.getScriptProperties();
+  var archiveRoot = archiveRoot_(p);
+  var trainersArchive = childFolder_(archiveRoot, 'Trainers');
+  var totalCopied = 0, totalFailed = 0;
+  var more = false;
+
+  Object.keys(trainerTokens).forEach(function (code) {
+    if (Date.now() - started > TIME_BUDGET_MS) { more = true; return; }
+    var accessToken = trainerTokens[code];
+    if (!accessToken) return;
+    try {
+      var trainerFolderName = code;
+      var archiveTrainerFolder = childFolder_(trainersArchive, trainerFolderName);
+      var personalFolderId = getOrCreatePersonalArkFolder_(accessToken);
+      var files = listPersonalDriveFolder_(personalFolderId, accessToken);
+      var copied = 0, failed = 0;
+      files.forEach(function (f) {
+        if (Date.now() - started > TIME_BUDGET_MS) { more = true; return; }
+        try {
+          var existing = findFileInFolder_(archiveTrainerFolder, f.name);
+          if (existing && existing.getLastUpdated() === f.modifiedTime) return;
+          var copyRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + '/copy?fields=id,modifiedTime&supportsAllDrives=true', {
+            method: 'post',
+            headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+            payload: JSON.stringify({ name: f.name, parents: [archiveTrainerFolder.getId()], description: 'Daily backup from personal Drive ' + new Date().toISOString() }),
+            muteHttpExceptions: true
+          });
+          var copyData = JSON.parse(copyRes.getContentText());
+          if (copyData.error) throw new Error(copyData.error.message);
+          if (existing) { try { existing.setTrashed(true); } catch (e) { /* keep old */ } }
+          copied++;
+        } catch (e) {
+          failed++;
+          if (failed <= 3) Logger.log('Personal Drive backup failed for ' + code + '/' + f.name + ': ' + e);
+        }
+      });
+      totalCopied += copied;
+      totalFailed += failed;
+    } catch (e) {
+      totalFailed++;
+      Logger.log('Personal Drive backup failed for ' + code + ': ' + e);
+    }
+  });
+
+  Logger.log('Personal Drive backup: ' + totalCopied + ' copied, ' + totalFailed + ' failed');
+  return more;
 }
 
 /* ---------- MIS Officer: Backup Now - Personal Drives (Option 2) ---------- */
