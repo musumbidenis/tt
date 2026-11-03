@@ -890,7 +890,8 @@ const Admin = (() => {
       : t.finishedAt ? `Last copied ${esc(fmtTime(t.finishedAt))} - <b>${t.copied || 0}</b> new or changed${t.same ? ` - ${t.same} unchanged` : ''}${t.failed ? ` - <span class="err-text">${t.failed} could not be copied</span>` : ''}.`
         : t.paused ? '<span class="err-text">Stopped because the Drive is nearly full.</span>' : 'Not copied yet - they go with the next backup.';
     const trainersBox = `<h3 class="h-sub">Trainers' files</h3><p class="muted small">Each trainer's Drive folder (attendance and marks sheets, and anything they keep there) and the Reports folder are copied into <b>The ARK - Archive</b> too. A file is copied again only after it changes.</p>
-      <p class="small">${tline}</p>${t.errors?.length ? fold('trainerBackupErr', `${t.errors.length} problem${t.errors.length === 1 ? '' : 's'}`, `<ul class="h-facts">${t.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : ''}`;
+      <p class="small">${tline}</p>${t.errors?.length ? fold('trainerBackupErr', `${t.errors.length} problem${t.errors.length === 1 ? '' : 's'}`, `<ul class="h-facts">${t.errors.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`) : ''}
+      <div class="row-actions"><button type="button" class="btn" data-act="trainerBackupNow"${t.running ? ' disabled' : ''}>Back up personal Drives now</button></div>`;
     const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}"${h === Number(b.plan.hour) ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
     fill('m-backup', `${banner}
       <p class="muted">Approved POE documents that students keep in their own Drive are copied into <b>The ARK - Archive</b> in ${esc(who)}'s Drive, so the college keeps them after a student leaves.</p>
@@ -912,8 +913,16 @@ const Admin = (() => {
   }
   async function backupAction(patch, btn, msg) {
     busy(btn, true, 'Saving…');
-    try { cache.backup = need(await api('setBackup', patch)); drawBackup(cache.backup); refreshBadge(); toast(msg, 'ok'); }
-    catch (e) { toast(e.message, 'err'); busy(btn, false); }
+    try {
+      if (patch.trainerBackupNow) {
+        need(await api('trainerBackupNow', {}));
+      } else {
+        cache.backup = need(await api('setBackup', patch));
+      }
+      drawBackup(cache.backup);
+      refreshBadge();
+      toast(msg, 'ok');
+    } catch (e) { toast(e.message, 'err'); busy(btn, false); }
   }
 
   /* ---------- MIS: staff ---------- */
@@ -1115,6 +1124,7 @@ const Admin = (() => {
     if (sortTh) { const k = sortTh.dataset.sort; ovSort = { key: k, dir: ovSort.key === k ? -ovSort.dir : 1 }; Tables.reset('overview'); drawOverview(); return; }
     const open = t.closest('[data-open]'); if (open) { openReport(open.dataset.open); return; }
     const bn = t.closest('[data-act="backupNow"]'); if (bn) { backupAction({ now: true }, bn, 'Backup asked for: it starts within a few minutes'); return; }
+    const tbn = t.closest('[data-act="trainerBackupNow"]'); if (tbn) { backupAction({ trainerBackupNow: true }, tbn, 'Personal Drives backup asked for: it starts within a few minutes'); return; }
     const br = t.closest('[data-act="backupRetry"]'); if (br) { backupAction({ retry: true, now: true }, br, 'They will be tried again in the next backup'); return; }
     if (t.closest('[data-act="clearDefaultPin"]')) {
       if (confirm('Remove the first-time PIN? Staff without their own PIN will not be able to sign in.')) {
