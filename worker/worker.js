@@ -517,7 +517,6 @@ const ACTIONS = {
   tarchiveTicket: { role: ['TRAINER'], fn: (env, b, me) => tarchiveTicket(env, b, me) },
   tarchiveDone: { role: ['TRAINER'], fn: (env, b, me) => tarchiveDone(env, b, me) },
   tarchiveView: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => tarchiveView(env, b, me) },
-  getTrainerAccessTokens: { fn: (env, b) => getTrainerAccessTokens(env, b) },
   trainerBackupNow: { role: ['MIS'], fn: (env, b, me) => trainerBackupNow(env, b, me) },
   verifyData: { fn: (env, b, me) => verifyData(env, b, me) },
   savePanel: { role: ['MIS', 'IAO'], fn: (env, b, me) => savePanel(env, b, me) },
@@ -1969,6 +1968,11 @@ const BRIDGE_ACTIONS = {
   trainerBackupDone: async (env, b) => trainerBackupDone(env, await verifyBridge(env, b)),
   groupsJob: async (env, b) => { await verifyBridge(env, b); return groupsJob(env); },
   groupsDone: async (env, b) => groupsDone(env, await verifyBridge(env, b)),
+  /** Bridge fetches fresh access tokens for trainers with connected Google (OAuth handoff). */
+  getTrainerAccessTokens: async (env, b) => {
+    const parsed = await verifyBridge(env, b);
+    return getTrainerAccessTokens(env, parsed);
+  },
   /** After each run: how long it took, what went wrong, and the email allowance left today. */
   bridgeHealth: async (env, b) => {
     const r = await verifyBridge(env, b), errors = (Array.isArray(r.errors) ? r.errors : []).slice(0, 10).map((e) => String(e).slice(0, 400));
