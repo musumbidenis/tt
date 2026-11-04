@@ -2390,10 +2390,22 @@ function renderIdentity() {
 /* ---------- the trainer's college Google account ----------
  * Students share their POE documents (in their own Drive) with this address, and the app opens them with it. */
 /** How the staff app reaches the server for Google (connect once, fresh tokens afterwards), and whether the server does that. */
-function setupGoogleServer() {
+async function setupGoogleServer() {
   if (typeof Google === 'undefined' || !Google.on()) return;
   Google.setServer('staff', { connect: (code) => api('googleConnect', { code }), token: () => api('googleToken', {}), supported: () => Google.supports() });
-  Google.probe(serverUrl()).then(() => renderGoogleCard());
+  await Google.probe(serverUrl());
+  // Verify Google connection with server on every load: forces relogin if DB has g_refresh=NULL
+  if (Google.connected('staff')) {
+    try {
+      await Google.ensure('staff');
+    } catch (e) {
+      if (e instanceof Google.NeedSignIn) {
+        // Server said needConnect: Google module already cleared the flag via setFlag('staff', false)
+        // renderGoogleCard will now show "Connect Google" button
+      }
+    }
+  }
+  renderGoogleCard();
 }
 async function connectGoogle(choose = false) {
   if (!navigator.onLine) { toast('Connecting Google needs internet', 'err'); return false; }
@@ -3076,7 +3088,7 @@ async function init() {
   await loadSettings();
   await loadAuth();
   fillSettingsForms();
-  setupGoogleServer();
+  await setupGoogleServer();
   updateNet();
   wire();
   await loadRoster();
