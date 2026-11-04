@@ -67,6 +67,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     var b = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    Logger.log('doPost: action=' + b.action);
     if (b.action === 'upload') return json_(upload_(b));
     if (b.action === 'tupload') return json_(tupload_(b));
     if (b.action === 'tarchiveList') return json_(tarchiveList_(b));
@@ -75,11 +76,21 @@ function doPost(e) {
     if (b.action === 'nudge') return json_(nudge_(b));
     if (b.action === 'bulk') return json_(bulkSave_(b));
     if (b.action === 'trash') { var tt = readTicket_(b.ticket, 'trash'), n = 0; (tt.ids || []).forEach(function (id) { try { DriveApp.getFileById(id).setTrashed(true); n++; } catch (e) { /* gone already */ } }); return json_({ ok: true, trashed: n }); }
-    if (b.action === 'trainerBackupNow') return json_(trainerBackupNow_(b));
-    if (b.action === 'manualSync') { sync(); return json_({ ok: true, synced: true }); }
-    if (b.action === 'syncAndBackup') { sync(); return json_(trainerBackupNow_(b)); }
+    if (b.action === 'trainerBackupNow') {
+      Logger.log('doPost: trainerBackupNow action');
+      return json_(trainerBackupNow_(b));
+    }
+    if (b.action === 'manualSync') {
+      Logger.log('doPost: manualSync action');
+      sync(); return json_({ ok: true, synced: true });
+    }
+    if (b.action === 'syncAndBackup') {
+      Logger.log('doPost: syncAndBackup action');
+      sync(); return json_(trainerBackupNow_(b));
+    }
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
+    Logger.log('doPost: error: ' + err);
     return json_({ ok: false, error: String(err && err.message || err) });
   }
 }
@@ -112,6 +123,7 @@ function childFolder_(parent, name) {
 /** Fetches fresh access tokens for trainers from the worker. */
 function getTrainerAccessTokens_(trainerCodes) {
   if (!trainerCodes || trainerCodes.length === 0) return {};
+  Logger.log('getTrainerAccessTokens_: requesting for ' + trainerCodes.length + ' trainers: ' + trainerCodes.join(','));
   var p = PropertiesService.getScriptProperties();
   var url = p.getProperty('WORKER_URL');
   var ts = Date.now();
@@ -123,14 +135,23 @@ function getTrainerAccessTokens_(trainerCodes) {
     muteHttpExceptions: true,
     payload: JSON.stringify({ action: 'getTrainerAccessTokens', ts: ts, body: payload, sig: sig })
   });
-  var out = JSON.parse(res.getContentText() || '{}');
-  if (!out.ok) throw new Error('Worker getTrainerAccessTokens: ' + out.error);
+  var status = res.getResponseCode();
+  var body = res.getContentText() || '{}';
+  Logger.log('getTrainerAccessTokens_: HTTP ' + status + ' body=' + body);
+  var out = JSON.parse(body);
+  if (!out.ok) {
+    var errMsg = 'Worker getTrainerAccessTokens: ' + (out.error || 'unknown error') + ' | tokens=' + JSON.stringify(out.tokens || {});
+    Logger.log('getTrainerAccessTokens_: ERROR ' + errMsg);
+    throw new Error(errMsg);
+  }
+  Logger.log('getTrainerAccessTokens_: received tokens for ' + Object.keys(out.tokens || {}).length + ' trainers');
   return out.tokens || {};
 }
 
 /** Finds or creates "The Ark" folder in trainer's personal Drive using their access token. */
 function getOrCreatePersonalArkFolder_(accessToken) {
   var folderName = ARK_FOLDER_NAME;
+  Logger.log('getOrCreatePersonalArkFolder_: searching for "' + folderName + '"');
   // Search for existing folder
   var searchRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?q=' +
     encodeURIComponent("name='" + folderName + "' and mimeType='application/vnd.google-apps.folder' and trashed=false") +
@@ -141,8 +162,10 @@ function getOrCreatePersonalArkFolder_(accessToken) {
   });
   var searchData = JSON.parse(searchRes.getContentText());
   if (searchData.files && searchData.files.length > 0) {
+    Logger.log('getOrCreatePersonalArkFolder_: found existing folder id=' + searchData.files[0].id);
     return searchData.files[0].id;
   }
+  Logger.log('getOrCreatePersonalArkFolder_: folder not found, creating new one');
   // Create new folder
   var createRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'post',
@@ -152,11 +175,13 @@ function getOrCreatePersonalArkFolder_(accessToken) {
   });
   var createData = JSON.parse(createRes.getContentText());
   if (createData.error) throw new Error('Failed to create "The Ark" folder: ' + createData.error.message);
+  Logger.log('getOrCreatePersonalArkFolder_: created folder id=' + createData.id);
   return createData.id;
 }
 
 /** Writes a record file to trainer's personal "The Ark" folder using their access token. */
 function writeToPersonalDriveWithToken_(accessToken, fileName, content, mimeType) {
+  Logger.log('writeToPersonalDriveWithToken_: START fileName=' + fileName);
   var folderId = getOrCreatePersonalArkFolder_(accessToken);
   // Check if file already exists
   var searchRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?q=' +
@@ -170,6 +195,7 @@ function writeToPersonalDriveWithToken_(accessToken, fileName, content, mimeType
   var existingFile = (searchData.files && searchData.files.length > 0) ? searchData.files[0] : null;
 
   if (existingFile) {
+    Logger.log('writeToPersonalDriveWithToken_: updating existing file id=' + existingFile.id);
     // Update existing file
     var updateRes = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files/' + existingFile.id + '?uploadType=media', {
       method: 'patch',
@@ -179,8 +205,10 @@ function writeToPersonalDriveWithToken_(accessToken, fileName, content, mimeType
     });
     var updateData = JSON.parse(updateRes.getContentText());
     if (updateData.error) throw new Error('Failed to update file: ' + updateData.error.message);
+    Logger.log('writeToPersonalDriveWithToken_: updated file id=' + updateData.id);
     return updateData.id;
   } else {
+    Logger.log('writeToPersonalDriveWithToken_: creating new file');
     // Create new file
     var createRes = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'post',
@@ -193,6 +221,7 @@ function writeToPersonalDriveWithToken_(accessToken, fileName, content, mimeType
     });
     var createData = JSON.parse(createRes.getContentText());
     if (createData.error) throw new Error('Failed to create file: ' + createData.error.message);
+    Logger.log('writeToPersonalDriveWithToken_: created file id=' + createData.id);
     return createData.id;
   }
 }
@@ -210,7 +239,9 @@ function syncToPersonalDriveWithToken_(accessToken, tr, termName, kind, spreadsh
       updated: new Date().toISOString()
     };
     var fileName = kind === 'marks' ? 'marksheets.json' : 'attendance.json';
+    Logger.log('syncToPersonalDriveWithToken_: writing ' + fileName + ' for ' + tr.code + ' term=' + termName);
     writeToPersonalDriveWithToken_(accessToken, fileName, JSON.stringify(record, null, 2), 'application/json');
+    Logger.log('syncToPersonalDriveWithToken_: done for ' + tr.code);
   } catch (e) {
     Logger.log('Personal Drive sync failed for ' + (tr.code || tr.name) + ': ' + e);
     // Don't throw - personal Drive sync is secondary, shared Drive is primary
@@ -267,12 +298,14 @@ function nudge_(b) {
 }
 /** What the one-off trigger runs. It deletes itself first, so nothing is left behind even if sync() fails. */
 function syncOnce() {
+  Logger.log('syncOnce: START');
   var p = PropertiesService.getScriptProperties();
   try {
     ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncOnce') ScriptApp.deleteTrigger(t); });
   } catch (e) { Logger.log('syncOnce: could not tidy the trigger: ' + e); }
   p.deleteProperty('NUDGE_ID'); p.deleteProperty('NUDGE_AT');
   sync();
+  Logger.log('syncOnce: DONE');
 }
 
 /** POE / Class / Adm - Name / Unit - ITEM - vN.pdf. A version already in the folder moves the new one up. */
@@ -429,46 +462,58 @@ function sync() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) {                       // the previous run is still going
     PropertiesService.getScriptProperties().setProperty('NUDGE_WANTED', '1');
+    Logger.log('sync: lock busy, exiting');
     return;
   }
   var started = Date.now(), p = PropertiesService.getScriptProperties(), problems = [];
   try {
+    Logger.log('sync: START bridge=' + BRIDGE_VERSION);
     // A traversal of the changes can span several runs: PENDING keeps where it got to.
     var pend = JSON.parse(p.getProperty('PENDING') || 'null');
     var since = pend ? pend.since : (p.getProperty('CURSOR') || ''), offset = pend ? pend.offset : 0, startNow = pend ? pend.now : null;
     var folders = trainerFolders_(), sheets = JSON.parse(p.getProperty('SHEETS') || '{}');
     var report = { matched: 0, unmatched: [], sheets: {} };
     var trainers = pend ? JSON.parse(p.getProperty('TRAINERS') || '[]') : null, made = false;
-
-    // Fetch trainer access tokens for ALL trainers with connected Google (for personal Drive sync + backup)
-    if (trainers) {
-      var allTrainerCodes = trainers.filter(function (t) { return t.hasRefresh && t.code; }).map(function (t) { return t.code; });
-      var trainerTokens = getTrainerAccessTokens_(allTrainerCodes);
-    } else {
-      var trainerTokens = {};
-    }
+    var trainerTokens = {};
 
     while (true) {
       var feed = callWorker_('bridgeFeed', { since: since, offset: offset });
       if (!startNow) startNow = feed.now;
-      if (feed.trainers) { trainers = feed.trainers; p.setProperty('TRAINERS', JSON.stringify(trainers)); }
+      if (feed.trainers) {
+        trainers = feed.trainers;
+        p.setProperty('TRAINERS', JSON.stringify(trainers));
+        // Fetch trainer access tokens now that we have the trainer list from the feed
+        var allTrainerCodes = trainers.filter(function (t) { return t.hasRefresh && t.code; }).map(function (t) { return t.code; });
+        if (allTrainerCodes.length > 0) {
+          Logger.log('sync: fetching tokens for ' + allTrainerCodes.length + ' trainers: ' + allTrainerCodes.join(','));
+          trainerTokens = getTrainerAccessTokens_(allTrainerCodes);
+          Logger.log('sync: got tokens for ' + Object.keys(trainerTokens).length + ' trainers');
+        } else {
+          Logger.log('sync: no trainers with connected Google in feed');
+        }
+      } else {
+        Logger.log('sync: no trainers in feed');
+      }
       if (!made && trainers) { made = true; makeFolders_(trainers, folders); }
       if (feed.evidence && feed.evidence.length) writeEvidenceIndex_(feed.evidence);
+      Logger.log('sync: processing ' + feed.units.length + ' units, offset=' + offset + ', next=' + feed.next);
 
       feed.units.forEach(function (u) {
         var tr = (trainers || []).filter(function (x) { return lowerEq_(x.code, u.trainerCode); })[0] || { code: u.trainerCode, name: u.trainerName, folder: '' };
         var folder = resolveFolder_(tr, folders);
-        if (!folder) return;
+        if (!folder) { Logger.log('sync: no folder for trainer ' + tr.code + ' (' + tr.name + ')'); return; }
         var accessToken = trainerTokens[tr.code] || null;
+        if (!accessToken) { Logger.log('sync: no access token for trainer ' + tr.code); }
+        else { Logger.log('sync: personal Drive sync for ' + tr.code + ' term=' + u.termName); }
         var ss = trainerSheet_(tr, folder, u.termName, sheets, null, accessToken);
         writeRegister_(ss, u);
         if (u.cats && u.cats.length) writeCats_(ss, u);
         if (u.marksheet) writeMarksheet_(trainerSheet_(tr, folder, u.termName, sheets, 'marks', accessToken), u);
       });
       p.setProperty('SHEETS', JSON.stringify(sheets));
-      if (feed.next === null || feed.next === undefined) { p.setProperty('CURSOR', startNow); p.deleteProperty('PENDING'); break; }
+      if (feed.next === null || feed.next === undefined) { p.setProperty('CURSOR', startNow); p.deleteProperty('PENDING'); Logger.log('sync: feed complete, cursor=' + startNow); break; }
       offset = feed.next;
-      if (Date.now() - started > TIME_BUDGET_MS) { p.setProperty('PENDING', JSON.stringify({ since: since, offset: offset, now: startNow })); break; }
+      if (Date.now() - started > TIME_BUDGET_MS) { p.setProperty('PENDING', JSON.stringify({ since: since, offset: offset, now: startNow })); Logger.log('sync: time budget hit, pending saved'); break; }
     }
     var matchedNow = [];
     (trainers || []).forEach(function (tr) {
@@ -574,6 +619,7 @@ function backupTrainers_(started) {
 /** Backs up each trainer's personal "The Ark" folder to the central Archive using their access tokens.
  * Called from sync() during daily run. Returns true if backup needs more time. */
 function backupPersonalDrives_(trainerTokens, started) {
+  Logger.log('backupPersonalDrives_: START with ' + (trainerTokens ? Object.keys(trainerTokens).length : 0) + ' trainers');
   if (!trainerTokens || Object.keys(trainerTokens).length === 0) return false;
   if (Date.now() - started > TIME_BUDGET_MS) return true;
 
@@ -587,11 +633,14 @@ function backupPersonalDrives_(trainerTokens, started) {
     if (Date.now() - started > TIME_BUDGET_MS) { more = true; return; }
     var accessToken = trainerTokens[code];
     if (!accessToken) return;
+    Logger.log('backupPersonalDrives_: processing trainer ' + code);
     try {
       var trainerFolderName = code;
       var archiveTrainerFolder = childFolder_(trainersArchive, trainerFolderName);
       var personalFolderId = getOrCreatePersonalArkFolder_(accessToken);
+      Logger.log('backupPersonalDrives_: personal folder id=' + personalFolderId);
       var files = listPersonalDriveFolder_(personalFolderId, accessToken);
+      Logger.log('backupPersonalDrives_: found ' + files.length + ' files in personal Drive');
       var copied = 0, failed = 0;
       files.forEach(function (f) {
         if (Date.now() - started > TIME_BUDGET_MS) { more = true; return; }
@@ -615,13 +664,14 @@ function backupPersonalDrives_(trainerTokens, started) {
       });
       totalCopied += copied;
       totalFailed += failed;
+      Logger.log('backupPersonalDrives_: trainer ' + code + ' done - copied=' + copied + ' failed=' + failed);
     } catch (e) {
       totalFailed++;
-      Logger.log('Personal Drive backup failed for ' + code + ': ' + e);
+      Logger.log('backupPersonalDrives_: trainer ' + code + ' error: ' + e);
     }
   });
 
-  Logger.log('Personal Drive backup: ' + totalCopied + ' copied, ' + totalFailed + ' failed');
+  Logger.log('backupPersonalDrives_: DONE - ' + totalCopied + ' copied, ' + totalFailed + ' failed, more=' + more);
   return more;
 }
 
@@ -629,9 +679,11 @@ function backupPersonalDrives_(trainerTokens, started) {
 /** Copies each trainer's personal "The Ark" folder to the central Archive using their access tokens.
  * Called by MIS Officer via the web app with a ticket containing trainerCodes array and tokens object. */
 function trainerBackupNow_(b) {
+  Logger.log('trainerBackupNow_: START');
   var t = readTicket_(b.ticket, 'trainerBackupNow');
   var trainerCodes = t.trainerCodes || [];
   var tokens = t.tokens || {};
+  Logger.log('trainerBackupNow_: received ' + trainerCodes.length + ' trainer codes: ' + trainerCodes.join(','));
   if (!trainerCodes.length) return { ok: true, copied: 0, failed: 0, results: [] };
 
   var p = PropertiesService.getScriptProperties();
@@ -643,10 +695,12 @@ function trainerBackupNow_(b) {
   trainerCodes.forEach(function (code) {
     var accessToken = tokens[code];
     if (!accessToken) {
+      Logger.log('trainerBackupNow_: no access token for ' + code);
       results.push({ code: code, error: 'No access token' });
       totalFailed++;
       return;
     }
+    Logger.log('trainerBackupNow_: processing trainer ' + code);
     try {
       // Find trainer info from bridge feed (we need the name for folder naming)
       // For now, use code as folder name
@@ -655,7 +709,9 @@ function trainerBackupNow_(b) {
 
       // List files in trainer's personal "The Ark" folder
       var personalFolderId = getOrCreatePersonalArkFolder_(accessToken);
+      Logger.log('trainerBackupNow_: personal folder id=' + personalFolderId);
       var files = listPersonalDriveFolder_(personalFolderId, accessToken);
+      Logger.log('trainerBackupNow_: found ' + files.length + ' files in personal Drive');
 
       // Copy each file to Archive
       var copied = 0, failed = 0;
@@ -688,17 +744,21 @@ function trainerBackupNow_(b) {
       results.push({ code: code, copied: copied, failed: failed });
       totalCopied += copied;
       totalFailed += failed;
+      Logger.log('trainerBackupNow_: trainer ' + code + ' done - copied=' + copied + ' failed=' + failed);
     } catch (e) {
       totalFailed++;
       results.push({ code: code, error: String(e && e.message || e) });
+      Logger.log('trainerBackupNow_: trainer ' + code + ' error: ' + e);
     }
   });
 
+  Logger.log('trainerBackupNow_: DONE - total copied=' + totalCopied + ' failed=' + totalFailed);
   return { ok: true, copied: totalCopied, failed: totalFailed, results: results };
 }
 
 /** Lists files in a folder in trainer's personal Drive using their access token. */
 function listPersonalDriveFolder_(folderId, accessToken) {
+  Logger.log('listPersonalDriveFolder_: listing folder=' + folderId);
   var out = [], page = '';
   do {
     var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?pageSize=200&fields=' +
@@ -716,6 +776,7 @@ function listPersonalDriveFolder_(folderId, accessToken) {
     });
     page = data.nextPageToken || '';
   } while (page);
+  Logger.log('listPersonalDriveFolder_: found ' + out.length + ' files');
   return out;
 }
 
@@ -857,6 +918,7 @@ function trainerSheet_(tr, folder, termName, sheets, kind, accessToken) {
   sheets[key] = ss.getId();
   // Sync to trainer's personal "The Ark" folder if they have connected Google Drive
   if (accessToken) {
+    Logger.log('trainerSheet_: syncing to personal Drive for ' + tr.code + ' term=' + termName + ' kind=' + (marks ? 'marks' : 'attendance'));
     syncToPersonalDriveWithToken_(accessToken, tr, termName, marks ? 'marks' : 'attendance', ss.getId(), ss.getUrl());
   }
   return ss;
