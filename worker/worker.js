@@ -2522,10 +2522,15 @@ async function googleToken(env, table, key) {
   const row = await one(env, `SELECT g_refresh, email FROM ${table} WHERE ${col}=?`, key);
   if (!row?.g_refresh) return { ok: false, needConnect: true, error: 'Connect Google first' };
   try {
-    const t = await googleOauth(env, { refresh_token: await unseal(env, row.g_refresh), grant_type: 'refresh_token' });
+    const refreshToken = await unseal(env, row.g_refresh);
+    const t = await googleOauth(env, { refresh_token: refreshToken, grant_type: 'refresh_token' });
     return { ok: true, accessToken: t.access_token, expiresIn: Number(t.expires_in) || 3600, email: row.email || '' };
   } catch (e) {
-    if (e.grant === 'invalid_grant') { await run(env, `UPDATE ${table} SET g_refresh=NULL WHERE ${col}=?`, key); return { ok: false, needConnect: true, error: 'Google asks you to connect again' }; }
+    const isDecryptFail = e instanceof DOMException && e.name === 'OperationError';
+    if (e.grant === 'invalid_grant' || isDecryptFail) {
+      await run(env, `UPDATE ${table} SET g_refresh=NULL WHERE ${col}=?`, key);
+      return { ok: false, needConnect: true, error: isDecryptFail ? 'Refresh token cannot be decrypted — please reconnect Google' : 'Google asks you to connect again' };
+    }
     throw e;
   }
 }
