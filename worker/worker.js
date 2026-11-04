@@ -2483,7 +2483,15 @@ async function google(env, path, token, { method = 'GET', body } = {}) {
  * GOOGLE_CLIENT_ID (a plain variable) and the secret GOOGLE_CLIENT_SECRET on the Worker; without them the app keeps the
  * old sign-in window. */
 const googleReady = (env) => !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
-async function sealKey(env) { return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', enc.encode('g_refresh|' + (await authSecret(env)))), 'AES-GCM', false, ['encrypt', 'decrypt']); }
+/** Read auth_secret directly from DB (bypass KV cache) to guarantee consistent seal/unseal across isolates. */
+async function getAuthSecretFromDB(env) {
+  const row = await one(env, "SELECT value FROM meta WHERE key='auth_secret'");
+  return row?.value;
+}
+async function sealKey(env) {
+  const secret = await getAuthSecretFromDB(env);
+  return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', enc.encode('g_refresh|' + secret)), 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
 async function seal(env, text) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const out = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await sealKey(env), enc.encode(text)));
