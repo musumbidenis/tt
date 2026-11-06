@@ -226,26 +226,133 @@ function writeToPersonalDriveWithToken_(accessToken, fileName, content, mimeType
   }
 }
 
-/** Syncs attendance/marksheet record to trainer's personal "The Ark" folder using their access token. */
+/** Syncs attendance/marksheet spreadsheet to trainer's personal "The Ark" folder using their access token. */
 function syncToPersonalDriveWithToken_(accessToken, tr, termName, kind, spreadsheetId, spreadsheetUrl) {
   try {
+    var folderName = kind === 'marks' ? 'Marksheets' : 'Attendance Registers';
+    var personalArkFolderId = getOrCreatePersonalArkFolder_(accessToken);
+    var subFolder = getOrCreateSubFolder_(accessToken, personalArkFolderId, folderName);
+
+    // Create a clean file name
+    var fileName = (kind === 'marks' ? 'Marksheet - ' : 'Attendance Register - ') + termName + ' - ' + tr.name;
+    // Remove invalid characters
+    fileName = fileName.replace(/[\/:*?"<>|]/g, '-').slice(0, 100);
+
+    Logger.log('syncToPersonalDriveWithToken_: copying ' + (kind === 'marks' ? 'marksheet' : 'attendance') + ' spreadsheet to personal Drive for ' + tr.code + ' term=' + termName);
+
+    // Copy the spreadsheet to personal Drive
+    var copyRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(spreadsheetId) + '/copy?fields=id,name,webViewLink&supportsAllDrives=true', {
+      method: 'post',
+      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+      payload: JSON.stringify({
+        name: fileName,
+        parents: [subFolder],
+        description: 'Auto-synced from RVNP Attendance Register on ' + new Date().toISOString()
+      }),
+      muteHttpExceptions: true
+    });
+
+    var copyData = JSON.parse(copyRes.getContentText());
+    if (copyData.error) {
+      // If copy fails (e.g., file already exists), try to find and update existing
+      if (copyData.error.code === 409 || copyData.error.message.includes('already exists')) {
+        var existing = findFileInFolderByName_(accessToken, subFolder, fileName);
+        if (existing) {
+          // File exists, we could update it but Drive API doesn't support updating spreadsheet content via copy
+          // Instead, we'll trash the old one and create a new copy
+          trashFile_(accessToken, existing.id);
+          // Retry copy
+          copyRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(spreadsheetId) + '/copy?fields=id,name,webViewLink&supportsAllDrives=true', {
+            method: 'post',
+            headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+            payload: JSON.stringify({
+              name: fileName,
+              parents: [subFolder],
+              description: 'Auto-synced from RVNP Attendance Register on ' + new Date().toISOString()
+            }),
+            muteHttpExceptions: true
+          });
+          copyData = JSON.parse(copyRes.getContentText());
+          if (copyData.error) throw new Error(copyData.error.message);
+        }
+      } else {
+        throw new Error(copyData.error.message);
+      }
+    }
+
+    Logger.log('syncToPersonalDriveWithToken_: copied spreadsheet to personal Drive, fileId=' + copyData.id + ', url=' + copyData.webViewLink);
+
+    // Also write the JSON reference for backward compatibility
     var record = {
       term: termName,
       type: kind === 'marks' ? 'marksheet' : 'attendance',
       spreadsheetId: spreadsheetId,
       spreadsheetUrl: spreadsheetUrl,
+      personalSpreadsheetId: copyData.id,
+      personalSpreadsheetUrl: copyData.webViewLink,
       trainerCode: tr.code,
       trainerName: tr.name,
       updated: new Date().toISOString()
     };
-    var fileName = kind === 'marks' ? 'marksheets.json' : 'attendance.json';
-    Logger.log('syncToPersonalDriveWithToken_: writing ' + fileName + ' for ' + tr.code + ' term=' + termName);
-    writeToPersonalDriveWithToken_(accessToken, fileName, JSON.stringify(record, null, 2), 'application/json');
-    Logger.log('syncToPersonalDriveWithToken_: done for ' + tr.code);
+    var jsonFileName = kind === 'marks' ? 'marksheets.json' : 'attendance.json';
+    writeToPersonalDriveWithToken_(accessToken, jsonFileName, JSON.stringify(record, null, 2), 'application/json');
+
   } catch (e) {
     Logger.log('Personal Drive sync failed for ' + (tr.code || tr.name) + ': ' + e);
     // Don't throw - personal Drive sync is secondary, shared Drive is primary
   }
+}
+
+/** Gets or creates a subfolder in the given parent folder using the trainer's access token. */
+function getOrCreateSubFolder_(accessToken, parentFolderId, folderName) {
+  // Search for existing subfolder
+  var searchRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent("name='" + folderName.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "' and mimeType='application/vnd.google-apps.folder' and '" + parentFolderId + "' in parents and trashed=false") +
+    '&fields=files(id,name)&spaces=drive', {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    muteHttpExceptions: true
+  });
+  var searchData = JSON.parse(searchRes.getContentText());
+  if (searchData.files && searchData.files.length > 0) {
+    return searchData.files[0].id;
+  }
+  // Create new subfolder
+  var createRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'post',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    payload: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [parentFolderId] }),
+    muteHttpExceptions: true
+  });
+  var createData = JSON.parse(createRes.getContentText());
+  if (createData.error) throw new Error('Failed to create subfolder "' + folderName + '": ' + createData.error.message);
+  Logger.log('getOrCreateSubFolder_: created subfolder "' + folderName + '" id=' + createData.id);
+  return createData.id;
+}
+
+/** Finds a file by name in a folder using the trainer's access token. */
+function findFileInFolderByName_(accessToken, folderId, fileName) {
+  var searchRes = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?q=' +
+    encodeURIComponent("name='" + fileName.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "' and '" + folderId + "' in parents and trashed=false") +
+    '&fields=files(id,name)&spaces=drive', {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    muteHttpExceptions: true
+  });
+  var searchData = JSON.parse(searchRes.getContentText());
+  return (searchData.files && searchData.files.length > 0) ? searchData.files[0] : null;
+}
+
+/** Trashes a file using the trainer's access token. */
+function trashFile_(accessToken, fileId) {
+  var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?supportsAllDrives=true', {
+    method: 'patch',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    payload: JSON.stringify({ trashed: true }),
+    muteHttpExceptions: true
+  });
+  var data = JSON.parse(res.getContentText());
+  if (data.error) Logger.log('trashFile_: failed to trash ' + fileId + ': ' + data.error.message);
 }
 
 /* ---------- "something changed": the database asks for an update ---------- */
@@ -502,7 +609,7 @@ function sync() {
         var tr = (trainers || []).filter(function (x) { return lowerEq_(x.code, u.trainerCode); })[0] || { code: u.trainerCode, name: u.trainerName, folder: '' };
         var folder = resolveFolder_(tr, folders);
         if (!folder) { Logger.log('sync: no folder for trainer ' + tr.code + ' (' + tr.name + ')'); return; }
-        var accessToken = trainerTokens[tr.code] || null;
+        var accessToken = trainerTokens[tr.code]?.accessToken || null;
         if (!accessToken) { Logger.log('sync: no access token for trainer ' + tr.code); }
         else { Logger.log('sync: personal Drive sync for ' + tr.code + ' term=' + u.termName); }
         var ss = trainerSheet_(tr, folder, u.termName, sheets, null, accessToken);
@@ -631,7 +738,7 @@ function backupPersonalDrives_(trainerTokens, started) {
 
   Object.keys(trainerTokens).forEach(function (code) {
     if (Date.now() - started > TIME_BUDGET_MS) { more = true; return; }
-    var accessToken = trainerTokens[code];
+    var accessToken = trainerTokens[code]?.accessToken;
     if (!accessToken) return;
     Logger.log('backupPersonalDrives_: processing trainer ' + code);
     try {
@@ -756,10 +863,18 @@ function trainerBackupNow_(b) {
   return { ok: true, copied: totalCopied, failed: totalFailed, results: results };
 }
 
-/** Lists files in a folder in trainer's personal Drive using their access token. */
+/** Lists files in a folder (and subfolders) in trainer's personal Drive using their access token. */
 function listPersonalDriveFolder_(folderId, accessToken) {
   Logger.log('listPersonalDriveFolder_: listing folder=' + folderId);
-  var out = [], page = '';
+  var out = [];
+  listFolderRecursive_(folderId, accessToken, out);
+  Logger.log('listPersonalDriveFolder_: found ' + out.length + ' files');
+  return out;
+}
+
+/** Recursively lists files in a folder and all subfolders. */
+function listFolderRecursive_(folderId, accessToken, out) {
+  var page = '';
   do {
     var res = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?pageSize=200&fields=' +
       encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,size)') +
@@ -770,14 +885,15 @@ function listPersonalDriveFolder_(folderId, accessToken) {
     });
     var data = JSON.parse(res.getContentText());
     (data.files || []).forEach(function (f) {
-      if (f.mimeType !== 'application/vnd.google-apps.folder') {
+      if (f.mimeType === 'application/vnd.google-apps.folder') {
+        // Recurse into subfolder
+        listFolderRecursive_(f.id, accessToken, out);
+      } else {
         out.push({ id: f.id, name: f.name, mimeType: f.mimeType, modifiedTime: f.modifiedTime, size: Number(f.size) || 0 });
       }
     });
     page = data.nextPageToken || '';
   } while (page);
-  Logger.log('listPersonalDriveFolder_: found ' + out.length + ' files');
-  return out;
 }
 
 /** Finds a file by name in a folder (using bridge's OAuth). */

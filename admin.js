@@ -32,6 +32,7 @@ const Admin = (() => {
     if (hasRole('HOD') || hasRole('IAO')) parts.push(section('m-marksheets', hasRole('HOD') ? 'Marksheets' : 'Marksheets to receive', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD')) parts.push(section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
     if (window.Candidates?.allowed()) parts.push(section('m-candidates', 'Summative assessment candidates', Candidates.html()));
+    if (window.SummativePracticals?.allowed()) parts.push(section('m-sumprac', 'Summative practicals', SummativePracticals.html()));
     if (window.Bulk?.allowed()) parts.push(section('m-bulk', 'Reports in bulk', Bulk.html()));
     if (hasRole('MIS')) {
       parts.push(section('m-requests', 'Students added by trainers', '<p class="muted">Loading…</p>'));
@@ -59,7 +60,7 @@ const Admin = (() => {
   }
 
   /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
-  const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
+  const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-sumprac', 'm-bulk']],
     ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-registers']], ['people', 'People', ['m-classes', 'm-staff', 'm-phones', 'm-poelinks']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
   let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
   function groupTabs(parts) {
@@ -957,7 +958,7 @@ const Admin = (() => {
           <span class="sn st-code">${esc(s.code)}</span>
           <span><b>${esc(s.name)}</b></span>
           <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
-            ${s.roles.includes('EAO') ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
+            ${(s.roles.includes('EAO') || s.roles.includes('TRAINER')) ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
           <button type="button" class="btn small" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button>
           ${lower(s.code) === lower(me()?.code || '') ? '' : `<button type="button" class="btn small ghost danger-text" data-delstaff="${esc(s.code)}" data-name="${esc(s.name)}">Delete</button>`}</span></li>`).join('')}</ul>`)}
@@ -1211,7 +1212,7 @@ const Admin = (() => {
       staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved');
     }
     if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
-    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = t.value !== 'EAO'; $('#nsEnds').required = t.value === 'EAO'; }
+    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = !['EAO', 'TRAINER'].includes(t.value); $('#nsEnds').required = ['EAO', 'TRAINER'].includes(t.value); }
     if (t.id === 'plClass') { plClassChange(t.value); return; }
   });
   document.addEventListener('input', (e) => {
@@ -1270,10 +1271,10 @@ const Admin = (() => {
     if (e.target.id === 'addStaff') {
       e.preventDefault();
       const role = $('#nsRole').value;
-      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: [role], resetPin: true, ...(role === 'EAO' ? { endsOn: $('#nsEnds').value } : {}) });
+      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: [role], resetPin: true, ...(['EAO', 'TRAINER'].includes(role) ? { endsOn: $('#nsEnds').value } : {}) });
     }
   });
 
-  return { render, refreshBadge, redrawCandidates: () => fill('m-candidates', Candidates.html()) };
+  return { render, refreshBadge, redrawCandidates: () => fill('m-candidates', Candidates.html()), redrawSumPrac: () => fill('m-sumprac', SummativePracticals.html()) };
 })();
 window.Admin = Admin;

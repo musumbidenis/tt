@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS loading (term_id TEXT, class_code TEXT, unit_code TEX
 CREATE TABLE IF NOT EXISTS trainees (adm_no TEXT PRIMARY KEY COLLATE NOCASE, name TEXT, class_code TEXT, status TEXT DEFAULT 'active', mis_class TEXT, added_by TEXT, added_at TEXT, updated_by TEXT, updated_at TEXT, note TEXT);
 CREATE INDEX IF NOT EXISTS trainees_class ON trainees (class_code);
 CREATE INDEX IF NOT EXISTS trainees_mis ON trainees (mis_class);
+CREATE TABLE IF NOT EXISTS summative_practicals (class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, reg_code TEXT, name TEXT, internal_mark REAL, external_mark REAL, moderated_mark REAL, assessed_by TEXT, verified_by TEXT, moderated_by TEXT, status TEXT, updated_at TEXT, PRIMARY KEY (class_code, unit_code, adm_no));
+CREATE INDEX IF NOT EXISTS summative_practicals_cu ON summative_practicals (class_code, unit_code);
+CREATE INDEX IF NOT EXISTS summative_practicals_adm ON summative_practicals (adm_no);
 CREATE INDEX IF NOT EXISTS classes_mis ON classes (mis_class);
 CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, adm_no TEXT, name TEXT, class_code TEXT, reason TEXT, requested_by TEXT, requested_name TEXT, requested_at TEXT, status TEXT, decided_by TEXT, decided_at TEXT, merged_into TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, date TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, period TEXT, trainer_id TEXT, trainer_name TEXT, present INTEGER, absent INTEGER, late INTEGER, excused INTEGER, total INTEGER, pct REAL, updated_at TEXT, synced_at TEXT, term_id TEXT, week INTEGER, data TEXT, kind TEXT, slots INTEGER);
@@ -129,6 +132,10 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // Notice board: a message can be pinned to a board, given a priority, and require readers to confirm they have read it.
   'ALTER TABLE notices ADD COLUMN board INTEGER', 'ALTER TABLE notices ADD COLUMN priority TEXT',
   'ALTER TABLE notices ADD COLUMN pinned_until TEXT', 'ALTER TABLE notices ADD COLUMN need_ack INTEGER',
+  // Summative practicals: candidates, internal/external/moderated marks and sign-off per unit of competency.
+  'CREATE TABLE IF NOT EXISTS summative_practicals (class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, reg_code TEXT, name TEXT, internal_mark REAL, external_mark REAL, moderated_mark REAL, assessed_by TEXT, verified_by TEXT, moderated_by TEXT, status TEXT, updated_at TEXT, PRIMARY KEY (class_code, unit_code, adm_no))',
+  'CREATE INDEX IF NOT EXISTS summative_practicals_cu ON summative_practicals (class_code, unit_code)',
+  'CREATE INDEX IF NOT EXISTS summative_practicals_adm ON summative_practicals (adm_no)',
   // POE host: a classmate may submit POE on a device-less student's behalf; the item is still the student's, but we record who sent it.
   'ALTER TABLE evidence ADD COLUMN submitted_by_adm TEXT', 'ALTER TABLE evidence ADD COLUMN submitted_by_name TEXT',
   'ALTER TABLE evidence ADD COLUMN submitted_device TEXT'];
@@ -549,6 +556,13 @@ const ACTIONS = {
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   msList: { fn: (env, b, me) => msList(env, b, me) },
   candidates: { role: ['IAO', 'HOD', 'MIS'], fn: (env, b, me) => candidates(env, b, me) },
+  spUpload: { role: ['MIS', 'HOD'], fn: (env, b, me) => spUpload(env, b, me) },
+  summativePracticals: { fn: (env, b, me) => summativePracticals(env, b, me) },
+  spEnter: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => spEnter(env, b, me) },
+  spVerify: { role: ['EAO'], fn: (env, b, me) => spVerify(env, b, me) },
+  spModerate: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => spModerate(env, b, me) },
+  spReportAllUnits: { fn: (env, b, me) => spReportAllUnits(env, b, me) },
+  spReportPerUnit: { fn: (env, b, me) => spReportPerUnit(env, b, me) },
   bulkTicket: { role: ['MIS', 'HOD'], fn: (env, b, me) => bulkTicket(env, b, me) },
   msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
   msReceive: { role: ['IAO', 'HOD'], fn: (env, b, me) => msReceive(env, b, me) },
@@ -684,12 +698,14 @@ async function systemHealth(env) {
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'deleteSessions', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
-  'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep']);
+  'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep',
+  'spUpload', 'spEnter', 'spVerify', 'spModerate']);
 
 // Heavy, non-urgent admin and reporting reads that stand aside only in the hard budget band, so the
 // live path (marking attendance, pulse, roster, check-ins, marks) keeps its remaining read allowance.
 const SHEDDABLE = new Set(['sessionList', 'verifyData', 'verifyPool', 'msList', 'candidates',
-  'absences', 'students', 'phones', 'poeList', 'poeStats', 'poeClass', 'tpoeList', 'tpoeGrants', 'poeLinks']);
+  'absences', 'students', 'phones', 'poeList', 'poeStats', 'poeClass', 'tpoeList', 'tpoeGrants', 'poeLinks',
+  'summativePracticals', 'spReportAllUnits', 'spReportPerUnit']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -697,8 +713,8 @@ function staffPublic(r) {
     hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100, driveFolder: r.drive_folder || '', email: r.email || '',
     endsOn: r.ends_on || '' };
 }
-// Only an External Assessment Officer's (visitor) account ends on its date.
-const accountEnded = (r) => !!(r && r.ends_on && hasRole(r.roles, 'EAO') && todayIso() > r.ends_on);
+// An account with an end date (External Assessment Officer visitor, or a Trainer the MIS Officer gave timed access) stops working after that date.
+const accountEnded = (r) => !!(r && r.ends_on && (hasRole(r.roles, 'EAO') || hasRole(r.roles, 'TRAINER')) && todayIso() > r.ends_on);
 const getStaff = (env, code) => one(env, 'SELECT * FROM staff WHERE code=?', String(code || '').trim());
 
 /** Sets a PIN (creating the account when `create` is given). Bumps pin_version, which signs out old sessions. */
@@ -1302,7 +1318,8 @@ async function updateStaff(env, b, me) {
     // Internal or external, never both: the External Assessment Officer is a visitor with no other role.
     if (roles.includes('EAO') && roles.length > 1) fail('An External Assessment Officer is a visitor and has no other role. Choose either External, or the internal roles.');
     row.roles = roles.join(', ');
-    if (!roles.includes('EAO') && row.ends_on) { row.ends_on = null; await run(env, 'UPDATE staff SET ends_on=NULL WHERE code=?', row.code); }
+    // A timed account (EAO visitor, or a Trainer the MIS Officer gave time-limited access) keeps its end date.
+    if (!roles.includes('EAO') && !roles.includes('TRAINER') && row.ends_on) { row.ends_on = null; await run(env, 'UPDATE staff SET ends_on=NULL WHERE code=?', row.code); }
   }
   if (b.driveFolder !== undefined) {
     // A Drive folder link or ID chosen by the MIS Officer when the name match does not find it.
@@ -4223,6 +4240,118 @@ async function msDecide(env, b, me) {
   const out = [], failed = [];
   for (const id of ids) { try { out.push(await msDecideOne(env, id, b.decision, comment, me)); } catch (e) { if (ids.length === 1) throw e; failed.push({ id, error: e.message }); } }
   return { ok: true, marksheets: out, marksheet: out[0], failed };
+}
+
+/* ---------- summative practicals (moderated practical marks per unit of competency) ----------
+ * MIS/HOD register candidates for a unit's summative practical via a dedicated Excel upload (separate from
+ * the normal class-list import). Trainers enter the internal assessor's mark; external verifiers enter sampled
+ * external marks; moderated marks are set with sign-off. Outputs feed the TVET CDACC moderated practical marks
+ * sheets (all units; per unit of competency). */
+const SP_COLS = ['class_code', 'unit_code', 'adm_no', 'reg_code', 'name', 'internal_mark', 'external_mark', 'moderated_mark', 'assessed_by', 'verified_by', 'moderated_by', 'status', 'updated_at'];
+const SP_MARK = /^\d{1,3}$/;
+const spParse = (v) => {
+  const t = String(v ?? '').trim();
+  if (t === '') return { ok: true, value: null };
+  const n = SP_MARK.test(t) ? Number(t) : NaN;
+  return n >= 0 && n <= 100 ? { ok: true, value: n } : { ok: false };
+};
+async function spUpload(env, b, me) {
+  const rows = (b.rows || []).slice(0, 5000).map((r) => ({
+    admNo: String(r.admNo || r.adm_no || '').trim(),
+    name: String(r.name || '').replace(/\s+/g, ' ').trim(),
+    classCode: String(r.classCode || r.class_code || r.cls || '').trim(),
+    unitCode: String(r.unitCode || r.unit_code || r.unit || '').trim(),
+    regCode: String(r.regCode || r.reg_code || '').trim(),
+  })).filter((r) => r.admNo && r.name && r.classCode && r.unitCode);
+  if (!rows.length) fail('No valid candidate rows (need admission no., name, class and unit)');
+  const now = nowIso(), seen = new Set();
+  const unique = rows.filter((r) => { const k = lower(r.admNo) + '|' + lower(r.unitCode); if (seen.has(k)) return false; seen.add(k); return true; });
+  const adms = unique.map((r) => r.admNo);
+  const known = new Map((await all(env, `SELECT * FROM trainees WHERE adm_no IN ${IN}`, JSON.stringify(adms))).map((r) => [lower(r.adm_no), r]));
+  const traineeWrites = [], spWrites = [], added = [];
+  for (const r of unique) {
+    const k = lower(r.admNo);
+    const t = known.get(k);
+    if (!t) {
+      traineeWrites.push({ adm_no: r.admNo, name: r.name, class_code: r.classCode, status: 'active', mis_class: '', added_by: me.code, added_at: now, updated_by: me.code, updated_at: now, note: 'Summative practicals upload' });
+      added.push(r.admNo);
+    } else if (t.name !== r.name || t.class_code !== r.classCode) {
+      traineeWrites.push({ ...t, name: r.name, class_code: r.classCode, updated_by: me.code, updated_at: now });
+    }
+    spWrites.push({ class_code: r.classCode, unit_code: r.unitCode, adm_no: r.admNo, reg_code: r.regCode, name: r.name, internal_mark: null, external_mark: null, moderated_mark: null, assessed_by: null, verified_by: null, moderated_by: null, status: 'draft', updated_at: now });
+  }
+  const stmts = [];
+  if (traineeWrites.length) stmts.push(...upsertStmts('trainees', TCOLS, traineeWrites, ['adm_no']));
+  if (spWrites.length) stmts.push(...upsertStmts('summative_practicals', SP_COLS, spWrites, ['class_code', 'unit_code', 'adm_no']));
+  if (stmts.length) await many(env, ...stmts);
+  await audit(env, me, 'summative practicals upload', `${spWrites.length} candidate(s) registered for ${[...new Set(spWrites.map((w) => w.class_code + '|' + w.unit_code))].length} class-unit(s), ${added.length} new`);
+  await bumpRoster(env);
+  return { ok: true, added: added.length, registered: spWrites.length, total: unique.length };
+}
+async function summativePracticals(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  if (!cls || !unit) fail('Choose the class and unit');
+  const rows = await all(env, `SELECT sp.adm_no, sp.reg_code, sp.name, sp.internal_mark, sp.external_mark, sp.moderated_mark, sp.assessed_by, sp.verified_by, sp.moderated_by, sp.status, sp.updated_at, t.name AS trainee_name, t.reg_code AS trainee_reg_code FROM summative_practicals sp LEFT JOIN trainees t ON t.adm_no=sp.adm_no WHERE sp.class_code=? AND sp.unit_code=? ORDER BY sp.name, sp.adm_no`, [cls, unit]);
+  return { ok: true, classCode: cls, unitCode: unit,
+    students: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.trainee_name || r.adm_no, regCode: r.reg_code || r.trainee_reg_code || '',
+      internalMark: r.internal_mark, externalMark: r.external_mark, moderatedMark: r.moderated_mark,
+      assessedBy: r.assessed_by, verifiedBy: r.verified_by, moderatedBy: r.moderated_by, status: r.status || 'draft', updatedAt: r.updated_at })) };
+}
+async function spEnter(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), adm = String(b.admNo || '').trim();
+  if (!cls || !unit || !adm) fail('Choose the class, unit and candidate');
+  const p = spParse(b.internalMark); if (!p.ok) fail('Enter a whole-number mark from 0 to 100');
+  const now = nowIso();
+  const had = await one(env, 'SELECT 1 FROM summative_practicals WHERE class_code=? AND unit_code=? AND adm_no=?', cls, unit, adm);
+  if (had) await run(env, `UPDATE summative_practicals SET internal_mark=?, assessed_by=?, status='submitted', updated_at=? WHERE class_code=? AND unit_code=? AND adm_no=?`, p.value, me.code, now, cls, unit, adm);
+  else await run(env, `INSERT INTO summative_practicals (class_code,unit_code,adm_no,internal_mark,assessed_by,status,updated_at) VALUES (?,?,?,?,?,?,?)`, cls, unit, adm, p.value, me.code, 'submitted', now);
+  await audit(env, me, 'summative practical mark', `${cls} ${unit} ${adm}: internal ${p.value}`);
+  return { ok: true };
+}
+async function spVerify(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), adm = String(b.admNo || '').trim();
+  if (!cls || !unit || !adm) fail('Choose the class, unit and candidate');
+  const p = spParse(b.externalMark); if (!p.ok) fail('Enter a whole-number mark from 0 to 100');
+  const now = nowIso();
+  const had = await one(env, 'SELECT 1 FROM summative_practicals WHERE class_code=? AND unit_code=? AND adm_no=?', cls, unit, adm);
+  if (had) await run(env, `UPDATE summative_practicals SET external_mark=?, verified_by=?, status='verified', updated_at=? WHERE class_code=? AND unit_code=? AND adm_no=?`, p.value, me.code, now, cls, unit, adm);
+  else await run(env, `INSERT INTO summative_practicals (class_code,unit_code,adm_no,external_mark,verified_by,status,updated_at) VALUES (?,?,?,?,?,?,?)`, cls, unit, adm, p.value, me.code, 'verified', now);
+  await audit(env, me, 'summative practical external mark', `${cls} ${unit} ${adm}: external ${p.value}`);
+  return { ok: true };
+}
+async function spModerate(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), adm = String(b.admNo || '').trim();
+  if (!cls || !unit || !adm) fail('Choose the class, unit and candidate');
+  const p = spParse(b.moderatedMark); if (!p.ok) fail('Enter a whole-number mark from 0 to 100');
+  const now = nowIso();
+  await run(env, `INSERT INTO summative_practicals (class_code,unit_code,adm_no,moderated_mark,moderated_by,status,updated_at) VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(class_code,unit_code,adm_no) DO UPDATE SET moderated_mark=excluded.moderated_mark, moderated_by=excluded.moderated_by, status='moderated', updated_at=excluded.updated_at`,
+  cls, unit, adm, p.value, me.code, 'moderated', now);
+  await audit(env, me, 'summative practical moderated mark', `${cls} ${unit} ${adm}: moderated ${p.value}`);
+  return { ok: true };
+}
+async function spReportAllUnits(env, b, me) {
+  const cls = String(b.classCode || '');
+  if (!cls) fail('Choose a class');
+  const units = await all(env, `SELECT DISTINCT unit_code, unit_name FROM loading WHERE class_code=? ORDER BY unit_code`, [cls]);
+  const students = await all(env, `SELECT DISTINCT sp.adm_no, sp.name, sp.reg_code FROM summative_practicals sp WHERE sp.class_code=? ORDER BY sp.name`, [cls]);
+  const marks = await all(env, `SELECT adm_no, unit_code, internal_mark, external_mark, moderated_mark, status FROM summative_practicals WHERE class_code=?`, [cls]);
+  const byAdmUnit = new Map();
+  for (const m of marks) byAdmUnit.set(lower(m.adm_no) + '|' + m.unit_code, m);
+  return { ok: true, classCode: cls,
+    units: units.map((u) => ({ code: u.unit_code, name: u.unit_name || u.unit_code })),
+    students: students.map((s) => { const out = { admNo: s.adm_no, name: s.name || s.adm_no, regCode: s.reg_code || '' };
+      for (const u of units) { const m = byAdmUnit.get(lower(s.adm_no) + '|' + u.unit_code); out[u.unit_code] = m ? { internal: m.internal_mark, external: m.external_mark, moderated: m.moderated_mark, status: m.status } : null; }
+      return out; }) };
+}
+async function spReportPerUnit(env, b, me) {
+  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
+  if (!cls || !unit) fail('Choose the class and unit');
+  const rows = await all(env, `SELECT sp.adm_no, sp.reg_code, sp.name, sp.internal_mark, sp.external_mark, sp.moderated_mark, sp.assessed_by, sp.verified_by, sp.moderated_by, sp.status, t.name AS trainee_name, t.reg_code AS trainee_reg_code FROM summative_practicals sp LEFT JOIN trainees t ON t.adm_no=sp.adm_no WHERE sp.class_code=? AND sp.unit_code=? ORDER BY sp.name`, [cls, unit]);
+  return { ok: true, classCode: cls, unitCode: unit,
+    students: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.trainee_name || r.adm_no, regCode: r.reg_code || r.trainee_reg_code || '',
+      internalMark: r.internal_mark, externalMark: r.external_mark, moderatedMark: r.moderated_mark,
+      assessedBy: r.assessed_by, verifiedBy: r.verified_by, moderatedBy: r.moderated_by, status: r.status || 'draft' })) };
 }
 
 /* ---------- candidates for the summative assessment ----------
