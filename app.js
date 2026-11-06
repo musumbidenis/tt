@@ -2345,7 +2345,14 @@ function switchTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
   if (name === 'reports') renderReport();   // Absences moved to the POE tab (a section after Trainer POE)
   if (name === 'manage') window.Admin?.render();
-  if (name === 'sumprac') $('#sumprac').innerHTML = window.SummativePracticals?.html() || '';
+  if (name === 'sumprac') {
+    try {
+      $('#sumprac').innerHTML = window.SummativePracticals ? window.SummativePracticals.html() : '<p class="muted">Summative practicals module not loaded — refresh the page.</p>';
+    } catch (e) {
+      $('#sumprac').innerHTML = `<p class="err-text">Error loading summative practicals: ${esc(e.message)}</p>`;
+      console.error('Summative practicals error:', e);
+    }
+  }
   if (name === 'poe') PoeStaff.render();
   if (name === 'board') Notices.renderTab($('#board'));
   if (name === 'me') { renderDbInfo(); renderMe(); }
