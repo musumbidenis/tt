@@ -2345,6 +2345,7 @@ function switchTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
   if (name === 'reports') renderReport();   // Absences moved to the POE tab (a section after Trainer POE)
   if (name === 'manage') window.Admin?.render();
+  if (name === 'sumprac') $('#sumprac').innerHTML = window.SummativePracticals?.html() || '';
   if (name === 'poe') PoeStaff.render();
   if (name === 'board') Notices.renderTab($('#board'));
   if (name === 'me') { renderDbInfo(); renderMe(); }
@@ -2356,6 +2357,8 @@ function applyRoles() {
   $('.tabs button[data-tab="mark"]').hidden = !marks;
   $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
+  // Summative practicals: dedicated tab for MIS, HOD, IAO, TRAINER and EAO.
+  $('.tabs button[data-tab="sumprac"]').hidden = !['MIS', 'HOD', 'IAO', 'TRAINER', 'EAO'].some(hasRole);
   // Notice Board: the staff who may post (everyone but an EAO visitor). Others still get messages via the bell.
   $('.tabs button[data-tab="board"]').hidden = !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.

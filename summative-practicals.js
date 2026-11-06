@@ -8,7 +8,7 @@
 
 const SummativePracticals = (() => {
   const sp = { step: 'upload', cls: '', unit: '', res: null, preview: [] };
-  const allowed = () => hasRole('MIS') || hasRole('HOD') || hasRole('IAO') || hasRole('TRAINER');
+  const allowed = () => hasRole('MIS') || hasRole('HOD') || hasRole('IAO') || hasRole('TRAINER') || hasRole('EAO');
   const canUpload = () => hasRole('MIS') || hasRole('HOD');
   const canEnter = () => hasRole('TRAINER') || hasRole('HOD');
   const canVerify = () => hasRole('EAO');

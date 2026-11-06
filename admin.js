@@ -32,7 +32,6 @@ const Admin = (() => {
     if (hasRole('HOD') || hasRole('IAO')) parts.push(section('m-marksheets', hasRole('HOD') ? 'Marksheets' : 'Marksheets to receive', '<p class="muted">Loading…</p>'));
     if (hasRole('HOD')) parts.push(section('m-overview', 'Department overview', '<p class="muted">Loading…</p>'));
     if (window.Candidates?.allowed()) parts.push(section('m-candidates', 'Summative assessment candidates', Candidates.html()));
-    if (window.SummativePracticals?.allowed()) parts.push(section('m-sumprac', 'Summative practicals', SummativePracticals.html()));
     if (window.Bulk?.allowed()) parts.push(section('m-bulk', 'Reports in bulk', Bulk.html()));
     if (hasRole('MIS')) {
       parts.push(section('m-requests', 'Students added by trainers', '<p class="muted">Loading…</p>'));
@@ -60,7 +59,7 @@ const Admin = (() => {
   }
 
   /* Manage is split into groups, like Reports: only one group's sections show at a time (less to scroll through). */
-  const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-sumprac', 'm-bulk']],
+  const GROUPS = [['approvals', 'Approvals', ['m-signoffs', 'm-marksheets', 'm-requests']], ['reports', 'Reports', ['m-overview', 'm-candidates', 'm-bulk']],
     ['setup', 'Term and classes', ['m-term', 'm-loading', 'm-registers']], ['people', 'People', ['m-classes', 'm-staff', 'm-phones', 'm-poelinks']], ['system', 'System', ['m-health', 'm-backup', 'm-drive']]];
   let group = (() => { try { return localStorage.getItem('manageGroup') || ''; } catch { return ''; } })();
   function groupTabs(parts) {
@@ -1275,6 +1274,6 @@ const Admin = (() => {
     }
   });
 
-  return { render, refreshBadge, redrawCandidates: () => fill('m-candidates', Candidates.html()), redrawSumPrac: () => fill('m-sumprac', SummativePracticals.html()) };
+  return { render, refreshBadge, redrawCandidates: () => fill('m-candidates', Candidates.html()) };
 })();
 window.Admin = Admin;
