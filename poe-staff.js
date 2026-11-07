@@ -106,7 +106,7 @@ const PoeStaff = (() => {
     // Start scoped to one class and unit (simpler than everything at once); the person can still switch to All.
     if (!ps.defaulted && classes.length) { ps.defaulted = true; if (!ps.cls) ps.cls = classes[0]; }
     const units = [...new Map(all.filter((e) => !ps.cls || e.classCode === ps.cls).map((e) => [e.unitCode, e.unitName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    if (!ps.unitDefaulted && ps.cls && units.length) { ps.unitDefaulted = true; if (!ps.unit) ps.unit = units[0][0]; }
+    if (!ps.unitDefaulted && ps.cls) { ps.unitDefaulted = true; ps.unit = ''; }   // default to All units
     const students = sortedStudents();
     box().innerHTML = `
       <div class="card poe-head">
@@ -119,7 +119,7 @@ const PoeStaff = (() => {
         <div class="poe-filters">
           <select id="poeStatus" aria-label="Status">${statusOptions}</select>
           <select id="poeClass" aria-label="Class">${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
-          <select id="poeUnitF" aria-label="Unit">${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+          <select id="poeUnitF" aria-label="Unit"><option value=""${ps.unit === '' ? ' selected' : ''}>All units</option>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
           <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
         </div>
       </div>
