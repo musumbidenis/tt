@@ -122,8 +122,8 @@ const PoeStaff = (() => {
     const filtersHtml = `
       <div class="poe-filters">
         <select id="poeStatus" aria-label="Status">${statusOptions}</select>
-        <select id="poeClass" aria-label="Class">${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
-        <select id="poeUnitF" aria-label="Unit"${!ps.cls ? ' disabled' : ''}>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <select id="poeClass" aria-label="Class"><option value=""${ps.cls === '' ? ' selected' : ''}>-Blank-</option>${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select id="poeUnitF" aria-label="Unit"${!ps.cls ? ' disabled' : ''}><option value=""${ps.unit === '' ? ' selected' : ''}>-Blank-</option>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
       </div>`;
     if (!ps.cls || !ps.unit) {
