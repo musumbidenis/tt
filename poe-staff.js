@@ -39,7 +39,7 @@ const PoeStaff = (() => {
 
   async function render() {
     if (!me()) return;
-    if (!ps.status) ps.status = 'submitted';
+    if (!ps.status) ps.status = '';
     if (visitorOnly() && ps.mode !== 'trainer') ps.mode = 'verify';
     if (!navigator.onLine) {
       box().innerHTML = '<div class="card notice"><h2>Evidence needs internet</h2><p>The students\' files are in the college Google Drive. Connect to review them.</p></div>';
