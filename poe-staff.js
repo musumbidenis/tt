@@ -112,15 +112,12 @@ const PoeStaff = (() => {
     const statusOptions = [['', 'All'], ['submitted', canDecide() ? 'To review' : 'With trainers'], ['approved', 'Approved'], ['returned', 'Returned']]
       .map(([v, l]) => `<option value="${v}"${v === ps.status ? ' selected' : ''}>${l}${v && counts[v] ? ` (${counts[v]})` : ''}</option>`).join('');
     const classes = [...new Set(all.map((e) => e.classCode))].sort();
-    // Start scoped to one class and unit (simpler than everything at once); the person can still switch to All.
-    if (!ps.defaulted && classes.length) { ps.defaulted = true; if (!ps.cls) ps.cls = classes[0]; }
     // Fetch class roster (all active students, incl. those with no evidence) so we can show "Not Submitted"
     if (ps.cls && ps.roster.length === 0) {
       load().then(() => draw());
       return;
     }
-    const units = [...new Map(all.filter((e) => !ps.cls || e.classCode === ps.cls).map((e) => [e.unitCode, e.unitName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    if (!ps.unitDefaulted && ps.cls) { ps.unitDefaulted = true; ps.unit = ''; }   // no default unit — wait for explicit pick
+    const units = ps.cls ? [...new Map(all.filter((e) => e.classCode === ps.cls).map((e) => [e.unitCode, e.unitName])).entries()].sort((a, b) => a[1].localeCompare(b[1])) : [];
     const students = sortedStudents();
     const filtersHtml = `
       <div class="poe-filters">
@@ -140,7 +137,7 @@ const PoeStaff = (() => {
           ${ps.driveReady ? '' : '<p class="warn-text small">The Google Drive bridge has not reported in yet, so students cannot upload. The MIS Officer sets it up once (see the README).</p>'}
           ${filtersHtml}
         </div>
-        <div class="card notice"><h2>Select a unit</h2><p class="muted">Pick a unit for <b>${esc(ps.cls)}</b> to see all students and their evidence status.</p></div>`;
+        <div class="card notice"><h2>${!ps.cls ? 'Select a class and unit' : 'Pick a unit'}</h2><p class="muted">${!ps.cls ? 'Choose a class first, then a unit, to see all students and their evidence status.' : `Pick a unit for <b>${esc(ps.cls)}</b> to see all students and their evidence status.`}</p></div>`;
       return;
     }
     box().innerHTML = `
