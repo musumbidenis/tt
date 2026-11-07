@@ -7,7 +7,7 @@
 const PoeStaff = (() => {
   const ITEMS = ['CAT1', 'CAT2', 'CAT3', 'CAT4', 'PRAC1', 'PRAC2', 'PRAC3'];
   const STATUS = { submitted: ['pending', 'To review'], approved: ['synced', 'Approved'], returned: ['rejected', 'Returned'] };
-  const ps = { picked: new Set(), list: [], status: '', cls: '', unit: '', q: '', loaded: false, sheetUrl: '', indexUrl: '', driveReady: true, open: null, files: new Map(), seq: 0, mode: 'unit', classes: [], roster: new Map(), sCls: '', sFilter: '', order: [], marks: new Map() };
+  const ps = { picked: new Set(), list: [], status: '', cls: '', unit: '', q: '', loaded: false, sheetUrl: '', indexUrl: '', driveReady: true, open: null, files: new Map(), seq: 0, mode: 'unit', classes: [], roster: [], sCls: '', sFilter: '', order: [], marks: new Map() };
   /* Marks from the unit's marksheet, beside the evidence they are for: CAT1 → cat1 … PRAC3 → prac3 (CAT4 has no mark column). */
   const markKey = (cls, unit, adm) => `${cls}|${unit}|${lower(adm)}`;
   const keepMarks = (rows) => { for (const m of rows || []) ps.marks.set(markKey(m.c, m.u, m.a), m); };
@@ -25,9 +25,10 @@ const PoeStaff = (() => {
     ? `<div class="connect-card"><div><b>Connect your college Google account</b><span class="small">Students' documents are in their own Google Drive and shared with you. Connect once and they open straight away - you will not be asked again.</span></div>
       <button type="button" class="btn primary small" data-act="gconnect">Connect Google</button></div>` : '');
   async function load() {
-    const res = await api('poeList', {});
+    const res = await api('poeList', { classCode: ps.cls || '' });
     if (!res.ok) throw new Error(res.error || 'Could not load the evidence');
     Object.assign(ps, { list: res.evidence, sheetUrl: res.sheetUrl || '', indexUrl: res.indexUrl || '', driveReady: res.driveReady !== false, loaded: true });
+    ps.roster = res.roster || [];
     keepMarks(res.marks);
     badge();
   }
@@ -65,9 +66,17 @@ const PoeStaff = (() => {
     return latestOnly().filter((e) => (!ps.cls || e.classCode === ps.cls) && (!ps.unit || e.unitCode === ps.unit)
       && (!q || e.name.toLowerCase().includes(q) || e.admNo.toLowerCase().includes(q)));
   }
-  /** One entry per student who has submitted (for the current filters), their items unit-first then in CAT/PRAC order. */
+  /** One entry per student who has submitted (for the current filters), their items unit-first then in CAT/PRAC order.
+   *  Starts from the class roster so students with no evidence still appear (shown as "Not Submitted"). */
   function byStudent() {
     const map = new Map();
+    // Start with roster: every active student in the class
+    for (const s of (ps.roster || [])) {
+      if (!ps.cls || s.classCode === ps.cls) {
+        map.set(lower(s.admNo), { name: s.name, admNo: s.admNo, classCode: s.classCode, items: [], counts: { submitted: 0, approved: 0, returned: 0 } });
+      }
+    }
+    // Add evidence items for the selected class+unit
     for (const e of base()) {
       const k = lower(e.admNo);
       if (!map.has(k)) map.set(k, { name: e.name, admNo: e.admNo, classCode: e.classCode, items: [], counts: { submitted: 0, approved: 0, returned: 0 } });
@@ -105,9 +114,35 @@ const PoeStaff = (() => {
     const classes = [...new Set(all.map((e) => e.classCode))].sort();
     // Start scoped to one class and unit (simpler than everything at once); the person can still switch to All.
     if (!ps.defaulted && classes.length) { ps.defaulted = true; if (!ps.cls) ps.cls = classes[0]; }
+    // Fetch class roster (all active students, incl. those with no evidence) so we can show "Not Submitted"
+    if (ps.cls && ps.roster.length === 0) {
+      load().then(() => draw());
+      return;
+    }
     const units = [...new Map(all.filter((e) => !ps.cls || e.classCode === ps.cls).map((e) => [e.unitCode, e.unitName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    if (!ps.unitDefaulted && ps.cls) { ps.unitDefaulted = true; ps.unit = ''; }   // default to All units
+    if (!ps.unitDefaulted && ps.cls) { ps.unitDefaulted = true; ps.unit = ''; }   // no default unit — wait for explicit pick
     const students = sortedStudents();
+    const filtersHtml = `
+      <div class="poe-filters">
+        <select id="poeStatus" aria-label="Status">${statusOptions}</select>
+        <select id="poeClass" aria-label="Class">${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select id="poeUnitF" aria-label="Unit"${!ps.cls ? ' disabled' : ''}>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
+      </div>`;
+    if (!ps.cls || !ps.unit) {
+      box().innerHTML = `
+        <div class="card poe-head">
+          <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
+          ${connectCard()}
+          ${modeToggle()}
+          <p class="muted small">${canDecide() ? 'Students send CAT and practical evidence from the student app. Pick a class and unit, open a student to review what they sent, then approve or return each item.'
+            : 'Students send CAT and practical evidence from the student app; their trainers approve it or return it with a note.'}</p>
+          ${ps.driveReady ? '' : '<p class="warn-text small">The Google Drive bridge has not reported in yet, so students cannot upload. The MIS Officer sets it up once (see the README).</p>'}
+          ${filtersHtml}
+        </div>
+        <div class="card notice"><h2>Select a unit</h2><p class="muted">Pick a unit for <b>${esc(ps.cls)}</b> to see all students and their evidence status.</p></div>`;
+      return;
+    }
     box().innerHTML = `
       <div class="card poe-head">
         <div class="msec-head"><h2>Evidence (POE)</h2><button type="button" class="btn small ghost" data-act="reload">Refresh</button></div>
@@ -116,12 +151,7 @@ const PoeStaff = (() => {
         <p class="muted small">${canDecide() ? 'Students send CAT and practical evidence from the student app. Pick a class and unit, open a student to review what they sent, then approve or return each item.'
           : 'Students send CAT and practical evidence from the student app; their trainers approve it or return it with a note.'}</p>
         ${ps.driveReady ? '' : '<p class="warn-text small">The Google Drive bridge has not reported in yet, so students cannot upload. The MIS Officer sets it up once (see the README).</p>'}
-        <div class="poe-filters">
-          <select id="poeStatus" aria-label="Status">${statusOptions}</select>
-          <select id="poeClass" aria-label="Class">${classes.map((c) => `<option${c === ps.cls ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
-          <select id="poeUnitF" aria-label="Unit"><option value=""${ps.unit === '' ? ' selected' : ''}>All units</option>${units.map(([c, n]) => `<option value="${esc(c)}"${c === ps.unit ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
-          <input type="search" id="poeSearch" placeholder="Name or admission no." value="${esc(ps.q)}" aria-label="Search students">
-        </div>
+        ${filtersHtml}
       </div>
       ${students.length ? studentTable(students)
         : `<div class="card notice"><h2>${ps.status === 'submitted' ? 'Nothing to review' : 'Nothing here'}</h2><p class="muted">${all.length ? 'Try another filter.' : 'When students send evidence for your units it shows here.'}</p></div>`}`;
@@ -150,11 +180,15 @@ const PoeStaff = (() => {
     const pendingIds = r.items.filter((e) => e.status === 'submitted').map((e) => e.id);
     const reviewable = canDecide() && pendingIds.length > 0;
     const chips = r.items.map((e) => `<span class="poe-item-chip ${e.status}${e.submittedByName ? ' proxy' : ''}" title="${esc(e.unitName)} - ${statusOf(e)[1]}${e.changedAt ? ' - changed after sending' : ''}${e.submittedByName ? ' - submitted by ' + esc(e.submittedByName) : ''}">${esc(e.item)}${e.version > 1 ? `<small>v${e.version}</small>` : ''}${e.submittedByName ? '<small class="proxy-mark" aria-hidden="true">⇄</small>' : ''}</span>`).join('');
+    const notSubmitted = r.items.length === 0 ? `<span class="poe-item-chip not-submitted" title="No evidence submitted for this unit">Not Submitted</span>` : '';
     const first = r.items.find((e) => e.status === 'submitted') || r.items[0];
+    const viewBtn = r.items.length === 0
+      ? `<span class="muted small">—</span>`
+      : `<button type="button" class="btn small${reviewable ? ' primary' : ''}" data-open="${esc(first.id)}">${reviewable ? 'Review' : 'View'}</button>`;
     return `<tr>${picking ? `<td class="pick">${pendingIds.length ? `<input type="checkbox" data-pick-stu="${esc(r.admNo)}"${pendingIds.every((id) => ps.picked.has(id)) ? ' checked' : ''} aria-label="Select ${esc(r.name)}">` : ''}</td>` : ''}<td class="sn">${sn}</td>
       <td><b>${esc(r.name)}</b><small class="tadm">${esc(r.admNo)}</small></td>
-      <td class="poe-items">${chips}</td>
-      <td><button type="button" class="btn small${reviewable ? ' primary' : ''}" data-open="${esc(first.id)}">${reviewable ? 'Review' : 'View'}</button></td></tr>`;
+      <td class="poe-items">${chips}${notSubmitted}</td>
+      <td>${viewBtn}</td></tr>`;
   }
   /** One page for an approved submission: what it is, and the stamp, name and QR code. The student's file is never changed. */
   function printSlip(e) {
@@ -463,11 +497,11 @@ const PoeStaff = (() => {
         if (a.dataset.act === 'unit-xlsx') Tables.exportXlsx(title, head, rows); else Tables.print(title, `${rows.length} submissions`, head, rows);
       }
     });
-    document.addEventListener('change', (e) => {
+    document.addEventListener('change', async (e) => {
       const t = e.target;
       if (ps.mode === 'verify' && t.closest('#poe')) { Verify.onChange(t); return; }
       if (ps.mode === 'trainer' && t.closest('#poe')) { PoeTrainer.onChange(t); return; }
-      if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; ps.unitDefaulted = !t.value; Tables.reset('poeUnit'); draw(); }
+      if (t.id === 'poeClass') { ps.cls = t.value; ps.unit = ''; ps.unitDefaulted = !t.value; Tables.reset('poeUnit'); await load(); draw(); }
       if (t.id === 'poeUnitF') { ps.unit = t.value; Tables.reset('poeUnit'); draw(); }
       if (t.id === 'poeStatus') { ps.status = t.value; Tables.reset('poeUnit'); draw(); }
     });
@@ -508,6 +542,6 @@ const PoeStaff = (() => {
     ps.badgeAt = Date.now();
     try { await load(); } catch { /* shown when the tab opens */ }
   }
-  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '', defaulted: false, unitDefaulted: false }); ps.roster.clear(); ps.files.clear(); ps.marks.clear(); Verify.reset(); PoeTrainer.reset(); badge(); }
+  function reset() { Object.assign(ps, { list: [], status: '', cls: '', unit: '', q: '', loaded: false, open: null, badgeAt: 0, mode: 'unit', classes: [], sCls: '', sFilter: '', order: [], openStu: '', defaulted: false, unitDefaulted: false }); ps.roster = []; ps.files.clear(); ps.marks.clear(); Verify.reset(); PoeTrainer.reset(); badge(); }
   return { render, wire, refreshBadge, reset, state: ps, open: (id, order) => openViewer(id, order), redraw: () => draw() };
 })();

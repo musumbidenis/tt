@@ -2852,10 +2852,15 @@ async function poeList(env, b, me) {
       for (const r of rows) if (!have.has(r.id) && (!only || only.has(lower(r.adm_no)))) { have.add(r.id); list.push(r); }
     }
   }
+  // Class roster: all active students in the class (for roster view, incl. students with no evidence yet)
+  let roster = [];
+  if (b.classCode) {
+    roster = await all(env, "SELECT adm_no AS admNo, name, class_code AS classCode FROM trainees WHERE class_code=? AND status='active' ORDER BY name", b.classCode);
+  }
   // Links into Drive: the trainer's own attendance sheet; the evidence index for the HOD and MIS Officer.
   const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
   const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(me.code))?.[1] || '';
-  return { ok: true, evidence: list.map(evidenceOut), marks: await marksFor(env, list), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url };
+  return { ok: true, evidence: list.map(evidenceOut), marks: await marksFor(env, list), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url, roster };
 }
 /* POE Statistics: who has submitted and who has not, per class and per student. Aggregated in SQL in one
  * trip (no full evidence pull) so a department-wide view stays cheap on D1 reads. "Submitted" = a student
