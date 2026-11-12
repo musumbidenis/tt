@@ -964,7 +964,7 @@ const Admin = (() => {
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
           <label>Role<select id="nsRole"><option value="TRAINER">Trainer</option><option value="IAO">Internal Assessment Officer</option><option value="EAO">External Assessment Officer (a visitor)</option></select></label>
-          <label id="nsEndsBox" hidden>Account ends<input type="date" id="nsEnds"></label>
+          <label id="nsEndsBox">Account ends - optional for a Trainer (time-limited access)<input type="date" id="nsEnds"></label>
           <button class="btn primary">Add and issue PIN</button></form></details>`);
       $('#staffSort').value = staffSort;
       syncBar('staff');
@@ -1211,7 +1211,7 @@ const Admin = (() => {
       staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved');
     }
     if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
-    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = !['EAO', 'TRAINER'].includes(t.value); $('#nsEnds').required = ['EAO', 'TRAINER'].includes(t.value); }
+    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = !['EAO', 'TRAINER'].includes(t.value); $('#nsEnds').required = t.value === 'EAO'; }   // a Trainer's end date is optional (time-limited access)
     if (t.id === 'plClass') { plClassChange(t.value); return; }
   });
   document.addEventListener('input', (e) => {

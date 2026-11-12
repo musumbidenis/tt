@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.28.0';
+export const VERSION = '7.29.0';
 const SCHEMA_VERSION = '30';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -26,6 +26,13 @@ const STATUS_CODE = { Present: 'P', Absent: 'A', Late: 'L', Excused: 'E' };
 // account with an end date; sees only the verification work given to them).
 const ROLES = ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'];
 const GONE = "('withdrawn','rejected','inactive')";
+
+// Summative practicals (TVET CDACC moderated practical marks): one sheet set per course of the CDACC nominal roll.
+// Also made on first use (spReady), so a database already at this schema version gets them without a version bump.
+const SP_SCHEMA = `CREATE TABLE IF NOT EXISTS sp_courses (id TEXT PRIMARY KEY, level TEXT, course TEXT, series TEXT, center_code TEXT, center_name TEXT, qual_code TEXT, assess_date TEXT, candidates INTEGER, updated_by TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS sp_units (course_id TEXT, unit_code TEXT, unit_name TEXT, seq INTEGER, assessor_code TEXT COLLATE NOCASE, assessor_name TEXT, assessor_reg TEXT, verifier_name TEXT, verifier_reg TEXT, manager_name TEXT, assess_date TEXT, n_cand INTEGER, n_int INTEGER, n_ext INTEGER, n_mod INTEGER, locked_at TEXT, locked_by TEXT, updated_at TEXT, PRIMARY KEY (course_id, unit_code));
+CREATE INDEX IF NOT EXISTS sp_units_assessor ON sp_units (assessor_code);
+CREATE TABLE IF NOT EXISTS sp_marks (course_id TEXT, unit_code TEXT, reg_no TEXT COLLATE NOCASE, adm_no TEXT, name TEXT, internal_mark INTEGER, external_mark INTEGER, moderated_mark INTEGER, int_by TEXT, ext_by TEXT, mod_by TEXT, updated_at TEXT, PRIMARY KEY (course_id, unit_code, reg_no));`;
 
 // One statement per line (D1 exec runs them in order).
 const SCHEMA = `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -38,9 +45,7 @@ CREATE TABLE IF NOT EXISTS loading (term_id TEXT, class_code TEXT, unit_code TEX
 CREATE TABLE IF NOT EXISTS trainees (adm_no TEXT PRIMARY KEY COLLATE NOCASE, name TEXT, class_code TEXT, status TEXT DEFAULT 'active', mis_class TEXT, added_by TEXT, added_at TEXT, updated_by TEXT, updated_at TEXT, note TEXT);
 CREATE INDEX IF NOT EXISTS trainees_class ON trainees (class_code);
 CREATE INDEX IF NOT EXISTS trainees_mis ON trainees (mis_class);
-CREATE TABLE IF NOT EXISTS summative_practicals (class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, reg_code TEXT, name TEXT, internal_mark REAL, external_mark REAL, moderated_mark REAL, assessed_by TEXT, verified_by TEXT, moderated_by TEXT, status TEXT, updated_at TEXT, PRIMARY KEY (class_code, unit_code, adm_no));
-CREATE INDEX IF NOT EXISTS summative_practicals_cu ON summative_practicals (class_code, unit_code);
-CREATE INDEX IF NOT EXISTS summative_practicals_adm ON summative_practicals (adm_no);
+${SP_SCHEMA}
 CREATE INDEX IF NOT EXISTS classes_mis ON classes (mis_class);
 CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, adm_no TEXT, name TEXT, class_code TEXT, reason TEXT, requested_by TEXT, requested_name TEXT, requested_at TEXT, status TEXT, decided_by TEXT, decided_at TEXT, merged_into TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, date TEXT, class_code TEXT, unit_code TEXT, unit_name TEXT, period TEXT, trainer_id TEXT, trainer_name TEXT, present INTEGER, absent INTEGER, late INTEGER, excused INTEGER, total INTEGER, pct REAL, updated_at TEXT, synced_at TEXT, term_id TEXT, week INTEGER, data TEXT, kind TEXT, slots INTEGER);
@@ -132,10 +137,6 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
   // Notice board: a message can be pinned to a board, given a priority, and require readers to confirm they have read it.
   'ALTER TABLE notices ADD COLUMN board INTEGER', 'ALTER TABLE notices ADD COLUMN priority TEXT',
   'ALTER TABLE notices ADD COLUMN pinned_until TEXT', 'ALTER TABLE notices ADD COLUMN need_ack INTEGER',
-  // Summative practicals: candidates, internal/external/moderated marks and sign-off per unit of competency.
-  'CREATE TABLE IF NOT EXISTS summative_practicals (class_code TEXT, unit_code TEXT, adm_no TEXT COLLATE NOCASE, reg_code TEXT, name TEXT, internal_mark REAL, external_mark REAL, moderated_mark REAL, assessed_by TEXT, verified_by TEXT, moderated_by TEXT, status TEXT, updated_at TEXT, PRIMARY KEY (class_code, unit_code, adm_no))',
-  'CREATE INDEX IF NOT EXISTS summative_practicals_cu ON summative_practicals (class_code, unit_code)',
-  'CREATE INDEX IF NOT EXISTS summative_practicals_adm ON summative_practicals (adm_no)',
   // POE host: a classmate may submit POE on a device-less student's behalf; the item is still the student's, but we record who sent it.
   'ALTER TABLE evidence ADD COLUMN submitted_by_adm TEXT', 'ALTER TABLE evidence ADD COLUMN submitted_by_name TEXT',
   'ALTER TABLE evidence ADD COLUMN submitted_device TEXT'];
@@ -556,13 +557,16 @@ const ACTIONS = {
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   msList: { fn: (env, b, me) => msList(env, b, me) },
   candidates: { role: ['IAO', 'HOD', 'MIS'], fn: (env, b, me) => candidates(env, b, me) },
+  // Summative practicals: who may do what inside a unit (its assessor, the verifier, the office) is checked in each function.
   spUpload: { role: ['MIS', 'HOD'], fn: (env, b, me) => spUpload(env, b, me) },
-  summativePracticals: { fn: (env, b, me) => summativePracticals(env, b, me) },
-  spEnter: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => spEnter(env, b, me) },
-  spVerify: { role: ['EAO'], fn: (env, b, me) => spVerify(env, b, me) },
-  spModerate: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => spModerate(env, b, me) },
-  spReportAllUnits: { fn: (env, b, me) => spReportAllUnits(env, b, me) },
-  spReportPerUnit: { fn: (env, b, me) => spReportPerUnit(env, b, me) },
+  spCourses: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spCourses(env, b, me) },
+  spCourseSave: { role: ['MIS', 'HOD'], fn: (env, b, me) => spCourseSave(env, b, me) },
+  spCourseDelete: { role: ['MIS', 'HOD'], fn: (env, b, me) => spCourseDelete(env, b, me) },
+  spUnitSave: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spUnitSave(env, b, me) },
+  spMarks: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spMarks(env, b, me) },
+  spSave: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spSave(env, b, me) },
+  spLock: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => spLock(env, b, me) },
+  spSheet: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spSheet(env, b, me) },
   bulkTicket: { role: ['MIS', 'HOD'], fn: (env, b, me) => bulkTicket(env, b, me) },
   msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
   msReceive: { role: ['IAO', 'HOD'], fn: (env, b, me) => msReceive(env, b, me) },
@@ -698,14 +702,13 @@ async function systemHealth(env) {
  * that alters the class lists, the loading, the term or a trainer's settings or Drive folder. */
 const NUDGE_ACTIONS = new Set(['push', 'deleteSessions', 'marksPush', 'msSubmit', 'msReceive', 'msDecide', 'poeDone', 'poeDecide', 'poeDecideMany', 'poeReceive', 'submitSignoff', 'decideSignoff', 'decideSignoffs',
   'saveTerm', 'uploadLoading', 'importClassList', 'importRegCodes', 'addStudents', 'decideRequest',
-  'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep',
-  'spUpload', 'spEnter', 'spVerify', 'spModerate']);
+  'updateStudent', 'updateStaff', 'deleteStaff', 'deleteStudent', 'mySettings', 'archiveClasses', 'deleteClasses', 'unlock', 'relock', 'setBackup', 'setRep']);
 
 // Heavy, non-urgent admin and reporting reads that stand aside only in the hard budget band, so the
 // live path (marking attendance, pulse, roster, check-ins, marks) keeps its remaining read allowance.
 const SHEDDABLE = new Set(['sessionList', 'verifyData', 'verifyPool', 'msList', 'candidates',
   'absences', 'students', 'phones', 'poeList', 'poeStats', 'poeClass', 'tpoeList', 'tpoeGrants', 'poeLinks',
-  'summativePracticals', 'spReportAllUnits', 'spReportPerUnit']);
+  'spSheet']);
 
 /* ---------- staff sign-in ---------- */
 function staffPublic(r) {
@@ -4247,116 +4250,218 @@ async function msDecide(env, b, me) {
   return { ok: true, marksheets: out, marksheet: out[0], failed };
 }
 
-/* ---------- summative practicals (moderated practical marks per unit of competency) ----------
- * MIS/HOD register candidates for a unit's summative practical via a dedicated Excel upload (separate from
- * the normal class-list import). Trainers enter the internal assessor's mark; external verifiers enter sampled
- * external marks; moderated marks are set with sign-off. Outputs feed the TVET CDACC moderated practical marks
- * sheets (all units; per unit of competency). */
-const SP_COLS = ['class_code', 'unit_code', 'adm_no', 'reg_code', 'name', 'internal_mark', 'external_mark', 'moderated_mark', 'assessed_by', 'verified_by', 'moderated_by', 'status', 'updated_at'];
-const SP_MARK = /^\d{1,3}$/;
-const spParse = (v) => {
+/* ---------- summative practicals (TVET CDACC moderated practical marks) ----------
+ * The MIS Officer or HOD uploads the CDACC nominal roll (one row per candidate per unit: Reg No, Center Reg No, Name,
+ * Unit Code, Unit Name, Course, Course Level, Series, Assessment Center). It is its own upload: the class lists, the
+ * students and the loading are never touched. Each course on the roll is one set of sheets, and each of its units gets
+ * an internal assessor (any trainer, a time-limited one too). The assessor enters every candidate's mark, the external
+ * verifier the sampled ones, the HOD / MIS Officer / Assessment Officer the moderated marks, then finalises the unit.
+ * The two CDACC sheets (all units of a course; one unit of competency) are made on the device from spSheet / spMarks.
+ * Uploading the roll again updates names and adds or drops candidates, but never a candidate who already has a mark. */
+let spReadyFlag = false;
+async function spReady(env) {
+  if (spReadyFlag) return;
+  await env.DB.exec(SP_SCHEMA);
+  spReadyFlag = true;
+}
+const spText = (v, max = 160) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+const spId = (level, course, series) => [level, course, series].map((x) => lower(spText(x))).join('|');
+/** "RIFT VALLEY INSTITUTE ... (RVIST) (0320134P)" -> name and centre code (the last bracket holding a digit). */
+function spCenter(s) {
+  const t = spText(s, 200), m = /^(.*?)\s*\(([A-Z0-9]{4,12})\)\s*$/i.exec(t);
+  return m && /\d/.test(m[2]) ? { name: m[1].trim(), code: m[2].toUpperCase() } : { name: t, code: '' };
+}
+const spMark = (v) => {
   const t = String(v ?? '').trim();
-  if (t === '') return { ok: true, value: null };
-  const n = SP_MARK.test(t) ? Number(t) : NaN;
-  return n >= 0 && n <= 100 ? { ok: true, value: n } : { ok: false };
+  if (t === '') return { ok: true, v: null };
+  return /^\d{1,3}$/.test(t) && Number(t) <= 100 ? { ok: true, v: Number(t) } : { ok: false };
 };
+const SP_COL = { internal: ['internal_mark', 'int_by'], external: ['external_mark', 'ext_by'], moderated: ['moderated_mark', 'mod_by'] };
+const SP_RECOUNT = 'UPDATE sp_units SET ' + [['n_cand', '*'], ['n_int', 'm.internal_mark'], ['n_ext', 'm.external_mark'], ['n_mod', 'm.moderated_mark']]
+  .map(([c, x]) => `${c}=(SELECT COUNT(${x}) FROM sp_marks m WHERE m.course_id=sp_units.course_id AND m.unit_code=sp_units.unit_code)`).join(', ');
+const spOffice = (me) => me.roles.some((r) => ['MIS', 'HOD', 'IAO'].includes(r));
+const spSeesAll = (me) => me.roles.some((r) => ['MIS', 'HOD', 'IAO', 'EAO'].includes(r));
+const spIsAssessor = (u, me) => !!u.assessor_code && lower(u.assessor_code) === lower(me.code);
+const spCourseOut = (c) => ({ id: c.id, level: c.level || '', course: c.course || '', series: c.series || '', centerCode: c.center_code || '',
+  centerName: c.center_name || '', qualCode: c.qual_code || '', assessDate: c.assess_date || '', candidates: c.candidates || 0 });
+const spUnitOut = (u) => ({ code: u.unit_code, name: u.unit_name || u.unit_code, seq: u.seq || 0, assessorCode: u.assessor_code || '', assessorName: u.assessor_name || '',
+  assessorReg: u.assessor_reg || '', verifierName: u.verifier_name || '', verifierReg: u.verifier_reg || '', managerName: u.manager_name || '',
+  assessDate: u.assess_date || '', candidates: u.n_cand || 0, internal: u.n_int || 0, external: u.n_ext || 0, moderated: u.n_mod || 0,
+  lockedAt: u.locked_at || '', lockedBy: u.locked_by || '' });
+const spCandOut = (r) => ({ regNo: r.reg_no, admNo: r.adm_no || '', name: r.name || '', internal: r.internal_mark ?? null, external: r.external_mark ?? null, moderated: r.moderated_mark ?? null });
+async function spUnit(env, courseId, unitCode) {
+  const u = await one(env, 'SELECT * FROM sp_units WHERE course_id=? AND unit_code=?', String(courseId || ''), String(unitCode || ''));
+  if (!u) fail('That unit is not on this course’s roll. Refresh and choose it again.');
+  return u;
+}
+
+/** One course of the nominal roll (the app sends each course it found in the file as its own request). */
 async function spUpload(env, b, me) {
-  const rows = (b.rows || []).slice(0, 5000).map((r) => ({
-    admNo: String(r.admNo || r.adm_no || '').trim(),
-    name: String(r.name || '').replace(/\s+/g, ' ').trim(),
-    classCode: String(r.classCode || r.class_code || r.cls || '').trim(),
-    unitCode: String(r.unitCode || r.unit_code || r.unit || '').trim(),
-    regCode: String(r.regCode || r.reg_code || '').trim(),
-  })).filter((r) => r.admNo && r.name && r.classCode && r.unitCode);
-  if (!rows.length) fail('No valid candidate rows (need admission no., name, class and unit)');
-  const now = nowIso(), seen = new Set();
-  const unique = rows.filter((r) => { const k = lower(r.admNo) + '|' + lower(r.unitCode); if (seen.has(k)) return false; seen.add(k); return true; });
-  const adms = unique.map((r) => r.admNo);
-  const known = new Map((await all(env, `SELECT * FROM trainees WHERE adm_no IN ${IN}`, JSON.stringify(adms))).map((r) => [lower(r.adm_no), r]));
-  const traineeWrites = [], spWrites = [], added = [];
-  for (const r of unique) {
-    const k = lower(r.admNo);
-    const t = known.get(k);
-    if (!t) {
-      traineeWrites.push({ adm_no: r.admNo, name: r.name, class_code: r.classCode, status: 'active', mis_class: '', added_by: me.code, added_at: now, updated_by: me.code, updated_at: now, note: 'Summative practicals upload' });
-      added.push(r.admNo);
-    } else if (t.name !== r.name || t.class_code !== r.classCode) {
-      traineeWrites.push({ ...t, name: r.name, class_code: r.classCode, updated_by: me.code, updated_at: now });
-    }
-    spWrites.push({ class_code: r.classCode, unit_code: r.unitCode, adm_no: r.admNo, reg_code: r.regCode, name: r.name, internal_mark: null, external_mark: null, moderated_mark: null, assessed_by: null, verified_by: null, moderated_by: null, status: 'draft', updated_at: now });
+  await spReady(env);
+  const level = spText(b.level, 60), course = spText(b.course, 160), series = spText(b.series, 60);
+  if (!course) fail('Each row needs its Course');
+  const id = spId(level, course, series), seen = new Set(), rows = [];
+  for (const r of (b.rows || []).slice(0, 8000)) {
+    const reg = spText(r.regNo, 60), unit = spText(r.unitCode, 60).replace(/\s+/g, '').toUpperCase(), name = nameCase(spText(r.name, 120));
+    if (!reg || !unit || !name) continue;
+    const k = unit + '|' + lower(reg);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    rows.push({ k, reg, adm: spText(r.admNo, 60), name, unit, unitName: spText(r.unitName, 200) });
   }
-  const stmts = [];
-  if (traineeWrites.length) stmts.push(...upsertStmts('trainees', TCOLS, traineeWrites, ['adm_no']));
-  if (spWrites.length) stmts.push(...upsertStmts('summative_practicals', SP_COLS, spWrites, ['class_code', 'unit_code', 'adm_no']));
-  if (stmts.length) await many(env, ...stmts);
-  await audit(env, me, 'summative practicals upload', `${spWrites.length} candidate(s) registered for ${[...new Set(spWrites.map((w) => w.class_code + '|' + w.unit_code))].length} class-unit(s), ${added.length} new`);
-  await bumpRoster(env);
-  return { ok: true, added: added.length, registered: spWrites.length, total: unique.length };
+  if (!rows.length) fail(`No candidates for ${course}: each row needs a Reg No, a Name and a Unit Code`);
+  const now = nowIso(), center = spCenter(b.center);
+  const had = await all(env, 'SELECT unit_code, seq, locked_at FROM sp_units WHERE course_id=?', id);
+  const seqOf = new Map(had.map((u) => [u.unit_code, Number(u.seq) || 0]));
+  // A finalised unit keeps its candidates as they were: the roll changes only the open ones.
+  const locked = had.filter((u) => u.locked_at).map((u) => u.unit_code), lockedSet = new Set(locked);
+  const use = rows.filter((r) => !lockedSet.has(r.unit));
+  let next = Math.max(0, ...seqOf.values());
+  const units = new Map();
+  for (const r of use) if (!units.has(r.unit) || !units.get(r.unit)) units.set(r.unit, r.unitName);
+  // New units are numbered after the ones already there (the number is the column on the all-units sheet and its KEY).
+  for (const c of [...units.keys()].filter((c) => !seqOf.has(c)).sort((a, z) => a.localeCompare(z, undefined, { numeric: true }))) seqOf.set(c, ++next);
+  const keys = JSON.stringify(use.map((r) => r.k)), frozen = JSON.stringify(locked);
+  const res = await many(env,
+    [`INSERT INTO sp_courses (id,level,course,series,center_code,center_name,qual_code,assess_date,candidates,updated_by,updated_at) VALUES (?,?,?,?,?,?,'','',0,?,?)
+      ON CONFLICT(id) DO UPDATE SET level=excluded.level, course=excluded.course, series=excluded.series,
+      center_code=CASE WHEN excluded.center_code<>'' THEN excluded.center_code ELSE sp_courses.center_code END,
+      center_name=CASE WHEN excluded.center_name<>'' THEN excluded.center_name ELSE sp_courses.center_name END,
+      updated_by=excluded.updated_by, updated_at=excluded.updated_at`, id, level, course, series, center.code, center.name, me.code, now],
+    ...upsertStmts('sp_units', ['course_id', 'unit_code', 'unit_name', 'seq', 'updated_at'],
+      [...units].map(([c, n]) => ({ course_id: id, unit_code: c, unit_name: n || c, seq: seqOf.get(c), updated_at: now })), ['course_id', 'unit_code'], ['unit_name', 'updated_at']),
+    ...upsertStmts('sp_marks', ['course_id', 'unit_code', 'reg_no', 'adm_no', 'name', 'updated_at'],
+      use.map((r) => ({ course_id: id, unit_code: r.unit, reg_no: r.reg, adm_no: r.adm, name: r.name, updated_at: now })), ['course_id', 'unit_code', 'reg_no'], ['adm_no', 'name']),
+    // Off the new roll: dropped, unless a mark was already entered for them (kept, and counted for the message).
+    [`DELETE FROM sp_marks WHERE course_id=? AND internal_mark IS NULL AND external_mark IS NULL AND moderated_mark IS NULL
+      AND unit_code NOT IN (SELECT value FROM json_each(?)) AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, frozen, keys],
+    [`SELECT COUNT(*) AS n FROM sp_marks WHERE course_id=? AND unit_code NOT IN (SELECT value FROM json_each(?))
+      AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, frozen, keys],
+    [SP_RECOUNT + ' WHERE course_id=?', id],
+    ['DELETE FROM sp_units WHERE course_id=? AND n_cand=0', id],
+    ['UPDATE sp_courses SET candidates=(SELECT COUNT(DISTINCT lower(reg_no)) FROM sp_marks WHERE course_id=?1) WHERE id=?1 RETURNING candidates', id]);
+  const kept = res[res.length - 4][0]?.n || 0, candidates = res[res.length - 1][0]?.candidates || 0;
+  await audit(env, me, 'summative practicals roll', `${level} ${course} (${series}): ${candidates} candidate(s), ${units.size} unit(s)${kept ? `, ${kept} off the roll kept for their marks` : ''}${locked.length ? `, ${locked.length} finalised unit(s) left as they were` : ''}`);
+  return { ok: true, id, candidates, units: units.size, entries: use.length, kept, finalised: locked.length };
 }
-async function summativePracticals(env, b, me) {
-  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
-  if (!cls || !unit) fail('Choose the class and unit');
-  const rows = await all(env, `SELECT sp.adm_no, sp.reg_code, sp.name, sp.internal_mark, sp.external_mark, sp.moderated_mark, sp.assessed_by, sp.verified_by, sp.moderated_by, sp.status, sp.updated_at, t.name AS trainee_name, t.reg_code AS trainee_reg_code FROM summative_practicals sp LEFT JOIN trainees t ON t.adm_no=sp.adm_no WHERE sp.class_code=? AND sp.unit_code=? ORDER BY sp.name, sp.adm_no`, [cls, unit]);
-  return { ok: true, classCode: cls, unitCode: unit,
-    students: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.trainee_name || r.adm_no, regCode: r.reg_code || r.trainee_reg_code || '',
-      internalMark: r.internal_mark, externalMark: r.external_mark, moderatedMark: r.moderated_mark,
-      assessedBy: r.assessed_by, verifiedBy: r.verified_by, moderatedBy: r.moderated_by, status: r.status || 'draft', updatedAt: r.updated_at })) };
+
+/** The courses and units this person works on (a trainer: the units they assess), and for the office the assessors to choose from. */
+async function spCourses(env, b, me) {
+  await spReady(env);
+  const wide = spSeesAll(me), office = spOffice(me);
+  const [courses, units, staff] = await many(env,
+    ['SELECT * FROM sp_courses ORDER BY course, level, series'],
+    wide ? ['SELECT * FROM sp_units ORDER BY course_id, seq'] : ['SELECT * FROM sp_units WHERE assessor_code=? ORDER BY course_id, seq', me.code],
+    office ? ['SELECT code, name, roles, ends_on FROM staff WHERE active=1 ORDER BY name'] : null);
+  const by = new Map();
+  for (const u of units) { if (!by.has(u.course_id)) by.set(u.course_id, []); by.get(u.course_id).push(spUnitOut(u)); }
+  return { ok: true,
+    courses: courses.filter((c) => wide || by.has(c.id)).map((c) => ({ ...spCourseOut(c), units: by.get(c.id) || [] })),
+    assessors: office ? (staff || []).filter((s) => hasRole(s.roles, 'TRAINER') || hasRole(s.roles, 'HOD'))
+      .map((s) => ({ code: s.code, name: s.name, endsOn: s.ends_on || '' })) : [] };
 }
-async function spEnter(env, b, me) {
-  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), adm = String(b.admNo || '').trim();
-  if (!cls || !unit || !adm) fail('Choose the class, unit and candidate');
-  const p = spParse(b.internalMark); if (!p.ok) fail('Enter a whole-number mark from 0 to 100');
-  const now = nowIso();
-  const had = await one(env, 'SELECT 1 FROM summative_practicals WHERE class_code=? AND unit_code=? AND adm_no=?', cls, unit, adm);
-  if (had) await run(env, `UPDATE summative_practicals SET internal_mark=?, assessed_by=?, status='submitted', updated_at=? WHERE class_code=? AND unit_code=? AND adm_no=?`, p.value, me.code, now, cls, unit, adm);
-  else await run(env, `INSERT INTO summative_practicals (class_code,unit_code,adm_no,internal_mark,assessed_by,status,updated_at) VALUES (?,?,?,?,?,?,?)`, cls, unit, adm, p.value, me.code, 'submitted', now);
-  await audit(env, me, 'summative practical mark', `${cls} ${unit} ${adm}: internal ${p.value}`);
+/** The sheet heading of a course: centre, qualification code and title, date of assessment. */
+async function spCourseSave(env, b, me) {
+  await spReady(env);
+  const c = await one(env, 'SELECT * FROM sp_courses WHERE id=?', String(b.id || ''));
+  if (!c) fail('That course is not on the roll. Refresh the page.');
+  const v = (k, col, max) => (b[k] === undefined ? c[col] : spText(b[k], max));
+  await run(env, 'UPDATE sp_courses SET center_code=?, center_name=?, qual_code=?, course=?, assess_date=?, updated_by=?, updated_at=? WHERE id=?',
+    v('centerCode', 'center_code', 40), v('centerName', 'center_name', 200), v('qualCode', 'qual_code', 60), v('course', 'course', 160) || c.course,
+    v('assessDate', 'assess_date', 60), me.code, nowIso(), c.id);
+  await audit(env, me, 'summative practicals course', `${c.level} ${c.course}: sheet details`);
+  return { ok: true, course: spCourseOut(await one(env, 'SELECT * FROM sp_courses WHERE id=?', c.id)) };
+}
+async function spCourseDelete(env, b, me) {
+  await spReady(env);
+  const c = await one(env, 'SELECT * FROM sp_courses WHERE id=?', String(b.id || ''));
+  if (!c) fail('That course is not on the roll. Refresh the page.');
+  await many(env, ['DELETE FROM sp_marks WHERE course_id=?', c.id], ['DELETE FROM sp_units WHERE course_id=?', c.id], ['DELETE FROM sp_courses WHERE id=?', c.id]);
+  await audit(env, me, 'summative practicals course removed', `${c.level} ${c.course} (${c.series}), ${c.candidates || 0} candidate(s)`);
   return { ok: true };
 }
-async function spVerify(env, b, me) {
-  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), adm = String(b.admNo || '').trim();
-  if (!cls || !unit || !adm) fail('Choose the class, unit and candidate');
-  const p = spParse(b.externalMark); if (!p.ok) fail('Enter a whole-number mark from 0 to 100');
-  const now = nowIso();
-  const had = await one(env, 'SELECT 1 FROM summative_practicals WHERE class_code=? AND unit_code=? AND adm_no=?', cls, unit, adm);
-  if (had) await run(env, `UPDATE summative_practicals SET external_mark=?, verified_by=?, status='verified', updated_at=? WHERE class_code=? AND unit_code=? AND adm_no=?`, p.value, me.code, now, cls, unit, adm);
-  else await run(env, `INSERT INTO summative_practicals (class_code,unit_code,adm_no,external_mark,verified_by,status,updated_at) VALUES (?,?,?,?,?,?,?)`, cls, unit, adm, p.value, me.code, 'verified', now);
-  await audit(env, me, 'summative practical external mark', `${cls} ${unit} ${adm}: external ${p.value}`);
-  return { ok: true };
+/** A unit's assessor and sign-off details. The office sets anything; the assessor their own ID and the date; the verifier theirs. */
+async function spUnitSave(env, b, me) {
+  await spReady(env);
+  const u = await spUnit(env, b.courseId, b.unitCode);
+  const office = spOffice(me), mine = spIsAssessor(u, me), eao = me.roles.includes('EAO');
+  const sets = [], vals = [];
+  const put = (col, v) => { sets.push(col + '=?'); vals.push(v); };
+  const may = (ok, who) => { if (!ok) fail(`Only ${who} can change that`); };
+  if (b.assessorCode !== undefined) {
+    may(office, 'the HOD, MIS Officer or Assessment Officer');
+    const code = spText(b.assessorCode, 40);
+    if (code) {
+      const s = await getStaff(env, code);
+      if (!s || !s.active) fail('No active staff member has that code');
+      put('assessor_code', s.code); put('assessor_name', s.name);
+    } else { put('assessor_code', null); put('assessor_name', null); }
+  }
+  if (b.managerName !== undefined) { may(office, 'the HOD, MIS Officer or Assessment Officer'); put('manager_name', spText(b.managerName, 120)); }
+  if (b.assessorReg !== undefined) { may(office || mine, 'the unit’s assessor or the office'); put('assessor_reg', spText(b.assessorReg, 60)); }
+  if (b.assessDate !== undefined) { may(office || mine, 'the unit’s assessor or the office'); put('assess_date', spText(b.assessDate, 60)); }
+  if (b.verifierName !== undefined) { may(office || eao, 'the external verifier or the office'); put('verifier_name', spText(b.verifierName, 120)); }
+  if (b.verifierReg !== undefined) { may(office || eao, 'the external verifier or the office'); put('verifier_reg', spText(b.verifierReg, 60)); }
+  if (sets.length) {
+    put('updated_at', nowIso());
+    await run(env, `UPDATE sp_units SET ${sets.join(', ')} WHERE course_id=? AND unit_code=?`, ...vals, u.course_id, u.unit_code);
+    await audit(env, me, 'summative practicals unit', `${u.unit_code} (${u.course_id}): ${sets.slice(0, -1).map((x) => x.split('=')[0]).join(', ')}`);
+  }
+  return { ok: true, unit: spUnitOut(await spUnit(env, u.course_id, u.unit_code)) };
 }
-async function spModerate(env, b, me) {
-  const cls = String(b.classCode || ''), unit = String(b.unitCode || ''), adm = String(b.admNo || '').trim();
-  if (!cls || !unit || !adm) fail('Choose the class, unit and candidate');
-  const p = spParse(b.moderatedMark); if (!p.ok) fail('Enter a whole-number mark from 0 to 100');
-  const now = nowIso();
-  await run(env, `INSERT INTO summative_practicals (class_code,unit_code,adm_no,moderated_mark,moderated_by,status,updated_at) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(class_code,unit_code,adm_no) DO UPDATE SET moderated_mark=excluded.moderated_mark, moderated_by=excluded.moderated_by, status='moderated', updated_at=excluded.updated_at`,
-  cls, unit, adm, p.value, me.code, 'moderated', now);
-  await audit(env, me, 'summative practical moderated mark', `${cls} ${unit} ${adm}: moderated ${p.value}`);
-  return { ok: true };
+/** One unit's candidates and marks (a trainer only for a unit they assess). */
+async function spMarks(env, b, me) {
+  await spReady(env);
+  const id = String(b.courseId || ''), unit = String(b.unitCode || '');
+  const [cr, ur, rows] = await many(env, ['SELECT * FROM sp_courses WHERE id=?', id], ['SELECT * FROM sp_units WHERE course_id=? AND unit_code=?', id, unit],
+    ['SELECT reg_no, adm_no, name, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=? AND unit_code=? ORDER BY reg_no', id, unit]);
+  const u = ur[0];
+  if (!cr[0] || !u) fail('That unit is not on this course’s roll. Refresh and choose it again.');
+  if (!spSeesAll(me) && !spIsAssessor(u, me)) fail('This unit is not assigned to you. Ask the HOD or MIS Officer.');
+  return { ok: true, course: spCourseOut(cr[0]), unit: spUnitOut(u), candidates: rows.map(spCandOut) };
 }
-async function spReportAllUnits(env, b, me) {
-  const cls = String(b.classCode || '');
-  if (!cls) fail('Choose a class');
-  const units = await all(env, `SELECT DISTINCT unit_code, unit_name FROM loading WHERE class_code=? ORDER BY unit_code`, [cls]);
-  const students = await all(env, `SELECT DISTINCT sp.adm_no, sp.name, sp.reg_code FROM summative_practicals sp WHERE sp.class_code=? ORDER BY sp.name`, [cls]);
-  const marks = await all(env, `SELECT adm_no, unit_code, internal_mark, external_mark, moderated_mark, status FROM summative_practicals WHERE class_code=?`, [cls]);
-  const byAdmUnit = new Map();
-  for (const m of marks) byAdmUnit.set(lower(m.adm_no) + '|' + m.unit_code, m);
-  return { ok: true, classCode: cls,
-    units: units.map((u) => ({ code: u.unit_code, name: u.unit_name || u.unit_code })),
-    students: students.map((s) => { const out = { admNo: s.adm_no, name: s.name || s.adm_no, regCode: s.reg_code || '' };
-      for (const u of units) { const m = byAdmUnit.get(lower(s.adm_no) + '|' + u.unit_code); out[u.unit_code] = m ? { internal: m.internal_mark, external: m.external_mark, moderated: m.moderated_mark, status: m.status } : null; }
-      return out; }) };
+/** Saves one column of a unit's marks: internal (its assessor, or the HOD), external (the verifier, or the Assessment
+ * Officer / HOD typing in the verifier's sheet), moderated (HOD, MIS Officer, Assessment Officer). A blank clears. */
+async function spSave(env, b, me) {
+  await spReady(env);
+  const kind = String(b.kind || ''), col = SP_COL[kind];
+  if (!col) fail('Choose which marks to save');
+  const u = await spUnit(env, b.courseId, b.unitCode), r = me.roles;
+  const ok = kind === 'internal' ? spIsAssessor(u, me) || r.includes('HOD')
+    : kind === 'external' ? r.some((x) => ['EAO', 'IAO', 'HOD'].includes(x)) : r.some((x) => ['HOD', 'MIS', 'IAO'].includes(x));
+  if (!ok) fail(kind === 'internal' ? 'Only this unit’s internal assessor (or the HOD) enters these marks'
+    : kind === 'external' ? 'Only the external verifier (or the Assessment Officer or HOD) enters these marks' : 'Only the HOD, MIS Officer or Assessment Officer moderates');
+  if (u.locked_at) fail(`${u.locked_by || 'The office'} finalised this unit. Reopen it to change the marks.`);
+  const list = (b.marks || []).slice(0, 3000).map((m) => ({ reg: spText(m.regNo, 60), p: spMark(m.mark) })).filter((m) => m.reg);
+  const bad = list.find((m) => !m.p.ok);
+  if (bad) fail(`Marks are whole numbers from 0 to 100 (check ${bad.reg})`);
+  const now = nowIso(), sql = `UPDATE sp_marks SET ${col[0]}=?, ${col[1]}=?, updated_at=? WHERE course_id=? AND unit_code=? AND reg_no=?`;
+  for (let i = 0; i < list.length; i += 50) {
+    const part = list.slice(i, i + 50).map((m) => [sql, m.p.v, m.p.v === null ? null : me.code, now, u.course_id, u.unit_code, m.reg]);
+    await many(env, ...part, i + 50 >= list.length ? [SP_RECOUNT + ' WHERE course_id=? AND unit_code=?', u.course_id, u.unit_code] : null);
+  }
+  if (list.length) await audit(env, me, 'summative practical marks', `${u.unit_code} (${u.course_id}): ${list.length} ${kind} mark(s)`);
+  return spMarks(env, { courseId: u.course_id, unitCode: u.unit_code }, me);
 }
-async function spReportPerUnit(env, b, me) {
-  const cls = String(b.classCode || ''), unit = String(b.unitCode || '');
-  if (!cls || !unit) fail('Choose the class and unit');
-  const rows = await all(env, `SELECT sp.adm_no, sp.reg_code, sp.name, sp.internal_mark, sp.external_mark, sp.moderated_mark, sp.assessed_by, sp.verified_by, sp.moderated_by, sp.status, t.name AS trainee_name, t.reg_code AS trainee_reg_code FROM summative_practicals sp LEFT JOIN trainees t ON t.adm_no=sp.adm_no WHERE sp.class_code=? AND sp.unit_code=? ORDER BY sp.name`, [cls, unit]);
-  return { ok: true, classCode: cls, unitCode: unit,
-    students: rows.map((r) => ({ admNo: r.adm_no, name: r.name || r.trainee_name || r.adm_no, regCode: r.reg_code || r.trainee_reg_code || '',
-      internalMark: r.internal_mark, externalMark: r.external_mark, moderatedMark: r.moderated_mark,
-      assessedBy: r.assessed_by, verifiedBy: r.verified_by, moderatedBy: r.moderated_by, status: r.status || 'draft' })) };
+/** Finalise (no more changes) or reopen a unit's marks. */
+async function spLock(env, b, me) {
+  await spReady(env);
+  const u = await spUnit(env, b.courseId, b.unitCode), lock = !!b.lock, now = nowIso();
+  await run(env, 'UPDATE sp_units SET locked_at=?, locked_by=?, updated_at=? WHERE course_id=? AND unit_code=?', lock ? now : null, lock ? me.name : null, now, u.course_id, u.unit_code);
+  await audit(env, me, lock ? 'summative practicals finalised' : 'summative practicals reopened', `${u.unit_code} (${u.course_id})`);
+  return spMarks(env, { courseId: u.course_id, unitCode: u.unit_code }, me);
+}
+/** Everything the sheets of a course need: heading, units (numbered, with sign-off details) and every mark. */
+async function spSheet(env, b, me) {
+  await spReady(env);
+  const id = String(b.courseId || '');
+  const [cr, units, rows] = await many(env, ['SELECT * FROM sp_courses WHERE id=?', id], ['SELECT * FROM sp_units WHERE course_id=? ORDER BY seq', id],
+    ['SELECT unit_code, reg_no, adm_no, name, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=? ORDER BY reg_no', id]);
+  if (!cr[0]) fail('That course is not on the roll. Refresh the page.');
+  const see = units.filter((u) => spSeesAll(me) || spIsAssessor(u, me));
+  if (!see.length) fail('No unit of this course is assigned to you');
+  const codes = new Set(see.map((u) => u.unit_code));
+  return { ok: true, course: spCourseOut(cr[0]), units: see.map(spUnitOut), marks: rows.filter((m) => codes.has(m.unit_code)).map((m) => ({ unit: m.unit_code, ...spCandOut(m) })) };
 }
 
 /* ---------- candidates for the summative assessment ----------
@@ -4477,5 +4582,5 @@ async function driveStatus(env) {
 
 /* Exported for the local test harness (worker/dev.js); not used by Cloudflare. */
 export const internals = { all, one, run, many, finalMarks, acceptedMap, setMeta, getMeta, teachingWeeks, activeTerm, weekOf, nudgeDrive, pushToStudent,
-  resetCaches() { schemaReady = false; secretCache = null; keys.clear(); vapidKey = null; vapidTokens.clear(); nudgedAt = 0; },
+  resetCaches() { schemaReady = false; spReadyFlag = false; secretCache = null; keys.clear(); vapidKey = null; vapidTokens.clear(); nudgedAt = 0; },
   resetNudge() { nudgedAt = 0; } };

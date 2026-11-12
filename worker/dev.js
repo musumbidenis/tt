@@ -12,7 +12,7 @@ import worker, { internals as I, setStaffPin, foldOldCheckins } from './worker.j
 const SAMPLE = `INSERT INTO classes (code,name,level) VALUES ('ICT6A','Diploma in ICT L6 - Sept 2025 A','6'),('ICT5B','Certificate in ICT L5 - Jan 2026 B','5');
 INSERT INTO units (class_code,code,name) VALUES ('ICT6A','PROG-601','Object Oriented Programming (Java)'),('ICT6A','NET-602','Computer Networking'),('ICT5B','APP-501','Computer Applications'),('ICT5B','PROG-502','Fundamentals of Programming');
 INSERT INTO trainees (adm_no,name,class_code,status) VALUES ('RVNP/ICT/0101','Achieng Mary Otieno','ICT6A','active'),('RVNP/ICT/0102','Brian Kiprono Rotich','ICT6A','active'),('RVNP/ICT/0201','Ian Kipchumba Kirui','ICT5B','active'),('RVNP/ICT/0202','Joy Akinyi Ochieng','ICT5B','active');`;
-const TABLES = ['meta', 'staff', 'login_fails', 'terms', 'classes', 'units', 'loading', 'trainees', 'requests', 'sessions', 'checkins', 'devices', 'signoffs', 'audit', 'evidence', 'poe_links', 'marks', 'push_subs', 'unit_marks', 'unlocks', 'deleted_sessions', 'sys_stats', 'sys_errors', 'trainer_poe', 'trainer_poe_signoff', 'tpoe_grant', 'summative_practicals'];
+const TABLES = ['meta', 'staff', 'login_fails', 'terms', 'classes', 'units', 'loading', 'trainees', 'requests', 'sessions', 'checkins', 'devices', 'signoffs', 'audit', 'evidence', 'poe_links', 'marks', 'push_subs', 'unit_marks', 'unlocks', 'deleted_sessions', 'sys_stats', 'sys_errors', 'trainer_poe', 'trainer_poe_signoff', 'tpoe_grant', 'sp_courses', 'sp_units', 'sp_marks'];
 const CORS = { 'Access-Control-Allow-Origin': '*' };
 const yn = (v) => (v ? 'Yes' : 'No');
 const blank = (v) => (v === null || v === undefined ? '' : v);
@@ -62,8 +62,9 @@ async function dump(env) {
   out.Devices = [['DeviceID', 'AdmNo', 'Name', 'ClassCode', 'RegisteredAt', 'LastSeen'],
     ...(await all('SELECT * FROM devices ORDER BY rowid')).map((r) => [r.device_id, r.adm_no, r.name, r.class_code, r.registered_at, r.last_seen])];
   out.AuditLog = [['At', 'StaffCode', 'Name', 'Action', 'Details'], ...(await all('SELECT * FROM audit ORDER BY id')).map((r) => [r.at, r.staff_code, r.name, r.action, r.details])];
-  out.SummativePracticals = [['ClassCode', 'UnitCode', 'AdmNo', 'RegCode', 'Name', 'InternalMark', 'ExternalMark', 'ModeratedMark', 'AssessedBy', 'VerifiedBy', 'ModeratedBy', 'Status', 'UpdatedAt'],
-    ...(await all('SELECT * FROM summative_practicals ORDER BY class_code, unit_code, adm_no')).map((r) => [r.class_code, r.unit_code, r.adm_no, blank(r.reg_code), blank(r.name), blank(r.internal_mark), blank(r.external_mark), blank(r.moderated_mark), blank(r.assessed_by), blank(r.verified_by), blank(r.moderated_by), blank(r.status), r.updated_at])];
+  out.SpCourses = [['Id', 'CenterCode', 'QualCode', 'Candidates'], ...(await all('SELECT * FROM sp_courses ORDER BY id')).map((r) => [r.id, r.center_code, r.qual_code, r.candidates])];
+  out.SpUnits = [['CourseId', 'Seq', 'UnitCode', 'UnitName', 'Assessor', 'Cand', 'Int', 'Ext', 'Mod', 'LockedAt'], ...(await all('SELECT * FROM sp_units ORDER BY course_id, seq')).map((r) => [r.course_id, r.seq, r.unit_code, r.unit_name, blank(r.assessor_code), r.n_cand, r.n_int, r.n_ext, r.n_mod, blank(r.locked_at)])];
+  out.SpMarks = [['CourseId', 'UnitCode', 'RegNo', 'AdmNo', 'Name', 'Internal', 'External', 'Moderated'], ...(await all('SELECT * FROM sp_marks ORDER BY course_id, unit_code, reg_no')).map((r) => [r.course_id, r.unit_code, r.reg_no, r.adm_no, r.name, blank(r.internal_mark), blank(r.external_mark), blank(r.moderated_mark)])];
   return out;
 }
 

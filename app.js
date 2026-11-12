@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.59.0';
+const APP_VERSION = '4.60.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -2345,14 +2345,7 @@ function switchTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + name));
   if (name === 'reports') renderReport();   // Absences moved to the POE tab (a section after Trainer POE)
   if (name === 'manage') window.Admin?.render();
-  if (name === 'sumprac') {
-    try {
-      $('#sumprac').innerHTML = window.SummativePracticals ? window.SummativePracticals.html() : '<p class="muted">Summative practicals module not loaded — refresh the page.</p>';
-    } catch (e) {
-      $('#sumprac').innerHTML = `<p class="err-text">Error loading summative practicals: ${esc(e.message)}</p>`;
-      console.error('Summative practicals error:', e);
-    }
-  }
+  if (name === 'sumprac') window.SummativePracticals?.render();
   if (name === 'poe') PoeStaff.render();
   if (name === 'board') Notices.renderTab($('#board'));
   if (name === 'me') { renderDbInfo(); renderMe(); }

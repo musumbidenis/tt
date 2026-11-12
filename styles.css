@@ -1535,39 +1535,66 @@ tr.ps-no td { color: var(--muted); }
 .tools-form .conditional-field h4 { margin: 0 0 .5rem; font-size: .875rem; font-weight: 600; color: var(--ink-2); }
 .tools-form .conditional-field.hidden { display: none; }
 
-/* ---------- Summative practicals (Manage tab) ---------- */
-.sp-card { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); padding: .9rem 1rem; margin-bottom: .75rem; }
-.sp-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
-.sp-head h2 { margin: 0; font-size: 1.05rem; }
-.sp-steps { display: flex; flex-wrap: wrap; gap: .4rem; margin-left: auto; }
-.sp-steps .btn { font-size: .85rem; padding: .35rem .7rem; }
-.sp-pick { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin-bottom: .6rem; }
-.sp-pick label.small { margin: 0; font-size: .8rem; }
-.sp-pick select { height: 40px; font-size: .875rem; }
-.sp-upload { margin-bottom: .6rem; }
-.sp-table { font-size: .875rem; }
-.sp-table td { padding: .5rem .6rem; }
-.sp-table input.spmk { width: 4.5rem; text-align: right; }
+/* ---------- Summative practicals (Practicals tab) ---------- */
+.sp-pick { display: flex; flex-wrap: wrap; gap: 0 .875rem; }
+.sp-pick label { flex: 1 1 16rem; min-width: 0; }
+.sp-unit-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; flex-wrap: wrap; margin: 0 0 .75rem; }
+.sp-table th, .sp-table td { padding: .4rem .55rem; vertical-align: middle; }
+.sp-table .num { text-align: right; }
+.sp-table input.spmk { width: 4.25rem; height: 44px; margin: 0 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
+.sp-table input.spmk.changed { border-color: var(--l); box-shadow: inset 0 0 0 1px var(--l); }
 .sp-table input.spmk.bad { border-color: var(--a); background: var(--a-soft); }
-.sp-print { max-width: 21cm; margin: 0 auto; font-size: 9px; }
-.sp-print .rp-head { display: flex; align-items: flex-start; gap: .7rem; margin-bottom: .5rem; }
-.sp-print .rp-head img { width: 44px; height: 44px; }
-.sp-print .rp-title h1 { margin: 0 0 .1rem; font-size: 13px; letter-spacing: .05em; }
-.sp-print .rp-title h2 { margin: 0 0 .3rem; font-size: 11px; color: var(--ink-2); }
-.sp-print .rp-fields { width: 100%; border-collapse: collapse; margin-bottom: .4rem; font-size: 9px; }
-.sp-print .rp-fields th { text-align: left; padding: .15rem .4rem; color: var(--muted); font-weight: 600; }
-.sp-print .rp-fields td { padding: .15rem .4rem; }
-.sp-print .key { margin: .3rem 0 .5rem; font-size: 8px; color: var(--muted); }
-.sp-print table { width: 100%; border-collapse: collapse; margin-bottom: .6rem; }
-.sp-print th, .sp-print td { border: 1px solid var(--line); padding: .25rem .3rem; font-size: 8.5px; text-align: left; }
-.sp-print th { background: var(--sunk); color: var(--ink-2); font-size: 8px; }
-.sp-print td.num, .sp-print th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.sp-print .sign-lines { margin-top: 1rem; }
-.sp-print .sign-lines td { height: 28px; border: 0; border-bottom: 1px solid var(--ink); padding: 0 .2rem; }
-.sp-print .sig { width: 9rem; }
-.sp-print .stamp { font-size: 7px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.sp .adm { display: block; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sp-dev { font-variant-numeric: tabular-nums; }
+.sp-dev.neg { color: var(--a); }
+.sp-dev.pos { color: var(--p); }
+.sp-md { margin: .75rem 0; }
+.sp-units select { min-width: 13rem; height: 44px; margin: 0; }
+.sp-find { max-width: 22rem; }
+.sp-course { margin-top: .6rem; }
+.sp-course > .grid2, .sp-course > .table-wrap, .sp-course > .row-actions { margin-top: .75rem; }
+.sp-sec h3 { margin: 1.25rem 0 .25rem; font: 600 1rem var(--display); }
+.sp-check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .25rem .875rem; margin: .5rem 0 .75rem; }
+.sp-check-list label.check { margin: 0; font-size: .875rem; }
+.sp-reg-m { display: none; }
+.sp-table td.sp-who { white-space: normal; min-width: 9rem; }
+@media (max-width: 560px) {
+  .sp .grid2 { grid-template-columns: 1fr; }
+  .sp-table .sp-reg { display: none; }
+  .sp-table .sp-reg-m { display: block; }
+  .sp-table .adm { overflow-wrap: anywhere; }
+  .sp-table .sp-devc { display: none; }
+  .sp-table td.sp-who { min-width: 6rem; }
+  .sp-table input.spmk { width: 3.5rem; padding: .4rem .45rem; }
+  .sp-table th, .sp-table td { padding: .4rem .35rem; }
+}
+/* The CDACC forms (CBA/SAMSP/2), drawn by HtmlPdf from these print rules: one landscape A4 sheet per .sp-page. */
 @media print {
-  .sp-print { font-size: 8px; }
-  .sp-print th, .sp-print td { border-color: #000; }
-  .sp-print .sig { border-bottom: 1px solid #000; }
+  .sp-print { font: 10pt "Times New Roman", serif; color: #000; }
+  .sp-page + .sp-page { break-before: page; }
+  .sp-top { display: flex; align-items: center; justify-content: center; gap: 4mm; }
+  .sp-top img { width: 15mm; height: auto; }
+  .sp-org { font: bold 11pt "Times New Roman", serif; }
+  .sp-form { display: flex; justify-content: space-between; font-weight: bold; margin: 1mm 0 .5mm; }
+  .sp-print h1 { font: bold 10.5pt "Times New Roman", serif; text-align: center; text-decoration: underline; margin: .5mm 0 1.5mm; }
+  .sp-fields { width: 100%; border-collapse: collapse; margin-bottom: 1.5mm; }
+  .sp-fields th { text-align: left; white-space: nowrap; width: 1%; padding: .4mm 1.5mm .4mm 0; font-weight: bold; }
+  .sp-fields td { border-bottom: .25mm dotted #000; padding: .4mm 1.5mm; width: 49%; }
+  .sp-grid { width: 100%; border-collapse: collapse; }
+  .sp-grid th, .sp-grid td { border: .25mm solid #000; padding: .45mm 1mm; font-size: 9pt; line-height: 1.15; }
+  .sp-grid th { font-weight: bold; text-align: center; vertical-align: middle; }
+  .sp-grid th.sn { width: 8mm; }
+  .sp-grid th.rg { width: 46mm; }
+  .sp-grid th.w { width: 34mm; }
+  .sp-grid th.mk { min-width: 7mm; }
+  .sp-grid td.c, .sp-grid td.mk { text-align: center; font-variant-numeric: tabular-nums; }
+  .sp-key { columns: 3; column-gap: 6mm; font-size: 8.5pt; margin: 1.2mm 0 0; }
+  .sp-key b { display: block; column-span: all; }
+  .sp-key span { display: block; break-inside: avoid; }
+  .sp-mdp { font-weight: bold; margin: 1.2mm 0 0; }
+  .sp-sign { margin-top: 2mm; font-size: 9.5pt; }
+  .sp-sign p { display: flex; align-items: flex-end; gap: 1.5mm; margin: 0 0 2.2mm; white-space: nowrap; }
+  .sp-sign .ln { flex: 1 1 40mm; min-width: 18mm; min-height: 4mm; border-bottom: .25mm dotted #000; padding: 0 1mm; white-space: nowrap; overflow: hidden; }
+  .sp-sign .ln.s { flex: 1 1 22mm; }
+  .sp-foot { text-align: center; font-size: 8.5pt; margin-top: 1mm; }
 }

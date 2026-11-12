@@ -46,7 +46,7 @@ const HtmlPdf = (() => {
     const out = [];
     const walk = (el, chain) => {
       for (const c of el.children) {
-        if (c.matches('.reg-print, .rp-cats, .ms-print, .ms-page, .tbl-print')) walk(c, [...chain, c]);
+        if (c.matches('.reg-print, .rp-cats, .ms-print, .ms-page, .tbl-print, .sp-print')) walk(c, [...chain, c]);
         else out.push({ el: c, chain, brk: getComputedStyle(c).breakBefore === 'page' || chain.some((a) => a.firstElementChild === c && getComputedStyle(a).breakBefore === 'page') });
       }
     };
