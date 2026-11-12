@@ -2,8 +2,9 @@
  * Candidates (MIS Officer, HOD): upload the CDACC nominal roll - its own upload, separate from the class lists, which it
  *   never changes - tick the courses to keep and fill each course's sheet heading.
  * Marks: anyone signed in as a trainer, a guest (an account with an end date, for people outside the staff) or an external
- *   officer enters the internal assessor's and the external verifier's marks of any unit; whoever saves a column is the name
- *   on the sheet for it. The moderated marks are worked out by the server, CDACC style, and cannot be typed: the verifier's
+ *   officer enters the internal assessor's and the external verifier's marks of any unit; whoever saves the internal marks
+ *   is the Internal Assessor named on the sheet, and the External Verifier lines are always left blank (signed by hand).
+ *   The moderated marks are worked out by the server, CDACC style, and cannot be typed: the verifier's
  *   sample must be at least 10% of the candidates assessed; mean deviation = average of (external - internal) over the
  *   sample; within +/-5 the internal marks stand, beyond it every mark moves by the mean deviation. The office finalises.
  * Sheets: the two CDACC forms (CBA/SAMSP/2) - all units of a course, and per unit of competency - as PDF and Excel,
@@ -125,13 +126,11 @@ const SummativePracticals = (() => {
     const m = sp.marks;
     if (!m) return out + '<p class="muted">Loading the unit…</p></section>';
     const u = m.unit, locked = !!u.lockedAt, edit = !locked && enters(), mod = moderation(m.candidates);
-    const same = m.candidates.some((c) => c.intBy && c.extBy && lc(c.intBy) === lc(c.extBy));
     out += `<div class="sp-unit-head"><div><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span>
-        <div class="small muted">Internal assessor: ${esc(u.assessorName || 'not yet')} - External verifier: ${esc(u.verifierName || 'not yet')} - ${u.candidates} candidates</div></div>
+        <div class="small muted">Internal assessor on the sheet: ${esc(u.assessorName || 'not yet')} - ${u.candidates} candidates</div></div>
       ${locked ? `<span class="pill synced">Finalised - ${esc(u.lockedBy)}, ${esc(u.lockedAt.slice(0, 10))}</span>` : '<span class="pill pending">Open</span>'}</div>`;
     if (!m.candidates.length) return out + '<p class="empty">No candidates for this unit on the roll.</p></section>';
     if (!locked && !edit) out += '<p class="small muted">You can see this unit’s marks. Trainers, guests and external officers enter them.</p>';
-    if (same) out += '<p class="small warn-text">The same person entered the internal and the external mark for some candidates. CDACC expects the external verifier to be someone other than the assessor.</p>';
     out += `<div class="table-wrap"><table class="report-table sp-table${dirty() ? ' sp-preview' : ''}"><thead><tr><th>S/N</th><th class="sp-reg">Reg No</th><th>Name</th>
         <th class="num">Internal</th><th class="num">External</th><th class="num sp-devc">Deviation</th><th class="num">Moderated</th></tr></thead>
       <tbody>${m.candidates.map((c, i) => `<tr${sp.suggest.has(c.regNo) ? ' class="sp-sample"' : ''}><td>${i + 1}</td><td class="tadm sp-reg">${esc(c.regNo)}</td><td class="sp-who">${esc(c.name)}${sp.suggest.has(c.regNo) ? ' <span class="pill pending">Sample</span>' : ''}<span class="adm sp-reg-m">${esc(c.regNo)}</span>${c.admNo ? `<span class="adm">${esc(c.admNo)}</span>` : ''}</td>
@@ -153,14 +152,12 @@ const SummativePracticals = (() => {
     const f = (id, label, v, can, ph = '') => `<label>${label}<input id="${id}" value="${esc(v)}"${can ? '' : ' readonly'}${ph ? ` placeholder="${esc(ph)}"` : ''}></label>`;
     return `<details class="fold" data-sec="sp-sign"${sp.open.has('sp-sign') ? ' open' : ''}><summary>Sign-off details on the sheet</summary>
       <div class="grid2">
-        ${f('spAName', 'Internal assessor', u.assessorName, false, 'Whoever saves the internal marks')}
+        ${f('spAName', 'Internal assessor', u.assessorName, false, 'Whoever types in the marks')}
         ${f('spAReg', 'Assessor Reg. Code / National ID', u.assessorReg, ok)}
-        ${f('spVName', 'External verifier', u.verifierName, false, 'Whoever saves the external marks')}
-        ${f('spVReg', 'Verifier Reg. Code / National ID', u.verifierReg, ok)}
         ${f('spMName', 'Assessment Center Manager / Officer', u.managerName, ok)}
         ${f('spADate', 'Date of assessment', u.assessDate, ok, m.course.assessDate || 'e.g. 12/11/2026')}
       </div>
-      <p class="small muted">The two names come from who saved each column of marks. Signatures and the dates beside them are left blank on the sheet, for signing by hand.</p>
+      <p class="small muted">The internal assessor is whoever types in the marks. The External Verifier lines, the signatures and the dates beside them are left blank on the sheet, for signing by hand.</p>
       ${ok ? '<button type="button" class="btn" data-sp="sign-save">Save details</button>' : ''}</details>`;
   }
   /** After a keystroke: the deviation, moderated preview and the CDACC decision, without redrawing the inputs. */
@@ -226,7 +223,7 @@ const SummativePracticals = (() => {
   async function saveSign(btn) {
     const u = sp.marks.unit, body = { courseId: sp.courseId, unitCode: sp.unitCode };
     const take = (id, key) => { const el = $('#' + id); if (el && !el.readOnly && el.value.trim() !== (u[key] || '')) body[key] = el.value; };
-    take('spAReg', 'assessorReg'); take('spADate', 'assessDate'); take('spVReg', 'verifierReg'); take('spMName', 'managerName');
+    take('spAReg', 'assessorReg'); take('spADate', 'assessDate'); take('spMName', 'managerName');
     if (Object.keys(body).length === 2) { toast('Nothing changed', 'ok'); return; }
     btn.disabled = true;
     try {
@@ -324,9 +321,9 @@ const SummativePracticals = (() => {
         ${f('qualCode', 'Course/Qualification Code', c.qualCode, 'From CDACC')}${f('course', 'Course/Qualification Title', c.course)}
         ${f('assessDate', 'Date of assessment', c.assessDate, 'e.g. 10/11/2026 - 14/11/2026')}</div>
       ${up ? '<div class="row-actions"><button type="button" class="btn" data-sp="course-save">Save sheet heading</button></div>' : ''}
-      <div class="table-wrap"><table class="report-table sp-units"><thead><tr><th>#</th><th>Unit</th><th class="num">Candidates</th><th class="num">Marks I/E/M</th><th>Internal assessor</th><th>External verifier</th></tr></thead>
+      <div class="table-wrap"><table class="report-table sp-units"><thead><tr><th>#</th><th>Unit</th><th class="num">Candidates</th><th class="num">Marks I/E/M</th><th>Internal assessor</th></tr></thead>
       <tbody>${c.units.map((u) => `<tr><td>${u.seq}</td><td class="sp-who">${esc(u.name)}<span class="adm">${esc(u.code)}${u.lockedAt ? ' - finalised' : ''}</span></td><td class="num">${u.candidates}</td>
-        <td class="num">${u.internal}/${u.external}/${u.moderated}</td><td>${esc(u.assessorName || '-')}</td><td>${esc(u.verifierName || '-')}</td></tr>`).join('')}</tbody></table></div>
+        <td class="num">${u.internal}/${u.external}/${u.moderated}</td><td>${esc(u.assessorName || '-')}</td></tr>`).join('')}</tbody></table></div>
       ${up ? '<div class="row-actions"><button type="button" class="btn ghost danger-text" data-sp="course-delete">Remove this course</button></div>' : ''}</details>`;
   }
   async function rollFile(input) {
@@ -431,7 +428,7 @@ const SummativePracticals = (() => {
     const list = [...people.values()].sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
     const pages = pagesOf(list, ALL_FULL, Math.max(6, ALL_LAST - Math.ceil(units.length / 3)));
     const key = `<div class="sp-key"><b>KEY:</b>${units.map((u, j) => `<span>${j + 1} - ${esc(u.name)}</span>`).join('')}</div>`;
-    const sign = `<div class="sp-sign"><p>1. Name of External Verifier:${ln(common(units, 'verifierName'))}External Verifier Reg. Code/National ID. No:${ln(common(units, 'verifierReg'), 's')}</p>
+    const sign = `<div class="sp-sign"><p>1. Name of External Verifier:${ln('')}External Verifier Reg. Code/National ID. No:${ln('', 's')}</p>
       <p>Signature:${ln('', 's')}Date:${ln('', 's')}</p>
       <p>2. Name of Assessment Center Manager/Officer:${ln(common(units, 'managerName'))}Signature:${ln('', 's')}Date:${ln('', 's')}</p>
       <p>Institutional stamp:${ln('', 's')}</p></div>`;
@@ -447,7 +444,7 @@ const SummativePracticals = (() => {
     const md = u.moderation || {}, pages = pagesOf(cands, UNIT_FULL, UNIT_LAST);
     const extra = `<tr><th>Unit of Competency Code:</th><td>${esc(u.code)}</td><th>Unit of Competency Title:</th><td>${esc(u.name)}</td></tr>`;
     const sign = `<div class="sp-sign"><p>1. Name of Internal Assessor${ln(u.assessorName)}Internal Assessor Reg. Code/National ID. No.${ln(u.assessorReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
-      <p>2. Name of External Verifier${ln(u.verifierName)}External Verifier Reg. Code/National ID. No.${ln(u.verifierReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
+      <p>2. Name of External Verifier${ln('')}External Verifier Reg. Code/National ID. No.${ln('', 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
       <p>3. Name of Assessment Center Manager/Officer${ln(u.managerName)}Signature${ln('', 's')}Date${ln('', 's')}Institutional stamp${ln('', 's')}</p></div>`;
     let n = 0;
     return pages.map((rows, p) => `${headHtml(c, 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY', p + 1, pages.length, u.assessDate || c.assessDate, extra)}

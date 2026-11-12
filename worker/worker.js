@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.30.0';
+export const VERSION = '7.31.0';
 const SCHEMA_VERSION = '30';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -4417,8 +4417,8 @@ async function spCourseDelete(env, b, me) {
   await audit(env, me, 'summative practicals course removed', `${c.level} ${c.course} (${c.series}), ${c.candidates || 0} candidate(s)`);
   return { ok: true };
 }
-/** A unit's sign-off details: the assessor's and verifier's Reg. Code / ID, the centre manager, the date. The two names are not
- *  typed: they are whoever last saved that column of marks. */
+/** A unit's sign-off details: the assessor's Reg. Code / ID, the centre manager, the date. The assessor's name is not typed:
+ *  it is whoever saves the internal marks. */
 async function spUnitSave(env, b, me) {
   await spReady(env);
   const u = await spUnit(env, b.courseId, b.unitCode);
@@ -4426,7 +4426,6 @@ async function spUnitSave(env, b, me) {
   const sets = [], vals = [];
   const put = (col, v) => { sets.push(col + '=?'); vals.push(v); };
   if (b.assessorReg !== undefined) put('assessor_reg', spText(b.assessorReg, 60));
-  if (b.verifierReg !== undefined) put('verifier_reg', spText(b.verifierReg, 60));
   if (b.managerName !== undefined) put('manager_name', spText(b.managerName, 120));
   if (b.assessDate !== undefined) put('assess_date', spText(b.assessDate, 60));
   if (sets.length) {
@@ -4445,8 +4444,7 @@ async function spMarks(env, b, me) {
   if (!cr[0] || !ur[0]) fail('That unit is not on this course’s roll. Refresh and choose it again.');
   return { ok: true, course: spCourseOut(cr[0]), unit: spUnitOut(ur[0]), moderation: spModeration(rows), candidates: rows.map(spCandOut) };
 }
-/** Saves one column of a unit's marks (internal or external; a blank clears). The person saving becomes that column's name on
- *  the sheet (internal assessor / external verifier), and the moderated marks are worked out again. */
+/** Saves one column of a unit's marks (internal or external; a blank clears) and works the moderated marks out again. */
 async function spSave(env, b, me) {
   await spReady(env);
   const kind = String(b.kind || ''), col = SP_COL[kind];
@@ -4459,9 +4457,11 @@ async function spSave(env, b, me) {
   if (bad) fail(`Marks are whole numbers from 0 to 100 (check ${bad.reg})`);
   const now = nowIso(), sql = `UPDATE sp_marks SET ${col[0]}=?, ${col[1]}=?, updated_at=? WHERE course_id=? AND unit_code=? AND reg_no=?`;
   for (let i = 0; i < list.length; i += 50) await many(env, ...list.slice(i, i + 50).map((m) => [sql, m.p.v, m.p.v === null ? null : me.code, now, u.course_id, u.unit_code, m.reg]));
+  // The sheet's Internal Assessor is whoever saves the internal marks (someone saving only external marks is named only
+  // while nobody has saved internal ones). The External Verifier lines stay blank on the sheet, for signing by hand.
   if (list.some((m) => m.p.v !== null)) {
-    if (kind === 'internal') await run(env, 'UPDATE sp_units SET assessor_code=?, assessor_name=?, updated_at=? WHERE course_id=? AND unit_code=?', me.code, me.name, now, u.course_id, u.unit_code);
-    else await run(env, 'UPDATE sp_units SET verifier_name=?, updated_at=? WHERE course_id=? AND unit_code=?', me.name, now, u.course_id, u.unit_code);
+    await run(env, `UPDATE sp_units SET assessor_code=?, assessor_name=?, updated_at=? WHERE course_id=? AND unit_code=?${kind === 'internal' ? '' : " AND COALESCE(assessor_name,'')=''"}`,
+      me.code, me.name, now, u.course_id, u.unit_code);
   }
   await spRemoderate(env, u.course_id, u.unit_code);
   if (list.length) await audit(env, me, 'summative practical marks', `${u.unit_code} (${u.course_id}): ${list.length} ${kind} mark(s)`);
