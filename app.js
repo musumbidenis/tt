@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.60.0';
+const APP_VERSION = '4.61.0';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -2338,7 +2338,7 @@ async function renderDbInfo() {
 /* ---------------- tabs, roles, network, wiring ---------------- */
 function switchTab(name) {
   const btn = $(`.tabs button[data-tab="${name}"]`);
-  if (!btn || btn.hidden) name = 'reports';
+  if (!btn || btn.hidden) name = !$('.tabs button[data-tab="reports"]').hidden ? 'reports' : ($$('.tabs button').find((b) => !b.hidden)?.dataset.tab || 'reports');
   state.activeTab = name;
   state.tabSeq = (state.tabSeq || 0) + 1;
   $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -2357,20 +2357,22 @@ function applyRoles() {
   $('.tabs button[data-tab="mark"]').hidden = !marks;
   $('.tabs button[data-tab="tools"]').hidden = !marks;   // professional tools: coming soon
   $('.tabs button[data-tab="manage"]').hidden = !(hasRole('HOD') || hasRole('MIS') || hasRole('IAO'));
-  // Summative practicals: dedicated tab for MIS, HOD, IAO, TRAINER and EAO.
-  $('.tabs button[data-tab="sumprac"]').hidden = !['MIS', 'HOD', 'IAO', 'TRAINER', 'EAO'].some(hasRole);
+  // Summative practicals: for the staff, external officers and guests (a guest sees only this tab and their Profile).
+  const guest = hasRole('GUEST') && !['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].some(hasRole);
+  $('.tabs button[data-tab="sumprac"]').hidden = !['MIS', 'HOD', 'IAO', 'TRAINER', 'EAO', 'GUEST'].some(hasRole);
+  $('.tabs button[data-tab="poe"]').hidden = guest;
   // Notice Board: the staff who may post (everyone but an EAO visitor). Others still get messages via the bell.
   $('.tabs button[data-tab="board"]').hidden = !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   // An External Assessment Officer (a visitor) sees only the POE tab's verification work and their Profile.
-  $('.tabs button[data-tab="reports"]').hidden = hasRole('EAO') && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
+  $('.tabs button[data-tab="reports"]').hidden = (hasRole('EAO') || hasRole('GUEST')) && !['TRAINER', 'HOD', 'MIS', 'IAO'].some(hasRole);
   // Absences is a Report(s) section for the HOD and MIS Officer only.
   const absBtn = $('#reportMode [data-rmode="absences"]'); if (absBtn) absBtn.hidden = !(hasRole('HOD') || hasRole('MIS'));
   $('.tabs').style.setProperty('--tabs', $$('.tabs button').filter((b) => !b.hidden).length);
-  if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : $('.tabs button[data-tab="reports"]').hidden ? 'poe' : 'reports');
+  if ($(`.tabs button[data-tab="${state.activeTab}"]`)?.hidden) switchTab(marks ? 'mark' : guest ? 'sumprac' : $('.tabs button[data-tab="reports"]').hidden ? 'poe' : 'reports');
   renderIdentity();
   renderClassSelects();
   window.Admin?.refreshBadge?.();
-  if (me()) PoeStaff.refreshBadge();
+  if (me() && !guest) PoeStaff.refreshBadge();
   Notices.show();
   if (me()) Notices.tick();
 }
@@ -2382,8 +2384,8 @@ function updateNet() {
   b.className = 'badge ' + (on ? 'online' : 'offline');
 }
 
-const ROLE_NAMES = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer' };
-const ROLE_ORDER = ['HOD', 'MIS', 'IAO', 'EAO', 'TRAINER'];
+const ROLE_NAMES = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer', GUEST: 'Guest' };
+const ROLE_ORDER = ['HOD', 'MIS', 'IAO', 'EAO', 'TRAINER', 'GUEST'];
 /** "HOD, MIS Officer, Trainer": the biggest responsibility first, whatever order the server lists them in. */
 const roleText = (s) => ROLE_ORDER.filter((r) => s.roles.includes(r)).map((r) => ROLE_NAMES[r]).join(', ');
 function renderIdentity() {

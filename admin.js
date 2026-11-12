@@ -6,7 +6,7 @@
 
 const Admin = (() => {
   const box = () => $('#manage');
-  const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer' };
+  const ROLE_LABEL = { TRAINER: 'Trainer', HOD: 'HOD', MIS: 'MIS Officer', IAO: 'Internal Assessment Officer', EAO: 'External Assessment Officer', GUEST: 'Guest (practical marks)' };
   let cache = { signoffs: [], marksheets: [], requests: [], overview: null, staff: [], phones: [], backup: null };
   let loadingPreview = null;
   let ovSort = { key: 'classCode', dir: 1 };
@@ -956,15 +956,15 @@ const Admin = (() => {
           ${lower(s.code) === lower(me()?.code || '') ? '' : pickBox('staff', s.code, s.name)}
           <span class="sn st-code">${esc(s.code)}</span>
           <span><b>${esc(s.name)}</b></span>
-          <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
-            ${(s.roles.includes('EAO') || s.roles.includes('TRAINER')) ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
+          <span class="roles">${['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'].map((r) => `<label class="rolechip"><input type="checkbox" value="${r}" ${s.roles.includes(r) ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`).join('')}
+            ${['EAO', 'TRAINER', 'GUEST'].some((r) => s.roles.includes(r)) ? `<label class="ends small">Account ends<input type="date" data-ends value="${esc(s.endsOn || '')}"></label>${s.endsOn && s.endsOn < todayISO() ? ' <span class="pill rejected">Ended</span>' : ''}` : ''}</span>
           <span class="st-actions"><button type="button" class="btn small" data-pin>${s.hasPin ? 'Reset PIN' : def ? 'Issue own PIN' : 'Issue PIN'}</button>
           <button type="button" class="btn small" data-active="${s.active ? '0' : '1'}">${s.active ? 'Switch off' : 'Switch on'}</button>
           ${lower(s.code) === lower(me()?.code || '') ? '' : `<button type="button" class="btn small ghost danger-text" data-delstaff="${esc(s.code)}" data-name="${esc(s.name)}">Delete</button>`}</span></li>`).join('')}</ul>`)}
         <details class="mdone"><summary>Add a staff member</summary><form id="addStaff" class="grid2">
           <label>Staff code<input id="nsCode" required autocapitalize="characters" placeholder="ICT070"></label><label>Name<input id="nsName" required placeholder="ICT OTIENO .J"></label>
-          <label>Role<select id="nsRole"><option value="TRAINER">Trainer</option><option value="IAO">Internal Assessment Officer</option><option value="EAO">External Assessment Officer (a visitor)</option></select></label>
-          <label id="nsEndsBox">Account ends - optional for a Trainer (time-limited access)<input type="date" id="nsEnds"></label>
+          <label>Role<select id="nsRole"><option value="TRAINER">Trainer</option><option value="IAO">Internal Assessment Officer</option><option value="EAO">External Assessment Officer (a visitor)</option><option value="GUEST">Guest - enters practical marks only</option></select></label>
+          <label id="nsEndsBox">Account ends - needed for an External officer or a Guest, optional for a Trainer<input type="date" id="nsEnds"></label>
           <button class="btn primary">Add and issue PIN</button></form></details>`);
       $('#staffSort').value = staffSort;
       syncBar('staff');
@@ -1206,12 +1206,13 @@ const Admin = (() => {
     if (t.matches('.students [data-rep]')) api('setRep', { admNo: t.dataset.rep, rep: t.checked }).then((r) => toast(r.ok ? (t.checked ? 'Class rep: added to the class reps\' group' : 'No longer a class rep') : r.error, r.ok ? 'ok' : 'err'));
     if (t.matches('.staff .rolechip input')) {
       const li = t.closest('li');
-      // Internal or external, never both: External (a visitor) clears the other roles, any other role clears External.
-      if (t.checked) for (const c of li.querySelectorAll('.rolechip input')) if (c !== t && (t.value === 'EAO' || c.value === 'EAO')) c.checked = false;
+      // External (a visitor) and Guest each stand alone: ticking one clears the other roles, and any other role clears them.
+      const alone = ['EAO', 'GUEST'];
+      if (t.checked) for (const c of li.querySelectorAll('.rolechip input')) if (c !== t && (alone.includes(t.value) || alone.includes(c.value))) c.checked = false;
       staffAction(li, { roles: [...li.querySelectorAll('.rolechip input:checked')].map((x) => x.value) }, 'Roles saved');
     }
     if (t.matches('.staff [data-ends]')) staffAction(t.closest('li'), { endsOn: t.value }, t.value ? `Account ends ${t.value}` : 'End date removed');
-    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = !['EAO', 'TRAINER'].includes(t.value); $('#nsEnds').required = t.value === 'EAO'; }   // a Trainer's end date is optional (time-limited access)
+    if (t.id === 'nsRole') { $('#nsEndsBox').hidden = !['EAO', 'TRAINER', 'GUEST'].includes(t.value); $('#nsEnds').required = ['EAO', 'GUEST'].includes(t.value); }   // a Trainer's end date is optional (time-limited access)
     if (t.id === 'plClass') { plClassChange(t.value); return; }
   });
   document.addEventListener('input', (e) => {
@@ -1270,7 +1271,7 @@ const Admin = (() => {
     if (e.target.id === 'addStaff') {
       e.preventDefault();
       const role = $('#nsRole').value;
-      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: [role], resetPin: true, ...(['EAO', 'TRAINER'].includes(role) ? { endsOn: $('#nsEnds').value } : {}) });
+      staffAction(null, { code: $('#nsCode').value.trim(), name: $('#nsName').value.trim(), roles: [role], resetPin: true, ...(['EAO', 'TRAINER', 'GUEST'].includes(role) ? { endsOn: $('#nsEnds').value } : {}) });
     }
   });
 

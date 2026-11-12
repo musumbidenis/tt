@@ -16,15 +16,16 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.29.0';
+export const VERSION = '7.30.0';
 const SCHEMA_VERSION = '30';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
 const STATUS_CODE = { Present: 'P', Absent: 'A', Late: 'L', Excused: 'E' };
 // IAO: Internal Assessment Officer (reads all evidence and registers; panels). EAO: External Assessment Officer (a visitor
-// account with an end date; sees only the verification work given to them).
-const ROLES = ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'];
+// account with an end date; sees only the verification work given to them). GUEST: someone outside the staff who enters
+// summative practical marks only (always with an end date; every other action is refused, see GUEST_ACTIONS).
+const ROLES = ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'];
 const GONE = "('withdrawn','rejected','inactive')";
 
 // Summative practicals (TVET CDACC moderated practical marks): one sheet set per course of the CDACC nominal roll.
@@ -424,6 +425,7 @@ async function handle(request, env, ctx, info) {
       info.who = me?.code || '';
       if (!h) return reply({ ok: false, error: 'Unknown action' });
       if (h.role && !me.roles.some((r) => h.role.includes(r))) fail(`This needs the ${h.role.join(' or ')} role. Ask the MIS Officer.`);
+      if (guestOnly(me) && !GUEST_ACTIONS.has(b.action)) fail('A guest account is only for entering summative practical marks.');
       if (me.mustChange && b.action !== 'setPin') fail('Choose a new PIN first', { mustChange: true });
       // Daily read budget (only checked where it matters, so most requests pay nothing for it). Over the hard
       // band, the heavy optional reads stand aside so the essentials (served largely from KV) keep working;
@@ -459,6 +461,9 @@ async function handle(request, env, ctx, info) {
   }
 }
 
+/** A guest (GUEST role only) can sign in, keep their PIN and see messages, and work on summative practicals - nothing else. */
+const guestOnly = (me) => me.roles.length > 0 && me.roles.every((r) => r === 'GUEST');
+const GUEST_ACTIONS = new Set(['setPin', 'me', 'roster', 'pulse', 'myNotices', 'noticeAck', 'mySettings', 'spCourses', 'spMarks', 'spSave', 'spUnitSave', 'spSheet']);
 const ACTIONS = {
   setPin: { fn: (env, b, me) => setPin(env, b, me) },
   me: { fn: async (env, b, me) => ({ ok: true, staff: me }) },
@@ -557,16 +562,17 @@ const ACTIONS = {
   marksPush: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => marksPush(env, b, me) },
   msList: { fn: (env, b, me) => msList(env, b, me) },
   candidates: { role: ['IAO', 'HOD', 'MIS'], fn: (env, b, me) => candidates(env, b, me) },
-  // Summative practicals: who may do what inside a unit (its assessor, the verifier, the office) is checked in each function.
+  // Summative practicals: any trainer, guest or external officer enters the internal and external marks of any unit; the
+  // moderated marks are worked out by the server (spRemoderate); the office uploads the roll and finalises units.
   spUpload: { role: ['MIS', 'HOD'], fn: (env, b, me) => spUpload(env, b, me) },
-  spCourses: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spCourses(env, b, me) },
+  spCourses: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spCourses(env, b, me) },
   spCourseSave: { role: ['MIS', 'HOD'], fn: (env, b, me) => spCourseSave(env, b, me) },
   spCourseDelete: { role: ['MIS', 'HOD'], fn: (env, b, me) => spCourseDelete(env, b, me) },
-  spUnitSave: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spUnitSave(env, b, me) },
-  spMarks: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spMarks(env, b, me) },
-  spSave: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spSave(env, b, me) },
+  spUnitSave: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spUnitSave(env, b, me) },
+  spMarks: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spMarks(env, b, me) },
+  spSave: { role: ['TRAINER', 'HOD', 'EAO', 'GUEST'], fn: (env, b, me) => spSave(env, b, me) },
   spLock: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => spLock(env, b, me) },
-  spSheet: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'], fn: (env, b, me) => spSheet(env, b, me) },
+  spSheet: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spSheet(env, b, me) },
   bulkTicket: { role: ['MIS', 'HOD'], fn: (env, b, me) => bulkTicket(env, b, me) },
   msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
   msReceive: { role: ['IAO', 'HOD'], fn: (env, b, me) => msReceive(env, b, me) },
@@ -716,8 +722,8 @@ function staffPublic(r) {
     hasPin: !!r.pin_hash, mustChange: !!r.must_change, latePct: r.late_pct ?? 50, excusedPct: r.excused_pct ?? 100, driveFolder: r.drive_folder || '', email: r.email || '',
     endsOn: r.ends_on || '' };
 }
-// An account with an end date (External Assessment Officer visitor, or a Trainer the MIS Officer gave timed access) stops working after that date.
-const accountEnded = (r) => !!(r && r.ends_on && (hasRole(r.roles, 'EAO') || hasRole(r.roles, 'TRAINER')) && todayIso() > r.ends_on);
+// An account with an end date (External Assessment Officer visitor, a guest, or a Trainer given timed access) stops working after that date.
+const accountEnded = (r) => !!(r && r.ends_on && ['EAO', 'TRAINER', 'GUEST'].some((x) => hasRole(r.roles, x)) && todayIso() > r.ends_on);
 const getStaff = (env, code) => one(env, 'SELECT * FROM staff WHERE code=?', String(code || '').trim());
 
 /** Sets a PIN (creating the account when `create` is given). Bumps pin_version, which signs out old sessions. */
@@ -1320,9 +1326,11 @@ async function updateStaff(env, b, me) {
     if (lower(code) === lower(me.code) && !roles.includes('MIS')) fail('You cannot remove your own MIS role');
     // Internal or external, never both: the External Assessment Officer is a visitor with no other role.
     if (roles.includes('EAO') && roles.length > 1) fail('An External Assessment Officer is a visitor and has no other role. Choose either External, or the internal roles.');
+    if (roles.includes('GUEST') && roles.length > 1) fail('A guest only enters practical marks and has no other role. Choose either Guest, or the staff roles.');
+    if (roles.includes('GUEST') && !(b.endsOn !== undefined ? String(b.endsOn || '').trim() : row.ends_on)) fail('Give the guest account an end date');
     row.roles = roles.join(', ');
-    // A timed account (EAO visitor, or a Trainer the MIS Officer gave time-limited access) keeps its end date.
-    if (!roles.includes('EAO') && !roles.includes('TRAINER') && row.ends_on) { row.ends_on = null; await run(env, 'UPDATE staff SET ends_on=NULL WHERE code=?', row.code); }
+    // A timed account (EAO visitor, guest, or a Trainer the MIS Officer gave time-limited access) keeps its end date.
+    if (!['EAO', 'TRAINER', 'GUEST'].some((x) => roles.includes(x)) && row.ends_on) { row.ends_on = null; await run(env, 'UPDATE staff SET ends_on=NULL WHERE code=?', row.code); }
   }
   if (b.driveFolder !== undefined) {
     // A Drive folder link or ID chosen by the MIS Officer when the name match does not find it.
@@ -1333,6 +1341,7 @@ async function updateStaff(env, b, me) {
   if (b.endsOn !== undefined) {
     const d = String(b.endsOn || '').trim();
     if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) fail('Give the end date as a date');
+    if (!d && hasRole(row.roles, 'GUEST')) fail('A guest account needs an end date');
     row.ends_on = d || null;
     if (row.pin_version !== undefined && !b.roles && b.active === undefined && !b.resetPin && !b.name) {
       await run(env, 'UPDATE staff SET ends_on=?, updated_at=? WHERE code=?', row.ends_on, nowIso(), code);
@@ -2819,7 +2828,7 @@ async function myUnitPairs(env, me) {
 }
 const seesAll = (me) => me.roles.includes('HOD') || me.roles.includes('MIS') || me.roles.includes('IAO');
 /** Only an External Assessment Officer (no other role): sees nothing but the verification work given to them. */
-const visitorOnly = (me) => me.roles.length > 0 && me.roles.every((r) => r === 'EAO');
+const visitorOnly = (me) => me.roles.length > 0 && me.roles.every((r) => r === 'EAO' || r === 'GUEST');
 /** Class-units a trainer taught in any term: they can still look at that evidence, but only this term's trainer decides. */
 async function everTaught(env, me) {
   const rows = await all(env, 'SELECT DISTINCT class_code, unit_code FROM loading WHERE trainer_code=?', me.code);
@@ -4276,19 +4285,53 @@ const spMark = (v) => {
   if (t === '') return { ok: true, v: null };
   return /^\d{1,3}$/.test(t) && Number(t) <= 100 ? { ok: true, v: Number(t) } : { ok: false };
 };
-const SP_COL = { internal: ['internal_mark', 'int_by'], external: ['external_mark', 'ext_by'], moderated: ['moderated_mark', 'mod_by'] };
+// People type in two columns; the third (moderated) is always worked out by spRemoderate.
+const SP_COL = { internal: ['internal_mark', 'int_by'], external: ['external_mark', 'ext_by'] };
+/* CDACC moderation. The external verifier re-assesses a random sample of at least 10% of the candidates who were assessed
+ * (CDACC Assessment Centre Guide, 4.3.3 II). Mean deviation = the average of (external - internal) over the sampled
+ * candidates. Within +/-5 the internal assessor's marks stand; beyond 5 every candidate's mark moves by the mean deviation
+ * (CDACC RPL Assessment & Certification Framework, verification of marks). Moderated marks appear only once the sample is big enough. */
+const SP_SAMPLE_DIV = 10, SP_TOLERANCE = 5;
+function spModeration(rows) {
+  const assessed = rows.filter((r) => r.internal_mark !== null && r.internal_mark !== undefined);
+  const both = assessed.filter((r) => r.external_mark !== null && r.external_mark !== undefined);
+  const need = assessed.length ? Math.max(1, Math.ceil(assessed.length / SP_SAMPLE_DIV)) : 0;
+  const md = both.length ? Math.round((both.reduce((t, r) => t + r.external_mark - r.internal_mark, 0) / both.length) * 100) / 100 : null;
+  const ready = assessed.length > 0 && both.length >= need;
+  const adjust = ready && Math.abs(md) > SP_TOLERANCE ? md : 0;
+  return { assessed: assessed.length, need, sampled: both.length, md, ready, adjust, tolerance: SP_TOLERANCE };
+}
+const spModerated = (internal, adjust) => Math.max(0, Math.min(100, Math.round(internal + adjust)));
+/** Works the moderated marks out again for one unit, or every open unit of a course (finalised units are left as they are). */
+async function spRemoderate(env, cid, unit = null) {
+  const rows = await all(env, `SELECT m.unit_code, m.reg_no, m.internal_mark, m.external_mark, m.moderated_mark FROM sp_marks m
+    JOIN sp_units u ON u.course_id=m.course_id AND u.unit_code=m.unit_code WHERE m.course_id=? AND u.locked_at IS NULL${unit ? ' AND m.unit_code=?' : ''}`,
+  cid, ...(unit ? [unit] : []));
+  const by = new Map();
+  for (const r of rows) { if (!by.has(r.unit_code)) by.set(r.unit_code, []); by.get(r.unit_code).push(r); }
+  const upd = [];
+  for (const [code, list] of by) {
+    const m = spModeration(list);
+    for (const r of list) {
+      const v = m.ready && r.internal_mark !== null ? spModerated(r.internal_mark, m.adjust) : null;
+      if (v !== (r.moderated_mark ?? null)) upd.push(['UPDATE sp_marks SET moderated_mark=?, mod_by=? WHERE course_id=? AND unit_code=? AND reg_no=?', v, v === null ? null : 'system', cid, code, r.reg_no]);
+    }
+  }
+  for (let i = 0; i < upd.length; i += 50) await many(env, ...upd.slice(i, i + 50));
+  await run(env, SP_RECOUNT + ` WHERE course_id=?${unit ? ' AND unit_code=?' : ''}`, cid, ...(unit ? [unit] : []));
+}
 const SP_RECOUNT = 'UPDATE sp_units SET ' + [['n_cand', '*'], ['n_int', 'm.internal_mark'], ['n_ext', 'm.external_mark'], ['n_mod', 'm.moderated_mark']]
   .map(([c, x]) => `${c}=(SELECT COUNT(${x}) FROM sp_marks m WHERE m.course_id=sp_units.course_id AND m.unit_code=sp_units.unit_code)`).join(', ');
 const spOffice = (me) => me.roles.some((r) => ['MIS', 'HOD', 'IAO'].includes(r));
-const spSeesAll = (me) => me.roles.some((r) => ['MIS', 'HOD', 'IAO', 'EAO'].includes(r));
-const spIsAssessor = (u, me) => !!u.assessor_code && lower(u.assessor_code) === lower(me.code);
+const spEnters = (me) => me.roles.some((r) => ['TRAINER', 'HOD', 'EAO', 'GUEST'].includes(r));
 const spCourseOut = (c) => ({ id: c.id, level: c.level || '', course: c.course || '', series: c.series || '', centerCode: c.center_code || '',
   centerName: c.center_name || '', qualCode: c.qual_code || '', assessDate: c.assess_date || '', candidates: c.candidates || 0 });
 const spUnitOut = (u) => ({ code: u.unit_code, name: u.unit_name || u.unit_code, seq: u.seq || 0, assessorCode: u.assessor_code || '', assessorName: u.assessor_name || '',
   assessorReg: u.assessor_reg || '', verifierName: u.verifier_name || '', verifierReg: u.verifier_reg || '', managerName: u.manager_name || '',
   assessDate: u.assess_date || '', candidates: u.n_cand || 0, internal: u.n_int || 0, external: u.n_ext || 0, moderated: u.n_mod || 0,
   lockedAt: u.locked_at || '', lockedBy: u.locked_by || '' });
-const spCandOut = (r) => ({ regNo: r.reg_no, admNo: r.adm_no || '', name: r.name || '', internal: r.internal_mark ?? null, external: r.external_mark ?? null, moderated: r.moderated_mark ?? null });
+const spCandOut = (r) => ({ regNo: r.reg_no, admNo: r.adm_no || '', name: r.name || '', internal: r.internal_mark ?? null, external: r.external_mark ?? null,
+  moderated: r.moderated_mark ?? null, intBy: r.int_by || '', extBy: r.ext_by || '' });
 async function spUnit(env, courseId, unitCode) {
   const u = await one(env, 'SELECT * FROM sp_units WHERE course_id=? AND unit_code=?', String(courseId || ''), String(unitCode || ''));
   if (!u) fail('That unit is not on this course’s roll. Refresh and choose it again.');
@@ -4341,24 +4384,18 @@ async function spUpload(env, b, me) {
     ['DELETE FROM sp_units WHERE course_id=? AND n_cand=0', id],
     ['UPDATE sp_courses SET candidates=(SELECT COUNT(DISTINCT lower(reg_no)) FROM sp_marks WHERE course_id=?1) WHERE id=?1 RETURNING candidates', id]);
   const kept = res[res.length - 4][0]?.n || 0, candidates = res[res.length - 1][0]?.candidates || 0;
+  await spRemoderate(env, id);   // a changed roll changes the sample size each unit needs
   await audit(env, me, 'summative practicals roll', `${level} ${course} (${series}): ${candidates} candidate(s), ${units.size} unit(s)${kept ? `, ${kept} off the roll kept for their marks` : ''}${locked.length ? `, ${locked.length} finalised unit(s) left as they were` : ''}`);
   return { ok: true, id, candidates, units: units.size, entries: use.length, kept, finalised: locked.length };
 }
 
-/** The courses and units this person works on (a trainer: the units they assess), and for the office the assessors to choose from. */
+/** Every course and unit (anyone who may enter marks may enter them for any unit). */
 async function spCourses(env, b, me) {
   await spReady(env);
-  const wide = spSeesAll(me), office = spOffice(me);
-  const [courses, units, staff] = await many(env,
-    ['SELECT * FROM sp_courses ORDER BY course, level, series'],
-    wide ? ['SELECT * FROM sp_units ORDER BY course_id, seq'] : ['SELECT * FROM sp_units WHERE assessor_code=? ORDER BY course_id, seq', me.code],
-    office ? ['SELECT code, name, roles, ends_on FROM staff WHERE active=1 ORDER BY name'] : null);
+  const [courses, units] = await many(env, ['SELECT * FROM sp_courses ORDER BY course, level, series'], ['SELECT * FROM sp_units ORDER BY course_id, seq']);
   const by = new Map();
   for (const u of units) { if (!by.has(u.course_id)) by.set(u.course_id, []); by.get(u.course_id).push(spUnitOut(u)); }
-  return { ok: true,
-    courses: courses.filter((c) => wide || by.has(c.id)).map((c) => ({ ...spCourseOut(c), units: by.get(c.id) || [] })),
-    assessors: office ? (staff || []).filter((s) => hasRole(s.roles, 'TRAINER') || hasRole(s.roles, 'HOD'))
-      .map((s) => ({ code: s.code, name: s.name, endsOn: s.ends_on || '' })) : [] };
+  return { ok: true, courses: courses.map((c) => ({ ...spCourseOut(c), units: by.get(c.id) || [] })) };
 }
 /** The sheet heading of a course: centre, qualification code and title, date of assessment. */
 async function spCourseSave(env, b, me) {
@@ -4380,28 +4417,18 @@ async function spCourseDelete(env, b, me) {
   await audit(env, me, 'summative practicals course removed', `${c.level} ${c.course} (${c.series}), ${c.candidates || 0} candidate(s)`);
   return { ok: true };
 }
-/** A unit's assessor and sign-off details. The office sets anything; the assessor their own ID and the date; the verifier theirs. */
+/** A unit's sign-off details: the assessor's and verifier's Reg. Code / ID, the centre manager, the date. The two names are not
+ *  typed: they are whoever last saved that column of marks. */
 async function spUnitSave(env, b, me) {
   await spReady(env);
   const u = await spUnit(env, b.courseId, b.unitCode);
-  const office = spOffice(me), mine = spIsAssessor(u, me), eao = me.roles.includes('EAO');
+  if (!spOffice(me) && !spEnters(me)) fail('You cannot change these details');
   const sets = [], vals = [];
   const put = (col, v) => { sets.push(col + '=?'); vals.push(v); };
-  const may = (ok, who) => { if (!ok) fail(`Only ${who} can change that`); };
-  if (b.assessorCode !== undefined) {
-    may(office, 'the HOD, MIS Officer or Assessment Officer');
-    const code = spText(b.assessorCode, 40);
-    if (code) {
-      const s = await getStaff(env, code);
-      if (!s || !s.active) fail('No active staff member has that code');
-      put('assessor_code', s.code); put('assessor_name', s.name);
-    } else { put('assessor_code', null); put('assessor_name', null); }
-  }
-  if (b.managerName !== undefined) { may(office, 'the HOD, MIS Officer or Assessment Officer'); put('manager_name', spText(b.managerName, 120)); }
-  if (b.assessorReg !== undefined) { may(office || mine, 'the unit’s assessor or the office'); put('assessor_reg', spText(b.assessorReg, 60)); }
-  if (b.assessDate !== undefined) { may(office || mine, 'the unit’s assessor or the office'); put('assess_date', spText(b.assessDate, 60)); }
-  if (b.verifierName !== undefined) { may(office || eao, 'the external verifier or the office'); put('verifier_name', spText(b.verifierName, 120)); }
-  if (b.verifierReg !== undefined) { may(office || eao, 'the external verifier or the office'); put('verifier_reg', spText(b.verifierReg, 60)); }
+  if (b.assessorReg !== undefined) put('assessor_reg', spText(b.assessorReg, 60));
+  if (b.verifierReg !== undefined) put('verifier_reg', spText(b.verifierReg, 60));
+  if (b.managerName !== undefined) put('manager_name', spText(b.managerName, 120));
+  if (b.assessDate !== undefined) put('assess_date', spText(b.assessDate, 60));
   if (sets.length) {
     put('updated_at', nowIso());
     await run(env, `UPDATE sp_units SET ${sets.join(', ')} WHERE course_id=? AND unit_code=?`, ...vals, u.course_id, u.unit_code);
@@ -4409,37 +4436,34 @@ async function spUnitSave(env, b, me) {
   }
   return { ok: true, unit: spUnitOut(await spUnit(env, u.course_id, u.unit_code)) };
 }
-/** One unit's candidates and marks (a trainer only for a unit they assess). */
+/** One unit's candidates, marks and moderation (sample needed, mean deviation, the decision). */
 async function spMarks(env, b, me) {
   await spReady(env);
   const id = String(b.courseId || ''), unit = String(b.unitCode || '');
   const [cr, ur, rows] = await many(env, ['SELECT * FROM sp_courses WHERE id=?', id], ['SELECT * FROM sp_units WHERE course_id=? AND unit_code=?', id, unit],
-    ['SELECT reg_no, adm_no, name, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=? AND unit_code=? ORDER BY reg_no', id, unit]);
-  const u = ur[0];
-  if (!cr[0] || !u) fail('That unit is not on this course’s roll. Refresh and choose it again.');
-  if (!spSeesAll(me) && !spIsAssessor(u, me)) fail('This unit is not assigned to you. Ask the HOD or MIS Officer.');
-  return { ok: true, course: spCourseOut(cr[0]), unit: spUnitOut(u), candidates: rows.map(spCandOut) };
+    ['SELECT reg_no, adm_no, name, internal_mark, external_mark, moderated_mark, int_by, ext_by FROM sp_marks WHERE course_id=? AND unit_code=? ORDER BY reg_no', id, unit]);
+  if (!cr[0] || !ur[0]) fail('That unit is not on this course’s roll. Refresh and choose it again.');
+  return { ok: true, course: spCourseOut(cr[0]), unit: spUnitOut(ur[0]), moderation: spModeration(rows), candidates: rows.map(spCandOut) };
 }
-/** Saves one column of a unit's marks: internal (its assessor, or the HOD), external (the verifier, or the Assessment
- * Officer / HOD typing in the verifier's sheet), moderated (HOD, MIS Officer, Assessment Officer). A blank clears. */
+/** Saves one column of a unit's marks (internal or external; a blank clears). The person saving becomes that column's name on
+ *  the sheet (internal assessor / external verifier), and the moderated marks are worked out again. */
 async function spSave(env, b, me) {
   await spReady(env);
   const kind = String(b.kind || ''), col = SP_COL[kind];
-  if (!col) fail('Choose which marks to save');
-  const u = await spUnit(env, b.courseId, b.unitCode), r = me.roles;
-  const ok = kind === 'internal' ? spIsAssessor(u, me) || r.includes('HOD')
-    : kind === 'external' ? r.some((x) => ['EAO', 'IAO', 'HOD'].includes(x)) : r.some((x) => ['HOD', 'MIS', 'IAO'].includes(x));
-  if (!ok) fail(kind === 'internal' ? 'Only this unit’s internal assessor (or the HOD) enters these marks'
-    : kind === 'external' ? 'Only the external verifier (or the Assessment Officer or HOD) enters these marks' : 'Only the HOD, MIS Officer or Assessment Officer moderates');
-  if (u.locked_at) fail(`${u.locked_by || 'The office'} finalised this unit. Reopen it to change the marks.`);
+  if (!col) fail('Moderated marks are worked out by the system from the internal and external marks');
+  if (!spEnters(me)) fail('Trainers, guests and external officers enter these marks');
+  const u = await spUnit(env, b.courseId, b.unitCode);
+  if (u.locked_at) fail(`${u.locked_by || 'The office'} finalised this unit. Ask them to reopen it to change the marks.`);
   const list = (b.marks || []).slice(0, 3000).map((m) => ({ reg: spText(m.regNo, 60), p: spMark(m.mark) })).filter((m) => m.reg);
   const bad = list.find((m) => !m.p.ok);
   if (bad) fail(`Marks are whole numbers from 0 to 100 (check ${bad.reg})`);
   const now = nowIso(), sql = `UPDATE sp_marks SET ${col[0]}=?, ${col[1]}=?, updated_at=? WHERE course_id=? AND unit_code=? AND reg_no=?`;
-  for (let i = 0; i < list.length; i += 50) {
-    const part = list.slice(i, i + 50).map((m) => [sql, m.p.v, m.p.v === null ? null : me.code, now, u.course_id, u.unit_code, m.reg]);
-    await many(env, ...part, i + 50 >= list.length ? [SP_RECOUNT + ' WHERE course_id=? AND unit_code=?', u.course_id, u.unit_code] : null);
+  for (let i = 0; i < list.length; i += 50) await many(env, ...list.slice(i, i + 50).map((m) => [sql, m.p.v, m.p.v === null ? null : me.code, now, u.course_id, u.unit_code, m.reg]));
+  if (list.some((m) => m.p.v !== null)) {
+    if (kind === 'internal') await run(env, 'UPDATE sp_units SET assessor_code=?, assessor_name=?, updated_at=? WHERE course_id=? AND unit_code=?', me.code, me.name, now, u.course_id, u.unit_code);
+    else await run(env, 'UPDATE sp_units SET verifier_name=?, updated_at=? WHERE course_id=? AND unit_code=?', me.name, now, u.course_id, u.unit_code);
   }
+  await spRemoderate(env, u.course_id, u.unit_code);
   if (list.length) await audit(env, me, 'summative practical marks', `${u.unit_code} (${u.course_id}): ${list.length} ${kind} mark(s)`);
   return spMarks(env, { courseId: u.course_id, unitCode: u.unit_code }, me);
 }
@@ -4448,20 +4472,20 @@ async function spLock(env, b, me) {
   await spReady(env);
   const u = await spUnit(env, b.courseId, b.unitCode), lock = !!b.lock, now = nowIso();
   await run(env, 'UPDATE sp_units SET locked_at=?, locked_by=?, updated_at=? WHERE course_id=? AND unit_code=?', lock ? now : null, lock ? me.name : null, now, u.course_id, u.unit_code);
+  if (!lock) await spRemoderate(env, u.course_id, u.unit_code);
   await audit(env, me, lock ? 'summative practicals finalised' : 'summative practicals reopened', `${u.unit_code} (${u.course_id})`);
   return spMarks(env, { courseId: u.course_id, unitCode: u.unit_code }, me);
 }
-/** Everything the sheets of a course need: heading, units (numbered, with sign-off details) and every mark. */
+/** Everything the sheets of a course need: heading, units (numbered, sign-off details, moderation) and every mark. */
 async function spSheet(env, b, me) {
   await spReady(env);
   const id = String(b.courseId || '');
   const [cr, units, rows] = await many(env, ['SELECT * FROM sp_courses WHERE id=?', id], ['SELECT * FROM sp_units WHERE course_id=? ORDER BY seq', id],
     ['SELECT unit_code, reg_no, adm_no, name, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=? ORDER BY reg_no', id]);
   if (!cr[0]) fail('That course is not on the roll. Refresh the page.');
-  const see = units.filter((u) => spSeesAll(me) || spIsAssessor(u, me));
-  if (!see.length) fail('No unit of this course is assigned to you');
-  const codes = new Set(see.map((u) => u.unit_code));
-  return { ok: true, course: spCourseOut(cr[0]), units: see.map(spUnitOut), marks: rows.filter((m) => codes.has(m.unit_code)).map((m) => ({ unit: m.unit_code, ...spCandOut(m) })) };
+  return { ok: true, course: spCourseOut(cr[0]),
+    units: units.map((u) => ({ ...spUnitOut(u), moderation: spModeration(rows.filter((m) => m.unit_code === u.unit_code)) })),
+    marks: rows.map((m) => ({ unit: m.unit_code, ...spCandOut(m) })) };
 }
 
 /* ---------- candidates for the summative assessment ----------

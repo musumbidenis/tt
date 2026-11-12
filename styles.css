@@ -1556,12 +1556,15 @@ tr.ps-no td { color: var(--muted); }
 .sp-sec h3 { margin: 1.25rem 0 .25rem; font: 600 1rem var(--display); }
 .sp-check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .25rem .875rem; margin: .5rem 0 .75rem; }
 .sp-check-list label.check { margin: 0; font-size: .875rem; }
-.sp-reg-m { display: none; }
+.sp .adm.sp-reg-m { display: none; }
+.sp-table tr.sp-sample td { background: var(--l-soft); background: color-mix(in srgb, var(--l-soft) 55%, var(--surface)); }
+.sp-table .sp-modc { color: var(--ink); }
+.sp-table.sp-preview .sp-modc { color: var(--muted); font-style: italic; }
 .sp-table td.sp-who { white-space: normal; min-width: 9rem; }
 @media (max-width: 560px) {
   .sp .grid2 { grid-template-columns: 1fr; }
   .sp-table .sp-reg { display: none; }
-  .sp-table .sp-reg-m { display: block; }
+  .sp .sp-table .adm.sp-reg-m { display: block; }
   .sp-table .adm { overflow-wrap: anywhere; }
   .sp-table .sp-devc { display: none; }
   .sp-table td.sp-who { min-width: 6rem; }
