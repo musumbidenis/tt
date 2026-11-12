@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const APP_VERSION = '4.61.0';
+const APP_VERSION = '4.61.1';
 const db = new PouchDB('rvnp_attendance', { auto_compaction: true });
 
 const STATUSES = { P: 'Present', A: 'Absent', L: 'Late', E: 'Excused' };
@@ -2270,6 +2270,7 @@ async function savePin(e) {
   } catch (err) { $('#pinMsg').textContent = err.message; }
 }
 function homeTab() {
+  if (hasRole('GUEST') && !['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO'].some(hasRole)) return 'sumprac';   // a guest only enters practical marks
   if (markableUnits().length) return 'mark';
   if ((hasRole('EAO') || hasRole('IAO')) && !hasRole('MIS') && !hasRole('HOD')) return 'poe';
   if (hasRole('MIS')) return 'manage';

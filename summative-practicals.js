@@ -397,9 +397,19 @@ const SummativePracticals = (() => {
       <div class="row-actions"><button type="button" class="btn primary" data-sp="per-pdf">Per unit - PDF</button><button type="button" class="btn" data-sp="per-xlsx"${sp.sheetUnit ? '' : ' disabled title="Choose one unit for Excel"'}>Per unit - Excel</button></div></section>`;
   }
   const CDACC = 'TVET CURRICULUM DEVELOPMENT, ASSESSMENT AND CERTIFICATION COUNCIL (TVET CDACC)';
-  const ALL_ROWS = 20, UNIT_ROWS = 17;   // candidates per printed sheet (landscape A4), so each sheet keeps its heading and sign-offs
+  // Candidates per printed sheet (landscape A4). The KEY and the sign-offs go on the last sheet only, so it holds fewer.
+  const ALL_FULL = 24, ALL_LAST = 19, UNIT_FULL = 24, UNIT_LAST = 19;
   const title = (c) => [c.course, c.level].filter(Boolean).join(' - ');
-  const chunks = (list, n) => { const out = []; for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n)); return out.length ? out : [[]]; };
+  /** Splits a list into sheets: as few as fit (full sheets hold `full`, the last one `last`), evened out so no sheet is nearly empty. */
+  function pagesOf(list, full, last) {
+    const n = list.length;
+    if (n <= last) return [list];
+    const P = 1 + Math.ceil((n - last) / full), lastSize = Math.min(last, Math.round(n / P)), rest = n - lastSize, out = [];
+    let i = 0;
+    for (let k = 0; k < P - 1; k++) { const take = Math.ceil((rest - i) / (P - 1 - k)); out.push(list.slice(i, i + take)); i += take; }
+    out.push(list.slice(i));
+    return out;
+  }
   const ln = (v, cls = '') => `<span class="ln${cls ? ' ' + cls : ''}">${esc(v || '')}</span>`;
   function headHtml(c, heading, sheet, of, date, extra = '') {
     return `<div class="sp-top"><img src="icons/cdacc-logo.png" alt=""><div class="sp-org">${CDACC}</div></div>
@@ -419,7 +429,7 @@ const SummativePracticals = (() => {
       people.get(k).marks[m.unit] = m.moderated;
     }
     const list = [...people.values()].sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
-    const pages = chunks(list, Math.max(8, ALL_ROWS - Math.ceil(units.length / 3)));
+    const pages = pagesOf(list, ALL_FULL, Math.max(6, ALL_LAST - Math.ceil(units.length / 3)));
     const key = `<div class="sp-key"><b>KEY:</b>${units.map((u, j) => `<span>${j + 1} - ${esc(u.name)}</span>`).join('')}</div>`;
     const sign = `<div class="sp-sign"><p>1. Name of External Verifier:${ln(common(units, 'verifierName'))}External Verifier Reg. Code/National ID. No:${ln(common(units, 'verifierReg'), 's')}</p>
       <p>Signature:${ln('', 's')}Date:${ln('', 's')}</p>
@@ -427,14 +437,14 @@ const SummativePracticals = (() => {
       <p>Institutional stamp:${ln('', 's')}</p></div>`;
     let n = 0;
     return pages.map((rows, p) => `${headHtml(c, 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS FOR ALL UNITS OF COMPETENCY', p + 1, pages.length, c.assessDate || common(units, 'assessDate'))}
-      <table class="sp-grid"><thead><tr><th rowspan="3" class="sn">S/N</th><th rowspan="3" class="rg">Candidate’s Registration Code/National Id No.</th><th rowspan="3">Candidate’s Name</th>
+      <table class="sp-grid${units.length > 14 ? ' many' : ''}"><thead><tr><th rowspan="3" class="sn">S/N</th><th rowspan="3" class="rg">Candidate’s Registration Code/National Id No.</th><th rowspan="3">Candidate’s Name</th>
         <th colspan="${units.length}">Candidate’s Score Per Unit of Competency out of 100% (units numbered as under KEY)</th></tr>
         <tr><th colspan="${units.length}">MODERATED MARKS</th></tr><tr>${units.map((u, j) => `<th class="mk">${j + 1}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td>${esc(s.regNo)}</td><td>${esc(s.name)}</td>${units.map((u) => `<td class="mk">${s.marks[u.code] ?? (u.code in s.marks ? '' : '-')}</td>`).join('')}</tr>`).join('')}</tbody></table>
-      ${key}${sign}`);
+      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${units.map((u) => `<td class="mk">${s.marks[u.code] ?? (u.code in s.marks ? '' : '-')}</td>`).join('')}</tr>`).join('')}</tbody></table>
+      ${p === pages.length - 1 ? key + sign : ''}`);
   }
   function perUnitPages(c, u, cands) {
-    const md = u.moderation || {}, pages = chunks(cands, UNIT_ROWS);
+    const md = u.moderation || {}, pages = pagesOf(cands, UNIT_FULL, UNIT_LAST);
     const extra = `<tr><th>Unit of Competency Code:</th><td>${esc(u.code)}</td><th>Unit of Competency Title:</th><td>${esc(u.name)}</td></tr>`;
     const sign = `<div class="sp-sign"><p>1. Name of Internal Assessor${ln(u.assessorName)}Internal Assessor Reg. Code/National ID. No.${ln(u.assessorReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
       <p>2. Name of External Verifier${ln(u.verifierName)}External Verifier Reg. Code/National ID. No.${ln(u.verifierReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
@@ -443,8 +453,8 @@ const SummativePracticals = (() => {
     return pages.map((rows, p) => `${headHtml(c, 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY', p + 1, pages.length, u.assessDate || c.assessDate, extra)}
       <table class="sp-grid"><thead><tr><th class="sn">S/N</th><th class="rg">Candidate’s Registration Code</th><th>Candidate’s Name</th><th class="w">Internal assessor’s marks (All Candidates) (100%)</th>
         <th class="w">External verifier’s (Sampled Candidates) (100%)</th><th class="w">Moderated Marks (100%)</th></tr></thead>
-      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td>${esc(s.regNo)}</td><td>${esc(s.name)}</td><td class="mk">${s.internal ?? ''}</td><td class="mk">${s.external ?? ''}</td><td class="mk">${s.moderated ?? ''}</td></tr>`).join('')}</tbody></table>
-      ${p === pages.length - 1 ? `<p class="sp-mdp">Mean Deviation: ${md.md !== null && md.md !== undefined ? fmtDev(md.md) : ''}</p>` : ''}${sign}`);
+      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td><td class="mk">${s.internal ?? ''}</td><td class="mk">${s.external ?? ''}</td><td class="mk">${s.moderated ?? ''}</td></tr>`).join('')}</tbody></table>
+      ${p === pages.length - 1 ? `<p class="sp-mdp">Mean Deviation: ${md.md !== null && md.md !== undefined ? fmtDev(md.md) : ''}</p>${sign}` : ''}`);
   }
   /** Puts "Page x of y" on every page of the document and wraps it for HtmlPdf. */
   const doc = (pages) => `<div class="sp-print">${pages.map((p, i) => `<div class="sp-page">${p}<div class="sp-foot">Page ${i + 1} of ${pages.length}</div></div>`).join('')}</div>`;

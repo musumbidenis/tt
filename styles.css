@@ -1591,6 +1591,9 @@ tr.ps-no td { color: var(--muted); }
   .sp-grid th.w { width: 34mm; }
   .sp-grid th.mk { min-width: 7mm; }
   .sp-grid td.c, .sp-grid td.mk { text-align: center; font-variant-numeric: tabular-nums; }
+  .sp-grid td.nw { white-space: nowrap; }   /* one line per candidate, so every sheet holds a known number */
+  .sp-grid.many th, .sp-grid.many td { font-size: 7.5pt; padding: .35mm .5mm; }   /* many unit columns: smaller, to fit the width */
+  .sp-grid.many th.rg { width: auto; }
   .sp-key { columns: 3; column-gap: 6mm; font-size: 8.5pt; margin: 1.2mm 0 0; }
   .sp-key b { display: block; column-span: all; }
   .sp-key span { display: block; break-inside: avoid; }
