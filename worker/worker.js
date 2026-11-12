@@ -16,8 +16,8 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.31.0';
-const SCHEMA_VERSION = '30';
+export const VERSION = '7.32.0';
+const SCHEMA_VERSION = '31';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
 const TERM_WEEKS = 12;       // every term has 12 teaching weeks (the register template has 12 week blocks)
@@ -145,8 +145,10 @@ const MIGRATIONS = ['ALTER TABLE terms ADD COLUMN cat_weeks TEXT', 'ALTER TABLE 
 const MARK_CELLS = ['cat1', 'cat2', 'cat3', 'prac1', 'prac2', 'prac3'];
 const SAME_ROW = 'x.class_code=m.class_code AND x.unit_code=m.unit_code AND x.adm_no=m.adm_no';
 const DATA_MIGRATIONS = [
-  // Force relogin for all trainers: clear Google refresh tokens so they reconnect with new scopes (Option 2)
-  `UPDATE staff SET g_refresh=NULL, personal_drive_folder=NULL WHERE g_refresh IS NOT NULL`,
+  // Force relogin for all trainers: clear Google refresh tokens so they reconnect with new scopes (Option 2). Once only:
+  // the marker written next keeps a later schema version from signing everyone out of Google again (ran at schema 31).
+  `UPDATE staff SET g_refresh=NULL, personal_drive_folder=NULL WHERE g_refresh IS NOT NULL AND NOT EXISTS (SELECT 1 FROM meta WHERE key='google_relogin_v1')`,
+  `INSERT OR IGNORE INTO meta (key, value) VALUES ('google_relogin_v1', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
   // Marks used to be kept per term; a unit now has one marksheet for its whole life. Each cell keeps the
   // newest value it had in any term, and remembers the term it was entered in (for the end-of-term lock).
   `INSERT OR IGNORE INTO unit_marks (class_code, unit_code, adm_no, ${MARK_CELLS.join(', ')}, meta, updated_at, updated_by, synced_at)
@@ -563,7 +565,7 @@ const ACTIONS = {
   msList: { fn: (env, b, me) => msList(env, b, me) },
   candidates: { role: ['IAO', 'HOD', 'MIS'], fn: (env, b, me) => candidates(env, b, me) },
   // Summative practicals: any trainer, guest or external officer enters the internal and external marks of any unit; the
-  // moderated marks are worked out by the server (spRemoderate); the office uploads the roll and finalises units.
+  // moderated marks are worked out by the server (spRemoderate); the office uploads the roll.
   spUpload: { role: ['MIS', 'HOD'], fn: (env, b, me) => spUpload(env, b, me) },
   spCourses: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spCourses(env, b, me) },
   spCourseSave: { role: ['MIS', 'HOD'], fn: (env, b, me) => spCourseSave(env, b, me) },
@@ -571,7 +573,6 @@ const ACTIONS = {
   spUnitSave: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spUnitSave(env, b, me) },
   spMarks: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spMarks(env, b, me) },
   spSave: { role: ['TRAINER', 'HOD', 'EAO', 'GUEST'], fn: (env, b, me) => spSave(env, b, me) },
-  spLock: { role: ['HOD', 'MIS', 'IAO'], fn: (env, b, me) => spLock(env, b, me) },
   spSheet: { role: ['TRAINER', 'HOD', 'MIS', 'IAO', 'EAO', 'GUEST'], fn: (env, b, me) => spSheet(env, b, me) },
   bulkTicket: { role: ['MIS', 'HOD'], fn: (env, b, me) => bulkTicket(env, b, me) },
   msSubmit: { role: ['TRAINER', 'HOD'], fn: (env, b, me) => msSubmit(env, b, me) },
@@ -4264,7 +4265,7 @@ async function msDecide(env, b, me) {
  * Unit Code, Unit Name, Course, Course Level, Series, Assessment Center). It is its own upload: the class lists, the
  * students and the loading are never touched. Each course on the roll is one set of sheets, and each of its units gets
  * an internal assessor (any trainer, a time-limited one too). The assessor enters every candidate's mark, the external
- * verifier the sampled ones, the HOD / MIS Officer / Assessment Officer the moderated marks, then finalises the unit.
+ * verifier the sampled ones; the server works out the moderated marks.
  * The two CDACC sheets (all units of a course; one unit of competency) are made on the device from spSheet / spMarks.
  * Uploading the roll again updates names and adds or drops candidates, but never a candidate who already has a mark. */
 let spReadyFlag = false;
@@ -4302,10 +4303,9 @@ function spModeration(rows) {
   return { assessed: assessed.length, need, sampled: both.length, md, ready, adjust, tolerance: SP_TOLERANCE };
 }
 const spModerated = (internal, adjust) => Math.max(0, Math.min(100, Math.round(internal + adjust)));
-/** Works the moderated marks out again for one unit, or every open unit of a course (finalised units are left as they are). */
+/** Works the moderated marks out again for one unit, or every unit of a course. */
 async function spRemoderate(env, cid, unit = null) {
-  const rows = await all(env, `SELECT m.unit_code, m.reg_no, m.internal_mark, m.external_mark, m.moderated_mark FROM sp_marks m
-    JOIN sp_units u ON u.course_id=m.course_id AND u.unit_code=m.unit_code WHERE m.course_id=? AND u.locked_at IS NULL${unit ? ' AND m.unit_code=?' : ''}`,
+  const rows = await all(env, `SELECT unit_code, reg_no, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=?${unit ? ' AND unit_code=?' : ''}`,
   cid, ...(unit ? [unit] : []));
   const by = new Map();
   for (const r of rows) { if (!by.has(r.unit_code)) by.set(r.unit_code, []); by.get(r.unit_code).push(r); }
@@ -4328,8 +4328,7 @@ const spCourseOut = (c) => ({ id: c.id, level: c.level || '', course: c.course |
   centerName: c.center_name || '', qualCode: c.qual_code || '', assessDate: c.assess_date || '', candidates: c.candidates || 0 });
 const spUnitOut = (u) => ({ code: u.unit_code, name: u.unit_name || u.unit_code, seq: u.seq || 0, assessorCode: u.assessor_code || '', assessorName: u.assessor_name || '',
   assessorReg: u.assessor_reg || '', verifierName: u.verifier_name || '', verifierReg: u.verifier_reg || '', managerName: u.manager_name || '',
-  assessDate: u.assess_date || '', candidates: u.n_cand || 0, internal: u.n_int || 0, external: u.n_ext || 0, moderated: u.n_mod || 0,
-  lockedAt: u.locked_at || '', lockedBy: u.locked_by || '' });
+  assessDate: u.assess_date || '', candidates: u.n_cand || 0, internal: u.n_int || 0, external: u.n_ext || 0, moderated: u.n_mod || 0 });
 const spCandOut = (r) => ({ regNo: r.reg_no, admNo: r.adm_no || '', name: r.name || '', internal: r.internal_mark ?? null, external: r.external_mark ?? null,
   moderated: r.moderated_mark ?? null, intBy: r.int_by || '', extBy: r.ext_by || '' });
 async function spUnit(env, courseId, unitCode) {
@@ -4354,17 +4353,15 @@ async function spUpload(env, b, me) {
   }
   if (!rows.length) fail(`No candidates for ${course}: each row needs a Reg No, a Name and a Unit Code`);
   const now = nowIso(), center = spCenter(b.center);
-  const had = await all(env, 'SELECT unit_code, seq, locked_at FROM sp_units WHERE course_id=?', id);
+  const had = await all(env, 'SELECT unit_code, seq FROM sp_units WHERE course_id=?', id);
   const seqOf = new Map(had.map((u) => [u.unit_code, Number(u.seq) || 0]));
-  // A finalised unit keeps its candidates as they were: the roll changes only the open ones.
-  const locked = had.filter((u) => u.locked_at).map((u) => u.unit_code), lockedSet = new Set(locked);
-  const use = rows.filter((r) => !lockedSet.has(r.unit));
+  const use = rows;
   let next = Math.max(0, ...seqOf.values());
   const units = new Map();
   for (const r of use) if (!units.has(r.unit) || !units.get(r.unit)) units.set(r.unit, r.unitName);
   // New units are numbered after the ones already there (the number is the column on the all-units sheet and its KEY).
   for (const c of [...units.keys()].filter((c) => !seqOf.has(c)).sort((a, z) => a.localeCompare(z, undefined, { numeric: true }))) seqOf.set(c, ++next);
-  const keys = JSON.stringify(use.map((r) => r.k)), frozen = JSON.stringify(locked);
+  const keys = JSON.stringify(use.map((r) => r.k));
   const res = await many(env,
     [`INSERT INTO sp_courses (id,level,course,series,center_code,center_name,qual_code,assess_date,candidates,updated_by,updated_at) VALUES (?,?,?,?,?,?,'','',0,?,?)
       ON CONFLICT(id) DO UPDATE SET level=excluded.level, course=excluded.course, series=excluded.series,
@@ -4377,16 +4374,15 @@ async function spUpload(env, b, me) {
       use.map((r) => ({ course_id: id, unit_code: r.unit, reg_no: r.reg, adm_no: r.adm, name: r.name, updated_at: now })), ['course_id', 'unit_code', 'reg_no'], ['adm_no', 'name']),
     // Off the new roll: dropped, unless a mark was already entered for them (kept, and counted for the message).
     [`DELETE FROM sp_marks WHERE course_id=? AND internal_mark IS NULL AND external_mark IS NULL AND moderated_mark IS NULL
-      AND unit_code NOT IN (SELECT value FROM json_each(?)) AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, frozen, keys],
-    [`SELECT COUNT(*) AS n FROM sp_marks WHERE course_id=? AND unit_code NOT IN (SELECT value FROM json_each(?))
-      AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, frozen, keys],
+      AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, keys],
+    [`SELECT COUNT(*) AS n FROM sp_marks WHERE course_id=? AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, keys],
     [SP_RECOUNT + ' WHERE course_id=?', id],
     ['DELETE FROM sp_units WHERE course_id=? AND n_cand=0', id],
     ['UPDATE sp_courses SET candidates=(SELECT COUNT(DISTINCT lower(reg_no)) FROM sp_marks WHERE course_id=?1) WHERE id=?1 RETURNING candidates', id]);
   const kept = res[res.length - 4][0]?.n || 0, candidates = res[res.length - 1][0]?.candidates || 0;
   await spRemoderate(env, id);   // a changed roll changes the sample size each unit needs
-  await audit(env, me, 'summative practicals roll', `${level} ${course} (${series}): ${candidates} candidate(s), ${units.size} unit(s)${kept ? `, ${kept} off the roll kept for their marks` : ''}${locked.length ? `, ${locked.length} finalised unit(s) left as they were` : ''}`);
-  return { ok: true, id, candidates, units: units.size, entries: use.length, kept, finalised: locked.length };
+  await audit(env, me, 'summative practicals roll', `${level} ${course} (${series}): ${candidates} candidate(s), ${units.size} unit(s)${kept ? `, ${kept} off the roll kept for their marks` : ''}`);
+  return { ok: true, id, candidates, units: units.size, entries: use.length, kept };
 }
 
 /** Every course and unit (anyone who may enter marks may enter them for any unit). */
@@ -4451,7 +4447,6 @@ async function spSave(env, b, me) {
   if (!col) fail('Moderated marks are worked out by the system from the internal and external marks');
   if (!spEnters(me)) fail('Trainers, guests and external officers enter these marks');
   const u = await spUnit(env, b.courseId, b.unitCode);
-  if (u.locked_at) fail(`${u.locked_by || 'The office'} finalised this unit. Ask them to reopen it to change the marks.`);
   const list = (b.marks || []).slice(0, 3000).map((m) => ({ reg: spText(m.regNo, 60), p: spMark(m.mark) })).filter((m) => m.reg);
   const bad = list.find((m) => !m.p.ok);
   if (bad) fail(`Marks are whole numbers from 0 to 100 (check ${bad.reg})`);
@@ -4465,15 +4460,6 @@ async function spSave(env, b, me) {
   }
   await spRemoderate(env, u.course_id, u.unit_code);
   if (list.length) await audit(env, me, 'summative practical marks', `${u.unit_code} (${u.course_id}): ${list.length} ${kind} mark(s)`);
-  return spMarks(env, { courseId: u.course_id, unitCode: u.unit_code }, me);
-}
-/** Finalise (no more changes) or reopen a unit's marks. */
-async function spLock(env, b, me) {
-  await spReady(env);
-  const u = await spUnit(env, b.courseId, b.unitCode), lock = !!b.lock, now = nowIso();
-  await run(env, 'UPDATE sp_units SET locked_at=?, locked_by=?, updated_at=? WHERE course_id=? AND unit_code=?', lock ? now : null, lock ? me.name : null, now, u.course_id, u.unit_code);
-  if (!lock) await spRemoderate(env, u.course_id, u.unit_code);
-  await audit(env, me, lock ? 'summative practicals finalised' : 'summative practicals reopened', `${u.unit_code} (${u.course_id})`);
   return spMarks(env, { courseId: u.course_id, unitCode: u.unit_code }, me);
 }
 /** Everything the sheets of a course need: heading, units (numbered, sign-off details, moderation) and every mark. */

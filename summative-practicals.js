@@ -2,11 +2,13 @@
  * Candidates (MIS Officer, HOD): upload the CDACC nominal roll - its own upload, separate from the class lists, which it
  *   never changes - tick the courses to keep and fill each course's sheet heading.
  * Marks: anyone signed in as a trainer, a guest (an account with an end date, for people outside the staff) or an external
- *   officer enters the internal assessor's and the external verifier's marks of any unit; whoever saves the internal marks
- *   is the Internal Assessor named on the sheet, and the External Verifier lines are always left blank (signed by hand).
- *   The moderated marks are worked out by the server, CDACC style, and cannot be typed: the verifier's
- *   sample must be at least 10% of the candidates assessed; mean deviation = average of (external - internal) over the
- *   sample; within +/-5 the internal marks stand, beyond it every mark moves by the mean deviation. The office finalises.
+ *   officer types in the internal assessor's and the external verifier's marks of any unit; they save by themselves as they
+ *   are typed. Whoever saves the internal marks is the Internal Assessor named on the sheet; the External Verifier lines are
+ *   always left blank (signed by hand).
+ *   The moderated marks are worked out by the server, CDACC style, and cannot be typed: the verifier's sample must be at
+ *   least 10% of the candidates assessed; mean deviation = sum of (external - internal) over the sample / the number
+ *   sampled; within +/-5 the internal marks stand, beyond it every mark moves by the mean deviation. The screen and the
+ *   per-unit sheet show the formula and the workings.
  * Sheets: the two CDACC forms (CBA/SAMSP/2) - all units of a course, and per unit of competency - as PDF and Excel,
  *   made on this device.
  * Uses app.js (state, api, $, $$, esc, toast, hasRole, me, download, fileSafe, todayISO) and Xlsx, HtmlPdf. */
@@ -14,7 +16,7 @@
 
 const SummativePracticals = (() => {
   const sp = {
-    view: 'marks', data: null, courseId: '', unitCode: '', marks: null, edits: new Map(), suggest: new Set(),
+    view: 'marks', data: null, courseId: '', unitCode: '', marks: null, edits: new Map(),
     roll: null, pick: new Set(), find: '', open: new Set(), sheetUnits: null, sheetUnit: '', busy: false,
   };
   const allowed = () => ['MIS', 'HOD', 'IAO', 'TRAINER', 'EAO', 'GUEST'].some(hasRole);
@@ -32,10 +34,21 @@ const SummativePracticals = (() => {
   const unitLabel = (u) => `${u.seq}. ${u.name} - ${u.code} (${u.moderated}/${u.candidates})`;
   const markOk = (v) => { const t = String(v ?? '').trim(); return t === '' || (/^\d{1,3}$/.test(t) && Number(t) <= 100); };
   const markNum = (v) => { const t = String(v ?? '').trim(); return t === '' ? null : Number(t); };
-  const dirty = () => [...sp.edits].some(([k, v]) => { const [kind, reg] = splitKey(k); const c = sp.marks?.candidates.find((x) => x.regNo === reg); return c && markNum(v) !== c[kind]; });
   const splitKey = (k) => { const i = k.indexOf('|'); return [k.slice(0, i), k.slice(i + 1)]; };
-  const val = (kind, c) => { const k = kind + '|' + c.regNo; return sp.edits.has(k) ? markNum(sp.edits.get(k)) : c[kind]; };
-  const discardOk = () => !dirty() || confirm('You have marks that are not saved. Leave them?');
+  const val = (kind, c) => { const k = kind + '|' + c.regNo; return sp.edits.has(k) && markOk(sp.edits.get(k)) ? markNum(sp.edits.get(k)) : c[kind]; };
+  const candOf = (reg) => sp.marks?.candidates.find((x) => x.regNo === reg) || null;
+  /** Typed marks that differ from the saved ones and are valid, by column; and how many typed ones are not valid. */
+  function changes() {
+    const out = {};
+    let bad = 0;
+    for (const [k, v] of sp.edits) {
+      const [kind, reg] = splitKey(k), c = candOf(reg);
+      if (!c || !KINDS.includes(kind)) continue;
+      if (!markOk(v)) { bad++; continue; }
+      if (markNum(v) !== c[kind]) (out[kind] = out[kind] || []).push({ regNo: reg, mark: v });
+    }
+    return { out, bad, n: Object.values(out).reduce((t, l) => t + l.length, 0) };
+  }
 
   /* ---------- loading and drawing ---------- */
   async function loadCourses() {
@@ -46,16 +59,16 @@ const SummativePracticals = (() => {
     if (!sp.unitCode && c?.units.length && sp.view === 'marks') sp.unitCode = c.units[0].code;
   }
   async function loadMarks() {
-    sp.marks = null; sp.edits.clear(); sp.suggest.clear();
+    sp.marks = null; sp.edits.clear();
     if (!sp.courseId || !sp.unitCode) return;
     setMarks(need(await api('spMarks', { courseId: sp.courseId, unitCode: sp.unitCode })));
   }
   /** A fresh copy of a unit from the server: keep it, and its counts in the course list. */
   function setMarks(res) {
     sp.marks = res; sp.edits.clear();
-    const c = course(), i = c ? c.units.findIndex((u) => u.code === res.unit.code) : -1;
-    if (i >= 0) c.units[i] = res.unit;
+    keepUnit(res.unit);
   }
+  function keepUnit(u) { const c = course(), i = c ? c.units.findIndex((x) => x.code === u.code) : -1; if (i >= 0) c.units[i] = u; }
   async function render() {
     const el = box();
     if (!el) return;
@@ -64,7 +77,7 @@ const SummativePracticals = (() => {
     if (!sp.data) el.innerHTML = '<div class="card"><p class="muted">Loading summative practicals…</p></div>';
     try {
       await loadCourses();
-      if (sp.view === 'marks' && sp.unitCode && !dirty()) await loadMarks();
+      if (sp.view === 'marks' && sp.unitCode && !changes().n && !saving) await loadMarks();
     } catch (e) {
       el.innerHTML = `<div class="card"><p class="err-text">${esc(e.message)}</p><button type="button" class="btn" data-sp="reload">Try again</button></div>`;
       return;
@@ -91,33 +104,44 @@ const SummativePracticals = (() => {
       ${withUnit ? `<label>Unit<select id="spUnit"><option value="">Choose a unit</option>${(c?.units || []).map((u) => `<option value="${esc(u.code)}"${u.code === sp.unitCode ? ' selected' : ''}>${esc(unitLabel(u))}</option>`).join('')}</select></label>` : ''}</div>`;
   }
 
-  /* ---------- marks and CDACC moderation ---------- */
-  // The same rules as the server (spModeration in worker.js), so the screen shows what saving will give.
+  /* ---------- CDACC moderation: the same rules as the server (spModeration in worker.js) ---------- */
   const SAMPLE_DIV = 10, TOLERANCE = 5;
-  function moderation(list) {
-    const assessed = list.filter((c) => val('internal', c) !== null), both = assessed.filter((c) => val('external', c) !== null);
+  const signed = (v) => { const r = Math.round(v * 100) / 100; return (r > 0 ? '+' : r < 0 ? '−' : '') + Math.abs(r); };
+  const md2 = (v) => { const r = Math.round(v * 100) / 100; return (r > 0 ? '+' : r < 0 ? '−' : '') + Math.abs(r).toFixed(2); };
+  /** From the sampled candidates' marks ([internal, external] pairs): the terms, their sum and the mean deviation. */
+  function deviation(pairs) {
+    const terms = pairs.map(([i, x]) => x - i), sum = terms.reduce((t, d) => t + d, 0);
+    return { pairs, terms, sum, n: terms.length, md: terms.length ? Math.round((sum / terms.length) * 100) / 100 : null };
+  }
+  function moderation(list, get) {
+    const assessed = list.filter((c) => get('internal', c) !== null), both = assessed.filter((c) => get('external', c) !== null);
     const needN = assessed.length ? Math.max(1, Math.ceil(assessed.length / SAMPLE_DIV)) : 0;
-    const md = both.length ? Math.round((both.reduce((t, c) => t + val('external', c) - val('internal', c), 0) / both.length) * 100) / 100 : null;
+    const d = deviation(both.map((c) => [get('internal', c), get('external', c)]));
     const ready = assessed.length > 0 && both.length >= needN;
-    return { assessed: assessed.length, need: needN, sampled: both.length, md, ready, adjust: ready && Math.abs(md) > TOLERANCE ? md : 0 };
+    return { ...d, assessed: assessed.length, need: needN, sampled: both.length, ready, adjust: ready && Math.abs(d.md) > TOLERANCE ? d.md : 0 };
   }
   const modOf = (c, m) => (m.ready && val('internal', c) !== null ? Math.max(0, Math.min(100, Math.round(val('internal', c) + m.adjust))) : null);
-  const fmtDev = (v) => { const r = Math.round(v * 100) / 100; return (r > 0 ? '+' : '') + r; };
-  function modText(m) {
-    const pct = `at least 10% of the ${m.assessed} candidate${m.assessed === 1 ? '' : 's'} assessed`;
-    if (!m.assessed) return 'Moderated marks: enter the internal assessor’s marks first.';
-    const md = m.md === null ? '' : ` Mean deviation so far: <b>${fmtDev(m.md)}</b>.`;
-    if (!m.ready) return `Sample: <b>${m.sampled} of ${m.need}</b> needed (${pct}). The moderated marks appear once the external verifier’s marks are in for at least ${m.need}.${md}`;
-    return `Mean deviation: <b>${fmtDev(m.md)}</b> over ${m.sampled} sampled (${pct}: ${m.need}). `
-      + (m.adjust ? `More than ±${TOLERANCE}, so every candidate’s mark moves by ${fmtDev(m.adjust)}.` : `Within ±${TOLERANCE}, so the internal assessor’s marks stand as the moderated marks.`);
+  /** "(64 − 60) + (80 − 70) = (+4) + (+10) = +14; +14 ÷ 2 = +7.00" */
+  const workText = (m) => `${m.pairs.map(([i, x]) => `(${x} − ${i})`).join(' + ')} = ${m.terms.map((t) => `(${signed(t)})`).join(' + ')} = ${signed(m.sum)}; ${signed(m.sum)} ÷ ${m.n} = ${md2(m.md)}`;
+  const decisionText = (m) => (!m.ready ? `The moderated marks appear once the external verifier’s marks are in for at least ${m.need} candidate${m.need === 1 ? '' : 's'}.`
+    : m.adjust ? `${md2(m.md)} is more than ±${TOLERANCE}, so each moderated mark = internal mark ${m.adjust > 0 ? '+' : '−'} ${Math.abs(m.adjust).toFixed(2)}, rounded to a whole number (0 to 100).`
+      : `${md2(m.md)} is within ±${TOLERANCE}, so the moderated marks are the internal assessor’s marks.`);
+  function modHtml(m) {
+    if (!m.assessed) return '<p><b>Mean deviation</b> = Σ (External − Internal) ÷ number of sampled candidates</p><p class="muted">Enter the internal assessor’s marks first.</p>';
+    return `<p><b>Mean deviation</b> = Σ (External − Internal) ÷ number of sampled candidates</p>
+      <p>Sample: <b>${m.sampled}</b> of the ${m.assessed} candidate${m.assessed === 1 ? '' : 's'} assessed - CDACC needs at least 10%, here ${m.need}.</p>
+      ${m.n ? `<p>Workings: ${workText(m)}</p>` : '<p class="muted">Workings: no external marks yet.</p>'}
+      <p>Decision: ${decisionText(m)}</p>`;
   }
+
+  /* ---------- marks ---------- */
   function cell(kind, c, edit) {
-    const v = val(kind, c), k = kind + '|' + c.regNo, raw = sp.edits.has(k) ? sp.edits.get(k) : (v ?? '');
-    if (!edit) return `<td class="num">${v ?? '<span class="muted">-</span>'}</td>`;
-    const changed = sp.edits.has(k) && markNum(sp.edits.get(k)) !== c[kind];
-    return `<td class="num"><input class="spmk${markOk(raw) ? '' : ' bad'}${changed ? ' changed' : ''}" inputmode="numeric" maxlength="3" autocomplete="off" data-kind="${kind}" data-reg="${esc(c.regNo)}" value="${esc(raw)}" aria-label="${kind} mark for ${esc(c.name)}"></td>`;
+    const k = kind + '|' + c.regNo, raw = sp.edits.has(k) ? sp.edits.get(k) : (c[kind] ?? '');
+    if (!edit) return `<td class="mkc">${c[kind] ?? '<span class="muted">-</span>'}</td>`;
+    const changed = sp.edits.has(k) && markOk(raw) && markNum(raw) !== c[kind];
+    return `<td class="mkc"><input class="spmk${markOk(raw) ? '' : ' bad'}${changed ? ' changed' : ''}" inputmode="numeric" maxlength="3" autocomplete="off" data-kind="${kind}" data-reg="${esc(c.regNo)}" value="${esc(raw)}" aria-label="${kind} mark for ${esc(c.name)}"></td>`;
   }
-  const devCell = (c) => { const i = val('internal', c), x = val('external', c); if (i === null || x === null) return ''; const d = x - i; return `<span class="sp-dev ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${fmtDev(d)}</span>`; };
+  const devCell = (c) => { const i = val('internal', c), x = val('external', c); if (i === null || x === null) return ''; const d = x - i; return `<span class="sp-dev ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${signed(d)}</span>`; };
   const modCell = (c, m) => { const v = modOf(c, m); return v === null ? '<span class="muted">-</span>' : `<b>${v}</b>`; };
   function marksHtml() {
     if (!sp.data.courses.length) return emptyHtml();
@@ -125,22 +149,18 @@ const SummativePracticals = (() => {
     if (!sp.unitCode) return out + '<p class="muted">Choose a unit to enter or see its marks.</p></section>';
     const m = sp.marks;
     if (!m) return out + '<p class="muted">Loading the unit…</p></section>';
-    const u = m.unit, locked = !!u.lockedAt, edit = !locked && enters(), mod = moderation(m.candidates);
+    const u = m.unit, edit = enters(), mod = moderation(m.candidates, val);
     out += `<div class="sp-unit-head"><div><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span>
         <div class="small muted">Internal assessor on the sheet: ${esc(u.assessorName || 'not yet')} - ${u.candidates} candidates</div></div>
-      ${locked ? `<span class="pill synced">Finalised - ${esc(u.lockedBy)}, ${esc(u.lockedAt.slice(0, 10))}</span>` : '<span class="pill pending">Open</span>'}</div>`;
+      ${edit ? `<span class="sp-save small" id="spSave" role="status">${saveText()}</span>` : ''}</div>`;
     if (!m.candidates.length) return out + '<p class="empty">No candidates for this unit on the roll.</p></section>';
-    if (!locked && !edit) out += '<p class="small muted">You can see this unit’s marks. Trainers, guests and external officers enter them.</p>';
-    out += `<div class="table-wrap"><table class="report-table sp-table${dirty() ? ' sp-preview' : ''}"><thead><tr><th>S/N</th><th class="sp-reg">Reg No</th><th>Name</th>
-        <th class="num">Internal</th><th class="num">External</th><th class="num sp-devc">Deviation</th><th class="num">Moderated</th></tr></thead>
-      <tbody>${m.candidates.map((c, i) => `<tr${sp.suggest.has(c.regNo) ? ' class="sp-sample"' : ''}><td>${i + 1}</td><td class="tadm sp-reg">${esc(c.regNo)}</td><td class="sp-who">${esc(c.name)}${sp.suggest.has(c.regNo) ? ' <span class="pill pending">Sample</span>' : ''}<span class="adm sp-reg-m">${esc(c.regNo)}</span>${c.admNo ? `<span class="adm">${esc(c.admNo)}</span>` : ''}</td>
-        ${cell('internal', c, edit)}${cell('external', c, edit)}<td class="num sp-devc" data-dev="${esc(c.regNo)}">${devCell(c)}</td><td class="num sp-modc" data-mod="${esc(c.regNo)}">${modCell(c, mod)}</td></tr>`).join('')}</tbody></table></div>
-      <p class="sp-md" id="spMd">${modText(mod)}</p>
-      <p class="small muted" id="spPreview"${dirty() ? '' : ' hidden'}>Moderated marks shown are a preview - save to keep them.</p>
+    if (!edit) out += '<p class="small muted">You can see this unit’s marks. Trainers, guests and external officers enter them.</p>';
+    out += `<div class="table-wrap"><table class="report-table sp-table"><thead><tr><th>S/N</th><th class="sp-reg">Reg No</th><th>Name</th>
+        <th class="mkc">Internal</th><th class="mkc">External</th><th class="mkc sp-devc">Deviation</th><th class="mkc">Moderated</th></tr></thead>
+      <tbody>${m.candidates.map((c, i) => `<tr><td>${i + 1}</td><td class="tadm sp-reg">${esc(c.regNo)}</td><td class="sp-who">${esc(c.name)}<span class="adm sp-reg-m">${esc(c.regNo)}</span>${c.admNo ? `<span class="adm">${esc(c.admNo)}</span>` : ''}</td>
+        ${cell('internal', c, edit)}${cell('external', c, edit)}<td class="mkc sp-devc" data-dev="${esc(c.regNo)}">${devCell(c)}</td><td class="mkc sp-modc" data-mod="${esc(c.regNo)}">${modCell(c, mod)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="sp-mdbox" id="spMd">${modHtml(mod)}</div>
       <div class="row-actions">
-        ${edit ? '<button type="button" class="btn primary" data-sp="save">Save marks</button>' : ''}
-        ${edit && mod.assessed ? '<button type="button" class="btn" data-sp="suggest">Suggest a sample</button>' : ''}
-        ${office() ? (locked ? '<button type="button" class="btn" data-sp="reopen">Reopen</button>' : '<button type="button" class="btn" data-sp="finalise">Finalise</button>') : ''}
         <button type="button" class="btn ghost" data-sp="unit-pdf">Sheet - PDF</button>
         <button type="button" class="btn ghost" data-sp="unit-xlsx">Sheet - Excel</button>
       </div>
@@ -160,65 +180,68 @@ const SummativePracticals = (() => {
       <p class="small muted">The internal assessor is whoever types in the marks. The External Verifier lines, the signatures and the dates beside them are left blank on the sheet, for signing by hand.</p>
       ${ok ? '<button type="button" class="btn" data-sp="sign-save">Save details</button>' : ''}</details>`;
   }
-  /** After a keystroke: the deviation, moderated preview and the CDACC decision, without redrawing the inputs. */
+  /** After a keystroke or a save: deviations, moderated marks, workings and the save status, without redrawing the inputs. */
   function refreshDev() {
     if (!sp.marks) return;
-    const mod = moderation(sp.marks.candidates);
+    const mod = moderation(sp.marks.candidates, val);
     for (const c of sp.marks.candidates) {
       const e = CSS.escape(c.regNo), td = $(`[data-dev="${e}"]`), tm = $(`[data-mod="${e}"]`);
       if (td) td.innerHTML = devCell(c);
       if (tm) tm.innerHTML = modCell(c, mod);
     }
-    const p = $('#spMd'); if (p) p.innerHTML = modText(mod);
-    const d = dirty(), pv = $('#spPreview'); if (pv) pv.hidden = !d;
-    $('#sumprac .sp-table')?.classList.toggle('sp-preview', d);
+    const p = $('#spMd'); if (p) p.innerHTML = modHtml(mod);
+    const s = $('#spSave'); if (s) { s.textContent = saveText(); s.dataset.state = saveState; }
+    $('#sumprac .sp-table')?.classList.toggle('sp-preview', changes().n > 0 || !!saving);
   }
-  async function saveMarks(btn) {
-    const m = sp.marks;
-    if (!m) return;
-    const bad = [...sp.edits].find(([, v]) => !markOk(v));
-    if (bad) { toast(`Marks are whole numbers from 0 to 100 (check ${splitKey(bad[0])[1]})`, 'err'); return; }
-    const byKind = {};
-    for (const [k, v] of sp.edits) {
-      const [kind, reg] = splitKey(k), c = m.candidates.find((x) => x.regNo === reg);
-      if (c && KINDS.includes(kind) && markNum(v) !== c[kind]) (byKind[kind] = byKind[kind] || []).push({ regNo: reg, mark: v });
-    }
-    const kinds = Object.keys(byKind);
-    if (!kinds.length) { toast('Nothing changed', 'ok'); return; }
-    btn.disabled = true;
-    try {
-      let res = null, n = 0;
-      for (const kind of kinds) { res = need(await api('spSave', { courseId: sp.courseId, unitCode: sp.unitCode, kind, marks: byKind[kind] })); n += byKind[kind].length; }
-      setMarks(res);
-      const mo = res.moderation;
-      toast(`${n} mark${n === 1 ? '' : 's'} saved${mo.ready ? ` - moderated marks worked out (mean deviation ${fmtDev(mo.md)}${mo.adjust ? ', marks moved' : ', internal marks kept'})` : ` - sample ${mo.sampled} of ${mo.need}`}`, 'ok');
-      draw();
-    } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
+
+  /* ---------- saving by itself: a moment after typing stops, when a box is left, and before leaving the unit ---------- */
+  const AUTOSAVE_MS = 800;
+  let saveTimer = null, saving = null, saveState = 'saved', saveErr = '';
+  function saveText() {
+    const ch = sp.marks ? changes() : { n: 0, bad: 0 };
+    if (saveState === 'error') return `Not saved - ${saveErr}. It tries again when you type or reconnect.`;
+    if (saving || saveState === 'saving') return 'Saving…';
+    if (ch.bad) return `${ch.bad} mark${ch.bad === 1 ? ' is' : 's are'} not a whole number from 0 to 100 - not saved`;
+    if (ch.n) return 'Saving…';
+    return 'All marks saved';
   }
-  /** A sample for the external verifier: the number CDACC needs (10% of those assessed), spread over the high, middle and
-   *  low internal marks and picked at random inside each band. Only highlighted - the verifier still decides. */
-  function suggest() {
-    const mod = moderation(sp.marks.candidates);
-    const list = sp.marks.candidates.filter((c) => val('internal', c) !== null).sort((a, b) => val('internal', b) - val('internal', a));
-    if (!list.length) { toast('Enter the internal marks first', 'err'); return; }
-    const shuffle = (a) => { const x = [...a]; for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [x[i], x[j]] = [x[j], x[i]]; } return x; };
-    const k = list.length, cut1 = Math.ceil(k / 3), cut2 = Math.ceil((2 * k) / 3);
-    const bands = [list.slice(0, cut1), list.slice(cut1, cut2), list.slice(cut2)].map(shuffle), pick = [];
-    for (let t = 0; pick.length < mod.need && bands.some((b) => b.length); t++) { const b = bands[t % 3]; if (b.length) pick.push(b.pop()); }
-    sp.suggest = new Set(pick.map((c) => c.regNo));
-    draw();
-    toast(`${pick.length} candidate${pick.length === 1 ? '' : 's'} suggested across high, middle and low marks - the external verifier re-assesses them and enters their marks`, 'ok');
+  function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(() => flush(), AUTOSAVE_MS); }
+  /** Sends what has changed. Resolves true when everything valid is saved. */
+  async function flush() {
+    clearTimeout(saveTimer);
+    if (saving) await saving;
+    if (!sp.marks) return true;
+    const { out, n } = changes();
+    if (!n) { saveState = 'saved'; refreshDev(); return true; }
+    const cid = sp.courseId, unit = sp.unitCode;
+    saving = (async () => {
+      saveState = 'saving'; refreshDev();
+      try {
+        let res = null;
+        for (const kind of Object.keys(out)) res = need(await api('spSave', { courseId: cid, unitCode: unit, kind, marks: out[kind] }));
+        if (sp.courseId !== cid || sp.unitCode !== unit) return true;
+        // What was sent is saved; anything typed while it was on the way stays to be sent next.
+        for (const kind of Object.keys(out)) for (const it of out[kind]) { const k = kind + '|' + it.regNo; if (sp.edits.get(k) === it.mark) sp.edits.delete(k); }
+        sp.marks = { ...res, candidates: res.candidates }; keepUnit(res.unit);
+        for (const inp of $$('#sumprac input.spmk')) { const c = candOf(inp.dataset.reg), k = inp.dataset.kind + '|' + inp.dataset.reg; if (c && !sp.edits.has(k)) inp.classList.remove('changed'); }
+        const head = $('#sumprac .sp-unit-head .small.muted'); if (head) head.textContent = `Internal assessor on the sheet: ${res.unit.assessorName || 'not yet'} - ${res.unit.candidates} candidates`;
+        saveState = 'saved'; saveErr = '';
+        return true;
+      } catch (e) { saveState = 'error'; saveErr = e.message; return false; }
+    })();
+    const ok = await saving;
+    saving = null;
+    refreshDev();
+    if (ok && changes().n) scheduleSave();
+    return ok;
   }
-  async function lock(on, btn) {
-    const m = sp.marks;
-    if (on) {
-      if (dirty()) { toast('Save the marks first', 'err'); return; }
-      const missing = m.candidates.filter((c) => c.moderated === null).length;
-      if (!confirm(missing ? `${missing} candidate${missing === 1 ? ' has' : 's have'} no moderated mark yet. Finalise anyway? Nobody can change the marks until it is reopened.` : 'Finalise this unit? Nobody can change its marks until it is reopened.')) return;
-    } else if (!confirm('Reopen this unit so its marks can be changed?')) return;
-    btn.disabled = true;
-    try { setMarks(need(await api('spLock', { courseId: sp.courseId, unitCode: sp.unitCode, lock: on }))); toast(on ? 'Unit finalised' : 'Unit reopened', 'ok'); draw(); }
-    catch (e) { toast(e.message, 'err'); btn.disabled = false; }
+  /** Before leaving the unit: save, and if that cannot happen, ask. */
+  async function leaveOk() {
+    if (!sp.marks || (!changes().n && !changes().bad && !saving)) return true;
+    const ok = await flush();
+    const { n, bad } = changes();
+    if (ok && !n && !bad) return true;
+    return confirm(bad ? 'Some marks are not whole numbers from 0 to 100 and were not saved. Leave them?' : 'Some marks could not be saved (no connection?). Leave them?');
   }
   async function saveSign(btn) {
     const u = sp.marks.unit, body = { courseId: sp.courseId, unitCode: sp.unitCode };
@@ -227,8 +250,8 @@ const SummativePracticals = (() => {
     if (Object.keys(body).length === 2) { toast('Nothing changed', 'ok'); return; }
     btn.disabled = true;
     try {
-      const res = need(await api('spUnitSave', body)), c = course(), i = c ? c.units.findIndex((x) => x.code === res.unit.code) : -1;
-      sp.marks.unit = res.unit; if (i >= 0) c.units[i] = res.unit;
+      const res = need(await api('spUnitSave', body));
+      sp.marks.unit = res.unit; keepUnit(res.unit);
       toast('Details saved', 'ok'); draw();
     }
     catch (e) { toast(e.message, 'err'); btn.disabled = false; }
@@ -314,15 +337,15 @@ const SummativePracticals = (() => {
       ${list || '<p class="muted">No courses yet.</p>'}</section>`;
   }
   function courseCard(c) {
-    const done = c.units.filter((u) => u.lockedAt).length, up = uploader();
+    const up = uploader();
     const f = (k, label, v, ph = '') => `<label>${label}<input data-cf="${k}" value="${esc(v)}"${up ? '' : ' readonly'}${ph ? ` placeholder="${esc(ph)}"` : ''}></label>`;
-    return `<details class="fold sp-course" data-course="${esc(c.id)}"${sp.open.has(c.id) ? ' open' : ''}><summary>${esc(courseLabel(c))} - ${c.candidates} candidates - ${c.units.length} units${done ? ` - finalised ${done}` : ''}</summary>
+    return `<details class="fold sp-course" data-course="${esc(c.id)}"${sp.open.has(c.id) ? ' open' : ''}><summary>${esc(courseLabel(c))} - ${c.candidates} candidates - ${c.units.length} units</summary>
       <div class="grid2">${f('centerCode', 'Assessment Center Code', c.centerCode)}${f('centerName', 'Assessment Center Name', c.centerName)}
         ${f('qualCode', 'Course/Qualification Code', c.qualCode, 'From CDACC')}${f('course', 'Course/Qualification Title', c.course)}
         ${f('assessDate', 'Date of assessment', c.assessDate, 'e.g. 10/11/2026 - 14/11/2026')}</div>
       ${up ? '<div class="row-actions"><button type="button" class="btn" data-sp="course-save">Save sheet heading</button></div>' : ''}
       <div class="table-wrap"><table class="report-table sp-units"><thead><tr><th>#</th><th>Unit</th><th class="num">Candidates</th><th class="num">Marks I/E/M</th><th>Internal assessor</th></tr></thead>
-      <tbody>${c.units.map((u) => `<tr><td>${u.seq}</td><td class="sp-who">${esc(u.name)}<span class="adm">${esc(u.code)}${u.lockedAt ? ' - finalised' : ''}</span></td><td class="num">${u.candidates}</td>
+      <tbody>${c.units.map((u) => `<tr><td>${u.seq}</td><td class="sp-who">${esc(u.name)}<span class="adm">${esc(u.code)}</span></td><td class="num">${u.candidates}</td>
         <td class="num">${u.internal}/${u.external}/${u.moderated}</td><td>${esc(u.assessorName || '-')}</td></tr>`).join('')}</tbody></table></div>
       ${up ? '<div class="row-actions"><button type="button" class="btn ghost danger-text" data-sp="course-delete">Remove this course</button></div>' : ''}</details>`;
   }
@@ -343,21 +366,21 @@ const SummativePracticals = (() => {
     const todo = sp.roll.filter((g) => sp.pick.has(g.key));
     if (!todo.length) return;
     btn.disabled = true;
-    let cands = 0, kept = 0, fin = 0;
+    let cands = 0, kept = 0;
     const failed = [];
     for (let i = 0; i < todo.length; i++) {
       const g = todo[i];
       btn.textContent = `Registering ${i + 1} of ${todo.length}…`;
       try {
         const res = need(await api('spUpload', { level: g.level, course: g.course, series: g.series, center: g.center, rows: g.rows }));
-        cands += res.candidates; kept += res.kept; fin += res.finalised || 0;
+        cands += res.candidates; kept += res.kept;
       } catch (e) { failed.push(`${g.course} ${shortLevel(g.level)}: ${e.message}`); }
     }
     sp.roll = null; sp.pick.clear();
     try { await loadCourses(); } catch { /* the list shows what it has */ }
     draw();
     if (failed.length) toast(`Not registered - ${failed.join('; ')}`, 'err');
-    else toast(`${todo.length} course${todo.length === 1 ? '' : 's'} registered - ${cands} candidates${kept ? `; ${kept} entries off the roll kept for their marks` : ''}${fin ? `; ${fin} finalised unit${fin === 1 ? '' : 's'} left as ${fin === 1 ? 'it was' : 'they were'}` : ''}`, 'ok');
+    else toast(`${todo.length} course${todo.length === 1 ? '' : 's'} registered - ${cands} candidates${kept ? `; ${kept} entries off the roll kept for their marks` : ''}`, 'ok');
   }
   async function courseSave(btn) {
     const card = btn.closest('[data-course]'), body = { id: card.dataset.course };
@@ -395,7 +418,8 @@ const SummativePracticals = (() => {
   }
   const CDACC = 'TVET CURRICULUM DEVELOPMENT, ASSESSMENT AND CERTIFICATION COUNCIL (TVET CDACC)';
   // Candidates per printed sheet (landscape A4). The KEY and the sign-offs go on the last sheet only, so it holds fewer.
-  const ALL_FULL = 24, ALL_LAST = 19, UNIT_FULL = 24, UNIT_LAST = 19;
+  // A unit's last sheet also carries the mean deviation, its workings (one row fewer per line they take) and a breather.
+  const ALL_FULL = 24, ALL_LAST = 19, UNIT_FULL = 24, UNIT_LAST = 18;
   const title = (c) => [c.course, c.level].filter(Boolean).join(' - ');
   /** Splits a list into sheets: as few as fit (full sheets hold `full`, the last one `last`), evened out so no sheet is nearly empty. */
   function pagesOf(list, full, last) {
@@ -441,7 +465,8 @@ const SummativePracticals = (() => {
       ${p === pages.length - 1 ? key + sign : ''}`);
   }
   function perUnitPages(c, u, cands) {
-    const md = u.moderation || {}, pages = pagesOf(cands, UNIT_FULL, UNIT_LAST);
+    const m = moderation(cands, (k, x) => x[k]), workLines = m.n ? Math.ceil((170 + workText(m).length) / 190) : 0;
+    const pages = pagesOf(cands, UNIT_FULL, Math.max(6, UNIT_LAST - workLines));
     const extra = `<tr><th>Unit of Competency Code:</th><td>${esc(u.code)}</td><th>Unit of Competency Title:</th><td>${esc(u.name)}</td></tr>`;
     const sign = `<div class="sp-sign"><p>1. Name of Internal Assessor${ln(u.assessorName)}Internal Assessor Reg. Code/National ID. No.${ln(u.assessorReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
       <p>2. Name of External Verifier${ln('')}External Verifier Reg. Code/National ID. No.${ln('', 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
@@ -451,7 +476,12 @@ const SummativePracticals = (() => {
       <table class="sp-grid"><thead><tr><th class="sn">S/N</th><th class="rg">Candidate’s Registration Code</th><th>Candidate’s Name</th><th class="w">Internal assessor’s marks (All Candidates) (100%)</th>
         <th class="w">External verifier’s (Sampled Candidates) (100%)</th><th class="w">Moderated Marks (100%)</th></tr></thead>
       <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td><td class="mk">${s.internal ?? ''}</td><td class="mk">${s.external ?? ''}</td><td class="mk">${s.moderated ?? ''}</td></tr>`).join('')}</tbody></table>
-      ${p === pages.length - 1 ? `<p class="sp-mdp">Mean Deviation: ${md.md !== null && md.md !== undefined ? fmtDev(md.md) : ''}</p>${sign}` : ''}`);
+      ${p === pages.length - 1 ? `<div class="sp-mdblock"><p class="sp-mdp">Mean Deviation: ${m.n ? md2(m.md) : ''}</p>
+        ${m.n ? `<p class="sp-mdw">Mean Deviation = Σ(External verifier’s mark − Internal assessor’s mark) ÷ number of sampled candidates = ${workText(m)}. ${sheetDecision(m)}</p>` : ''}</div>${sign}` : ''}`);
+  }
+  function sheetDecision(m) {
+    if (!m.ready) return `Sample below 10% of those assessed (needs ${m.need}): no moderated marks yet.`;
+    return m.adjust ? `More than ±${TOLERANCE}: every moderated mark = internal mark ${m.adjust > 0 ? '+' : '−'} ${Math.abs(m.adjust).toFixed(2)}.` : `Within ±${TOLERANCE}: the moderated marks are the internal assessor’s marks.`;
   }
   /** Puts "Page x of y" on every page of the document and wraps it for HtmlPdf. */
   const doc = (pages) => `<div class="sp-print">${pages.map((p, i) => `<div class="sp-page">${p}<div class="sp-foot">Page ${i + 1} of ${pages.length}</div></div>`).join('')}</div>`;
@@ -495,10 +525,11 @@ const SummativePracticals = (() => {
         toast('Making the PDF…', 'ok');
         download(base + '.pdf', await HtmlPdf.make(doc(units.flatMap((u) => perUnitPages(c, u, candsOf(u)))), { landscape: true }));
       } else {
-        const u = units[0], cands = candsOf(u), md = u.moderation || {};
+        const u = units[0], cands = candsOf(u), m = moderation(cands, (k, x) => x[k]);
         download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal assessor (all candidates, 100%)', 'External verifier (sampled, 100%)', 'Moderated (100%)'],
-          [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, s.internal ?? '', s.external ?? '', s.moderated ?? '']), [], ['', '', 'Mean deviation', '', '', md.md ?? '', ''], ['', '', 'Sample', `${md.sampled || 0} of ${md.need || 0} needed (10% of ${md.assessed || 0} assessed)`],
-           ['', '', 'Decision', !md.ready ? 'Sample too small - no moderated marks yet' : md.adjust ? `More than ±5: every mark moved by ${fmtDev(md.adjust)}` : 'Within ±5: internal marks kept']]));
+          [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, s.internal ?? '', s.external ?? '', s.moderated ?? '']), [], ['', '', 'Mean deviation', '', '', m.md ?? '', ''], ['', '', 'Formula', 'Σ(External − Internal) ÷ number of sampled candidates'],
+           ['', '', 'Workings', m.n ? workText(m) : 'no external marks yet'], ['', '', 'Sample', `${m.sampled} of ${m.assessed} assessed (10% needed: ${m.need})`],
+           ['', '', 'Decision', sheetDecision(m)]]));
       }
       toast('Sheet saved to this device', 'ok');
     } catch (e) { toast(e.message, 'err'); }
@@ -512,7 +543,7 @@ const SummativePracticals = (() => {
       if (!root || !root.contains(e.target)) return;
       const v = e.target.closest('[data-spview]');
       if (v) {
-        if (v.dataset.spview === sp.view || !discardOk()) return;
+        if (v.dataset.spview === sp.view || !(await leaveOk())) return;
         sp.view = v.dataset.spview; sp.edits.clear();
         const c = course();
         if (sp.view === 'marks' && !sp.unitCode && c?.units.length) sp.unitCode = c.units[0].code;
@@ -524,13 +555,8 @@ const SummativePracticals = (() => {
       if (!b || b.disabled) return;
       const act = b.dataset.sp;
       if (act === 'reload') return render();
-      if (act === 'save') return saveMarks(b);
-      if (act === 'suggest') return suggest();
-      if (act === 'finalise') return lock(true, b);
-      if (act === 'reopen') return lock(false, b);
       if (act === 'sign-save') return saveSign(b);
-      if (act === 'unit-pdf') { if (dirty()) toast('The sheet shows saved marks only - save first to include your changes', 'err'); return makePerUnit('pdf', b, sp.unitCode); }
-      if (act === 'unit-xlsx') return makePerUnit('xlsx', b, sp.unitCode);
+      if (act === 'unit-pdf' || act === 'unit-xlsx') { await flush(); return makePerUnit(act === 'unit-pdf' ? 'pdf' : 'xlsx', b, sp.unitCode); }
       if (act === 'roll-save') return rollSave(b);
       if (act === 'roll-cancel') { sp.roll = null; sp.pick.clear(); draw(); return; }
       if (act === 'course-save') return courseSave(b);
@@ -544,14 +570,14 @@ const SummativePracticals = (() => {
       const t = e.target, root = box();
       if (!root || !root.contains(t)) return;
       if (t.id === 'spCourse') {
-        if (!discardOk()) { t.value = sp.courseId; return; }
+        if (!(await leaveOk())) { t.value = sp.courseId; return; }
         sp.courseId = t.value; sp.unitCode = ''; sp.marks = null; sp.edits.clear(); sp.sheetUnits = null; sp.sheetUnit = '';
         const c = course();
         if (sp.view === 'marks' && c?.units.length) { sp.unitCode = c.units[0].code; draw(); try { await loadMarks(); } catch (er) { toast(er.message, 'err'); } }
         draw(); return;
       }
       if (t.id === 'spUnit') {
-        if (!discardOk()) { t.value = sp.unitCode; return; }
+        if (!(await leaveOk())) { t.value = sp.unitCode; return; }
         sp.unitCode = t.value; sp.marks = null; sp.edits.clear(); draw();
         try { await loadMarks(); } catch (er) { toast(er.message, 'err'); }
         draw(); return;
@@ -570,11 +596,13 @@ const SummativePracticals = (() => {
         return;
       }
       if (!t.matches || !t.matches('#sumprac input.spmk')) return;
-      const k = t.dataset.kind + '|' + t.dataset.reg, c = sp.marks?.candidates.find((x) => x.regNo === t.dataset.reg);
+      const k = t.dataset.kind + '|' + t.dataset.reg, c = candOf(t.dataset.reg);
       sp.edits.set(k, t.value.trim());
       t.classList.toggle('bad', !markOk(t.value));
       t.classList.toggle('changed', !!c && markOk(t.value) && markNum(t.value) !== c[t.dataset.kind]);
+      if (saveState === 'error') saveState = 'saved';
       refreshDev();
+      scheduleSave();
     });
     // Enter goes down the column, as in a spreadsheet.
     document.addEventListener('keydown', (e) => {
@@ -591,7 +619,10 @@ const SummativePracticals = (() => {
       const key = d.dataset.course || d.dataset.sec;
       if (key) { if (d.open) sp.open.add(key); else sp.open.delete(key); }
     }, true);
-    window.addEventListener('beforeunload', (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ''; } });
+    // Leaving a mark box saves at once; a connection coming back sends what is waiting; closing the page warns if anything is.
+    document.addEventListener('focusout', (e) => { if (e.target.matches?.('#sumprac input.spmk')) flush(); });
+    window.addEventListener('online', () => { if (sp.marks && changes().n) flush(); });
+    window.addEventListener('beforeunload', (e) => { if (sp.marks && (changes().n || saving)) { e.preventDefault(); e.returnValue = ''; } });
   }
   wire();
   return { render, allowed };
