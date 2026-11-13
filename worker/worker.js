@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.34.0';
+export const VERSION = '7.34.1';
 const SCHEMA_VERSION = '31';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -4295,12 +4295,13 @@ async function spReady(env) {
   }
   spReadyFlag = true;
 }
-/* Modular curricula (CDACC, from May 2025): every unit has a theory (T) and a practical (P) mark, each out of 100, entered,
- * verified and moderated on its own. Their unit codes end in /MA (e.g. IT/OS/ICTA/CR/01/5/MA); the office can set a unit
+/* Modular curricula (CDACC, from May 2025): level 3 and 4 units have a theory (T) and a practical (P) mark, each out of 100,
+ * entered, verified and moderated on its own. Their unit codes end in /3/MA or /4/MA (e.g. IT/OS/ICTA/CR/01/4/MA; the
+ * number before MA is the unit's level); level 5 and 6 /MA units have practical marks only. The office can set a unit
  * either way (sp_units.modular, NULL = by the code). Only core units (CR) are taken from the roll: CDACC sets practicals
  * for core units, with the basic and common ones built into them. */
-const spModular = (u) => (u.modular === null || u.modular === undefined ? /\/MA$/i.test(u.unit_code || '') : !!u.modular);
-const SP_MODULAR_SQL = "COALESCE(sp_units.modular, sp_units.unit_code LIKE '%/MA')";
+const spModular = (u) => (u.modular === null || u.modular === undefined ? /\/[34]\/MA$/i.test(u.unit_code || '') : !!u.modular);
+const SP_MODULAR_SQL = "COALESCE(sp_units.modular, sp_units.unit_code LIKE '%/3/MA' OR sp_units.unit_code LIKE '%/4/MA')";
 const spNotCore = (code) => /(^|\/)(BC|CC)(\/|$)/.test(code);
 const spText = (v, max = 160) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const spId = (level, course, series) => [level, course, series].map((x) => lower(spText(x))).join('|');
