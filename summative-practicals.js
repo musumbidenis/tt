@@ -10,7 +10,7 @@
  *   sampled; within +/-5 the internal marks stand, beyond it every mark moves by the mean deviation. The screen and the
  *   per-unit sheet show the formula and the workings. AB in the internal column: the candidate was absent (not assessed,
  *   moderated mark AB).
- *   A level 3 or 4 modular-curriculum unit (code ending /3/MA or /4/MA, or set so on the course card) has a theory (T) and a practical (P) mark
+ *   A level 3 or 4 unit (by its code, e.g. CR/01/4/MA or CR/3/4/A, or set so on the course card) has a theory (T) and a practical (P) mark
  *   in each column, entered and moderated apart; the screen shows one part at a time.
  * Sheets: the CDACC forms - all units of a course (CBA/SAMSP/2), and per unit of competency (CBA/SAMSP/1) - and their
  *   modular-curricula forms (CDACC/CBA/SAMSP/1, CDACC/CBA/SAMSP) with T and P columns, as PDF and Excel, made on this
@@ -377,7 +377,7 @@ const SummativePracticals = (() => {
       <tbody>${c.units.map((u) => `<tr><td>${u.seq}</td><td class="sp-who">${esc(u.name)}<span class="adm">${esc(u.code)}</span></td><td class="num">${u.candidates}</td>
         <td class="num">${u.internal}/${u.external}/${u.moderated}</td><td>${esc(u.assessorName || '-')}</td>
         <td>${off ? `<label class="check"><input type="checkbox" data-modular="${esc(u.code)}"${u.modular ? ' checked' : ''} aria-label="Modular curriculum - ${esc(u.name)}">T + P</label>` : u.modular ? 'T + P' : '-'}</td></tr>`).join('')}</tbody></table></div>
-      <p class="small muted">Level 3 and 4 modular units (codes ending /3/MA or /4/MA) have theory and practical marks; others have practical marks only. Untick or tick one the code gets wrong.</p>
+      <p class="small muted">Level 3 and 4 units (the level is the number after the unit number in the code, e.g. CR/01/4/MA) have theory and practical marks; others have practical marks only. Untick or tick one the code gets wrong.</p>
       ${up ? '<div class="row-actions"><button type="button" class="btn ghost danger-text" data-sp="course-delete">Remove this course</button></div>' : ''}</details>`;
   }
   async function rollFile(input) {

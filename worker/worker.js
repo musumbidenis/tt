@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.34.1';
+export const VERSION = '7.34.2';
 const SCHEMA_VERSION = '31';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -4296,12 +4296,16 @@ async function spReady(env) {
   spReadyFlag = true;
 }
 /* Modular curricula (CDACC, from May 2025): level 3 and 4 units have a theory (T) and a practical (P) mark, each out of 100,
- * entered, verified and moderated on its own. Their unit codes end in /3/MA or /4/MA (e.g. IT/OS/ICTA/CR/01/4/MA; the
- * number before MA is the unit's level); level 5 and 6 /MA units have practical marks only. The office can set a unit
- * either way (sp_units.modular, NULL = by the code). Only core units (CR) are taken from the roll: CDACC sets practicals
- * for core units, with the basic and common ones built into them. */
-const spModular = (u) => (u.modular === null || u.modular === undefined ? /\/[34]\/MA$/i.test(u.unit_code || '') : !!u.modular);
-const SP_MODULAR_SQL = "COALESCE(sp_units.modular, sp_units.unit_code LIKE '%/3/MA' OR sp_units.unit_code LIKE '%/4/MA')";
+ * entered, verified and moderated on its own. The unit's level is the number after the unit number, after CR, with or
+ * without /MA: IT/OS/ICTA/CR/01/4/MA, ENG/OS/AUT/CR/3/4/A, also zero-padded (CR/02/04/A). Levels 5 and 6 have practical
+ * marks only. The office can set a unit either way (sp_units.modular, NULL = by the code). Only core units (CR) are taken
+ * from the roll: CDACC sets practicals for core units, with the basic and common ones built into them. */
+const SP_LEVEL34 = /\/CR\/\d{1,2}\/0?[34](?!\d)/i;
+const spModular = (u) => (u.modular === null || u.modular === undefined ? SP_LEVEL34.test(u.unit_code || '') : !!u.modular);
+// The same test in SQL (codes are stored without spaces, in capitals): unit number 1-2 digits, level 3/4 or 03/04, then
+// the end or a non-digit.
+const SP_MODULAR_SQL = `COALESCE(sp_units.modular, ${['[0-9]', '[0-9][0-9]'].flatMap((n) => ['[34]', '0[34]'].flatMap((l) => ['', '[^0-9]*']
+  .map((t) => `sp_units.unit_code GLOB '*/CR/${n}/${l}${t}'`))).join(' OR ')})`;
 const spNotCore = (code) => /(^|\/)(BC|CC)(\/|$)/.test(code);
 const spText = (v, max = 160) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const spId = (level, course, series) => [level, course, series].map((x) => lower(spText(x))).join('|');
