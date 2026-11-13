@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.32.0';
+export const VERSION = '7.33.0';
 const SCHEMA_VERSION = '31';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -2836,13 +2836,28 @@ async function everTaught(env, me) {
   return new Set(rows.flatMap((u) => classParts(u.class_code).map((c) => c + '|' + u.unit_code)));
 }
 async function poeList(env, b, me) {
-  const { pairs: now } = await myUnitPairs(env, me);
+  const { pairs: now, loading } = await myUnitPairs(env, me);
+  // This term's class-units for the Class / Unit pickers (all of them for the HOD, MIS and IAO), so a unit where no one
+  // has sent anything can still be opened. Already read above: no extra reads.
+  const units = [], seenU = new Set();
+  for (const u of loading) for (const c of classParts(u.class_code)) {
+    const k = c + '|' + u.unit_code;
+    if (seenU.has(k) || (!seesAll(me) && !now.has(k))) continue;
+    seenU.add(k); units.push({ classCode: c, unitCode: u.unit_code, unitName: u.unit_name || u.unit_code });
+  }
   const pairs = seesAll(me) ? now : new Set([...now, ...(await everTaught(env, me))]);
   const status = ['submitted', 'approved', 'returned'].includes(b.status) ? b.status : '';
-  let list = [];
+  let list = [], capped = false, waiting;
+  const cls = String(b.classCode || '');
   if (seesAll(me)) {
-    list = status ? await all(env, 'SELECT * FROM evidence WHERE status=? AND replaced_at IS NULL ORDER BY submitted_at DESC LIMIT 3000', status)
-      : await all(env, 'SELECT * FROM evidence WHERE replaced_at IS NULL ORDER BY submitted_at DESC LIMIT 3000');
+    // One class (the screen shows one class at a time): read through the class/unit index, nothing cut off. With no class
+    // picked, the newest 3000 of the department, and `capped` says when older ones were left out.
+    const lim = cls ? 10000 : 3000;
+    list = await all(env, `SELECT * FROM evidence WHERE ${cls ? 'class_code=? AND ' : ''}${status ? 'status=? AND ' : ''}replaced_at IS NULL ORDER BY submitted_at DESC LIMIT ${lim}`,
+      ...(cls ? [cls] : []), ...(status ? [status] : []));
+    capped = list.length >= lim;
+    // The tab's dot counts the whole department, whichever class is open (the status index keeps this cheap).
+    waiting = Number((await one(env, "SELECT COUNT(*) AS n FROM evidence WHERE status='submitted' AND replaced_at IS NULL"))?.n) || 0;
   } else {
     // Only this trainer's class-units are read (through the class/unit index), a few dozen at a time.
     const keys = [...pairs].map((k) => k.split('|'));
@@ -2873,7 +2888,7 @@ async function poeList(env, b, me) {
   // Links into Drive: the trainer's own attendance sheet; the evidence index for the HOD and MIS Officer.
   const rep = JSON.parse((await getMeta(env, 'drive_report')) || 'null') || {};
   const sheetUrl = Object.entries(rep.sheets || {}).find(([c]) => lower(c) === lower(me.code))?.[1] || '';
-  return { ok: true, evidence: list.map(evidenceOut), marks: await marksFor(env, list), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url, roster };
+  return { ok: true, evidence: list.map(evidenceOut), marks: await marksFor(env, list), mine: [...now], sheetUrl, indexUrl: seesAll(me) ? rep.indexUrl || '' : '', driveReady: !!rep.url, roster, units, capped, ...(waiting === undefined ? {} : { waiting }) };
 }
 /* POE Statistics: who has submitted and who has not, per class and per student. Aggregated in SQL in one
  * trip (no full evidence pull) so a department-wide view stays cheap on D1 reads. "Submitted" = a student
