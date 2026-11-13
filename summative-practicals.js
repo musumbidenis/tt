@@ -8,15 +8,19 @@
  *   The moderated marks are worked out by the server, CDACC style, and cannot be typed: the verifier's sample must be at
  *   least 10% of the candidates assessed; mean deviation = sum of (external - internal) over the sample / the number
  *   sampled; within +/-5 the internal marks stand, beyond it every mark moves by the mean deviation. The screen and the
- *   per-unit sheet show the formula and the workings.
- * Sheets: the two CDACC forms (CBA/SAMSP/2) - all units of a course, and per unit of competency - as PDF and Excel,
- *   made on this device.
+ *   per-unit sheet show the formula and the workings. AB in the internal column: the candidate was absent (not assessed,
+ *   moderated mark AB).
+ *   A modular-curriculum unit (code ending /MA, or set so on the course card) has a theory (T) and a practical (P) mark
+ *   in each column, entered and moderated apart; the screen shows one part at a time.
+ * Sheets: the CDACC forms - all units of a course (CBA/SAMSP/2), and per unit of competency (CBA/SAMSP/1) - and their
+ *   modular-curricula forms (CDACC/CBA/SAMSP/1, CDACC/CBA/SAMSP) with T and P columns, as PDF and Excel, made on this
+ *   device. A course with both kinds of unit gets each form as its own file.
  * Uses app.js (state, api, $, $$, esc, toast, hasRole, me, download, fileSafe, todayISO) and Xlsx, HtmlPdf. */
 'use strict';
 
 const SummativePracticals = (() => {
   const sp = {
-    view: 'marks', data: null, courseId: '', unitCode: '', marks: null, edits: new Map(),
+    view: 'marks', data: null, courseId: '', unitCode: '', marks: null, edits: new Map(), part: 'p',
     roll: null, pick: new Set(), find: '', open: new Set(), sheetUnits: null, sheetUnit: '', busy: false,
   };
   const allowed = () => ['MIS', 'HOD', 'IAO', 'TRAINER', 'EAO', 'GUEST'].some(hasRole);
@@ -28,14 +32,22 @@ const SummativePracticals = (() => {
   const lc = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
   const course = () => sp.data?.courses.find((c) => c.id === sp.courseId) || null;
   const unitOf = (c, code) => c?.units.find((u) => u.code === code) || null;
-  const KINDS = ['internal', 'external'];
+  const KINDS = ['internal', 'external', 'internalT', 'externalT'];
+  // The columns of each part: practical (every unit) and theory (modular units). The kind names are the candidate's fields.
+  const PARTS = { p: { i: 'internal', x: 'external', m: 'moderated', label: 'Practical' }, t: { i: 'internalT', x: 'externalT', m: 'moderatedT', label: 'Theory' } };
+  const KIND_LABEL = { internal: 'internal', external: 'external', internalT: 'internal theory', externalT: 'external theory' };
   const shortLevel = (l) => String(l || '').replace(/^level\s*/i, 'L');
   const courseLabel = (c) => `${c.course} ${shortLevel(c.level)}${c.series ? ' - ' + c.series : ''}`.trim();
   const unitLabel = (u) => `${u.seq}. ${u.name} - ${u.code} (${u.moderated}/${u.candidates})`;
-  const markOk = (v) => { const t = String(v ?? '').trim(); return t === '' || (/^\d{1,3}$/.test(t) && Number(t) <= 100); };
-  const markNum = (v) => { const t = String(v ?? '').trim(); return t === '' ? null : Number(t); };
+  // AB: absent. The server keeps it as -1; it can only go in an internal column.
+  const AB = -1;
+  const isAb = (v) => /^ab$/i.test(String(v ?? '').trim());
+  const markOk = (v, kind = 'internal') => { const t = String(v ?? '').trim(); return t === '' || (isAb(t) && kind.startsWith('internal')) || (/^\d{1,3}$/.test(t) && Number(t) <= 100); };
+  const markNum = (v) => { const t = String(v ?? '').trim(); return t === '' ? null : isAb(t) ? AB : Number(t); };
+  const show = (v) => (v === AB ? 'AB' : v ?? '');
+  const has = (v) => v !== null && v !== undefined;
   const splitKey = (k) => { const i = k.indexOf('|'); return [k.slice(0, i), k.slice(i + 1)]; };
-  const val = (kind, c) => { const k = kind + '|' + c.regNo; return sp.edits.has(k) && markOk(sp.edits.get(k)) ? markNum(sp.edits.get(k)) : c[kind]; };
+  const val = (kind, c) => { const k = kind + '|' + c.regNo; return sp.edits.has(k) && markOk(sp.edits.get(k), kind) ? markNum(sp.edits.get(k)) : c[kind] ?? null; };
   const candOf = (reg) => sp.marks?.candidates.find((x) => x.regNo === reg) || null;
   /** Typed marks that differ from the saved ones and are valid, by column; and how many typed ones are not valid. */
   function changes() {
@@ -44,8 +56,8 @@ const SummativePracticals = (() => {
     for (const [k, v] of sp.edits) {
       const [kind, reg] = splitKey(k), c = candOf(reg);
       if (!c || !KINDS.includes(kind)) continue;
-      if (!markOk(v)) { bad++; continue; }
-      if (markNum(v) !== c[kind]) (out[kind] = out[kind] || []).push({ regNo: reg, mark: v });
+      if (!markOk(v, kind)) { bad++; continue; }
+      if (markNum(v) !== (c[kind] ?? null)) (out[kind] = out[kind] || []).push({ regNo: reg, mark: v });
     }
     return { out, bad, n: Object.values(out).reduce((t, l) => t + l.length, 0) };
   }
@@ -113,53 +125,67 @@ const SummativePracticals = (() => {
     const terms = pairs.map(([i, x]) => x - i), sum = terms.reduce((t, d) => t + d, 0);
     return { pairs, terms, sum, n: terms.length, md: terms.length ? Math.round((sum / terms.length) * 100) / 100 : null };
   }
-  function moderation(list, get) {
-    const assessed = list.filter((c) => get('internal', c) !== null), both = assessed.filter((c) => get('external', c) !== null);
+  /** One part of a unit (p practical, t theory): who was assessed (AB, absent, is not), the sample, mean deviation, decision. */
+  function moderation(list, get, part = 'p') {
+    const { i, x } = PARTS[part], g = (k, c) => get(k, c) ?? null;
+    const assessed = list.filter((c) => has(g(i, c)) && g(i, c) >= 0), both = assessed.filter((c) => has(g(x, c)));
     const needN = assessed.length ? Math.max(1, Math.ceil(assessed.length / SAMPLE_DIV)) : 0;
-    const d = deviation(both.map((c) => [get('internal', c), get('external', c)]));
+    const d = deviation(both.map((c) => [g(i, c), g(x, c)]));
     const ready = assessed.length > 0 && both.length >= needN;
-    return { ...d, assessed: assessed.length, need: needN, sampled: both.length, ready, adjust: ready && Math.abs(d.md) > TOLERANCE ? d.md : 0 };
+    return { ...d, part, assessed: assessed.length, need: needN, sampled: both.length, ready, adjust: ready && Math.abs(d.md) > TOLERANCE ? d.md : 0 };
   }
-  const modOf = (c, m) => (m.ready && val('internal', c) !== null ? Math.max(0, Math.min(100, Math.round(val('internal', c) + m.adjust))) : null);
+  const modOf = (c, m) => { const i = val(PARTS[m.part].i, c); return !has(i) ? null : i < 0 ? AB : m.ready ? Math.max(0, Math.min(100, Math.round(i + m.adjust))) : null; };
   /** "(64 − 60) + (80 − 70) = (+4) + (+10) = +14; +14 ÷ 2 = +7.00" */
   const workText = (m) => `${m.pairs.map(([i, x]) => `(${x} − ${i})`).join(' + ')} = ${m.terms.map((t) => `(${signed(t)})`).join(' + ')} = ${signed(m.sum)}; ${signed(m.sum)} ÷ ${m.n} = ${md2(m.md)}`;
+  /** The short form CDACC's own filled sheets use: "(1044 − 1046) ÷ 13 = −0.15" - the sampled candidates' external marks
+   *  added up, less their internal marks added up, over the number sampled. */
+  const totalsText = (m) => `(${m.pairs.reduce((t, p) => t + p[1], 0)} − ${m.pairs.reduce((t, p) => t + p[0], 0)}) ÷ ${m.n} = ${md2(m.md)}`;
   const decisionText = (m) => (!m.ready ? `The moderated marks appear once the external verifier’s marks are in for at least ${m.need} candidate${m.need === 1 ? '' : 's'}.`
     : m.adjust ? `${md2(m.md)} is more than ±${TOLERANCE}, so each moderated mark = internal mark ${m.adjust > 0 ? '+' : '−'} ${Math.abs(m.adjust).toFixed(2)}, rounded to a whole number (0 to 100).`
       : `${md2(m.md)} is within ±${TOLERANCE}, so the moderated marks are the internal assessor’s marks.`);
-  function modHtml(m) {
-    if (!m.assessed) return '<p><b>Mean deviation</b> = Σ (External − Internal) ÷ number of sampled candidates</p><p class="muted">Enter the internal assessor’s marks first.</p>';
-    return `<p><b>Mean deviation</b> = Σ (External − Internal) ÷ number of sampled candidates</p>
-      <p>Sample: <b>${m.sampled}</b> of the ${m.assessed} candidate${m.assessed === 1 ? '' : 's'} assessed - CDACC needs at least 10%, here ${m.need}.</p>
+  function modHtml(m, label = '') {
+    const head = `<p><b>${label ? label + ' - mean deviation' : 'Mean deviation'}</b> = Σ (External − Internal) ÷ number of sampled candidates</p>`;
+    if (!m.assessed) return head + '<p class="muted">Enter the internal assessor’s marks first.</p>';
+    return `${head}
+      <p>Sample: <b>${m.sampled}</b> of the ${m.assessed} candidate${m.assessed === 1 ? '' : 's'} assessed - CDACC needs at least 10%, here ${m.need}. Absent (AB) candidates are not counted.</p>
       ${m.n ? `<p>Workings: ${workText(m)}</p>` : '<p class="muted">Workings: no external marks yet.</p>'}
       <p>Decision: ${decisionText(m)}</p>`;
   }
 
   /* ---------- marks ---------- */
   function cell(kind, c, edit) {
-    const k = kind + '|' + c.regNo, raw = sp.edits.has(k) ? sp.edits.get(k) : (c[kind] ?? '');
-    if (!edit) return `<td class="mkc">${c[kind] ?? '<span class="muted">-</span>'}</td>`;
-    const changed = sp.edits.has(k) && markOk(raw) && markNum(raw) !== c[kind];
-    return `<td class="mkc"><input class="spmk${markOk(raw) ? '' : ' bad'}${changed ? ' changed' : ''}" inputmode="numeric" maxlength="3" autocomplete="off" data-kind="${kind}" data-reg="${esc(c.regNo)}" value="${esc(raw)}" aria-label="${kind} mark for ${esc(c.name)}"></td>`;
+    const k = kind + '|' + c.regNo, saved = c[kind] ?? null, raw = sp.edits.has(k) ? sp.edits.get(k) : show(saved);
+    if (!edit) return `<td class="mkc">${has(saved) ? show(saved) : '<span class="muted">-</span>'}</td>`;
+    const ok = markOk(raw, kind), changed = sp.edits.has(k) && ok && markNum(raw) !== saved;
+    // The internal boxes offer AB (absent) as a suggestion: a phone's number pad has no letters.
+    return `<td class="mkc"><input class="spmk${ok ? '' : ' bad'}${changed ? ' changed' : ''}" inputmode="numeric" maxlength="3" autocomplete="off"${kind.startsWith('internal') ? ' list="spAbList"' : ''} data-kind="${kind}" data-reg="${esc(c.regNo)}" value="${esc(raw)}" aria-label="${KIND_LABEL[kind]} mark for ${esc(c.name)}"></td>`;
   }
-  const devCell = (c) => { const i = val('internal', c), x = val('external', c); if (i === null || x === null) return ''; const d = x - i; return `<span class="sp-dev ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${signed(d)}</span>`; };
-  const modCell = (c, m) => { const v = modOf(c, m); return v === null ? '<span class="muted">-</span>' : `<b>${v}</b>`; };
+  const devCell = (c, part) => { const i = val(PARTS[part].i, c), x = val(PARTS[part].x, c); if (!has(i) || !has(x) || i < 0) return ''; const d = x - i; return `<span class="sp-dev ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${signed(d)}</span>`; };
+  const modCell = (c, m) => { const v = modOf(c, m); return v === null ? '<span class="muted">-</span>' : `<b>${show(v)}</b>`; };
+  /** The part on screen: theory or practical on a modular unit, else practical. */
+  const partOf = (u) => (u?.modular ? sp.part : 'p');
   function marksHtml() {
     if (!sp.data.courses.length) return emptyHtml();
     let out = `<section class="card">${pickers(true)}`;
     if (!sp.unitCode) return out + '<p class="muted">Choose a unit to enter or see its marks.</p></section>';
     const m = sp.marks;
     if (!m) return out + '<p class="muted">Loading the unit…</p></section>';
-    const u = m.unit, edit = enters(), mod = moderation(m.candidates, val);
+    const u = m.unit, edit = enters(), part = partOf(u), P = PARTS[part], mod = moderation(m.candidates, val, part), tp = u.modular ? `<span class="sp-tp"> ${part.toUpperCase()}</span>` : '';
     out += `<div class="sp-unit-head"><div><b>${esc(u.name)}</b> <span class="muted small">${esc(u.code)}</span>
         <div class="small muted">Internal assessor on the sheet: ${esc(u.assessorName || 'not yet')} - ${u.candidates} candidates</div></div>
       ${edit ? `<span class="sp-save small" id="spSave" role="status">${saveText()}</span>` : ''}</div>`;
+    if (u.modular) {
+      out += `<div class="sp-parts"><div class="view-tabs" role="group" aria-label="Marks">${Object.entries(PARTS).map(([k, x]) => `<button type="button" data-sppart="${k}" aria-pressed="${part === k}">${x.label} (${k.toUpperCase()})</button>`).join('')}</div>
+        <span class="small muted">Modular curriculum: theory and practical are entered and moderated apart, each out of 100.</span></div>`;
+    }
     if (!m.candidates.length) return out + '<p class="empty">No candidates for this unit on the roll.</p></section>';
-    if (!edit) out += '<p class="small muted">You can see this unit’s marks. Trainers, guests and external officers enter them.</p>';
+    out += edit ? '<p class="small muted">Type AB in the internal column for a candidate who was absent (on a phone, pick AB from the suggestions).</p><datalist id="spAbList"><option value="AB"></option></datalist>'
+      : '<p class="small muted">You can see this unit’s marks. Trainers, guests and external officers enter them.</p>';
     out += `<div class="table-wrap"><table class="report-table sp-table"><thead><tr><th>S/N</th><th class="sp-reg">Reg No</th><th>Name</th>
-        <th class="mkc">Internal</th><th class="mkc">External</th><th class="mkc sp-devc">Deviation</th><th class="mkc">Moderated</th></tr></thead>
+        <th class="mkc">Internal${tp}</th><th class="mkc">External${tp}</th><th class="mkc sp-devc">Deviation</th><th class="mkc">Moderated${tp}</th></tr></thead>
       <tbody>${m.candidates.map((c, i) => `<tr><td>${i + 1}</td><td class="tadm sp-reg">${esc(c.regNo)}</td><td class="sp-who">${esc(c.name)}<span class="adm sp-reg-m">${esc(c.regNo)}</span>${c.admNo ? `<span class="adm">${esc(c.admNo)}</span>` : ''}</td>
-        ${cell('internal', c, edit)}${cell('external', c, edit)}<td class="mkc sp-devc" data-dev="${esc(c.regNo)}">${devCell(c)}</td><td class="mkc sp-modc" data-mod="${esc(c.regNo)}">${modCell(c, mod)}</td></tr>`).join('')}</tbody></table></div>
-      <div class="sp-mdbox" id="spMd">${modHtml(mod)}</div>
+        ${cell(P.i, c, edit)}${cell(P.x, c, edit)}<td class="mkc sp-devc" data-dev="${esc(c.regNo)}">${devCell(c, part)}</td><td class="mkc sp-modc" data-mod="${esc(c.regNo)}">${modCell(c, mod)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="sp-mdbox" id="spMd">${modHtml(mod, u.modular ? `${P.label} (${part.toUpperCase()})` : '')}</div>
       <div class="row-actions">
         <button type="button" class="btn ghost" data-sp="unit-pdf">Sheet - PDF</button>
         <button type="button" class="btn ghost" data-sp="unit-xlsx">Sheet - Excel</button>
@@ -183,13 +209,13 @@ const SummativePracticals = (() => {
   /** After a keystroke or a save: deviations, moderated marks, workings and the save status, without redrawing the inputs. */
   function refreshDev() {
     if (!sp.marks) return;
-    const mod = moderation(sp.marks.candidates, val);
+    const u = sp.marks.unit, part = partOf(u), mod = moderation(sp.marks.candidates, val, part);
     for (const c of sp.marks.candidates) {
       const e = CSS.escape(c.regNo), td = $(`[data-dev="${e}"]`), tm = $(`[data-mod="${e}"]`);
-      if (td) td.innerHTML = devCell(c);
+      if (td) td.innerHTML = devCell(c, part);
       if (tm) tm.innerHTML = modCell(c, mod);
     }
-    const p = $('#spMd'); if (p) p.innerHTML = modHtml(mod);
+    const p = $('#spMd'); if (p) p.innerHTML = modHtml(mod, u.modular ? `${PARTS[part].label} (${part.toUpperCase()})` : '');
     const s = $('#spSave'); if (s) { s.textContent = saveText(); s.dataset.state = saveState; }
     $('#sumprac .sp-table')?.classList.toggle('sp-preview', changes().n > 0 || !!saving);
   }
@@ -201,7 +227,7 @@ const SummativePracticals = (() => {
     const ch = sp.marks ? changes() : { n: 0, bad: 0 };
     if (saveState === 'error') return `Not saved - ${saveErr}. It tries again when you type or reconnect.`;
     if (saving || saveState === 'saving') return 'Saving…';
-    if (ch.bad) return `${ch.bad} mark${ch.bad === 1 ? ' is' : 's are'} not a whole number from 0 to 100 - not saved`;
+    if (ch.bad) return `${ch.bad} mark${ch.bad === 1 ? ' is' : 's are'} not a whole number from 0 to 100 (or AB in an internal column) - not saved`;
     if (ch.n) return 'Saving…';
     return 'All marks saved';
   }
@@ -241,7 +267,7 @@ const SummativePracticals = (() => {
     const ok = await flush();
     const { n, bad } = changes();
     if (ok && !n && !bad) return true;
-    return confirm(bad ? 'Some marks are not whole numbers from 0 to 100 and were not saved. Leave them?' : 'Some marks could not be saved (no connection?). Leave them?');
+    return confirm(bad ? 'Some marks are not whole numbers from 0 to 100 (or AB) and were not saved. Leave them?' : 'Some marks could not be saved (no connection?). Leave them?');
   }
   async function saveSign(btn) {
     const u = sp.marks.unit, body = { courseId: sp.courseId, unitCode: sp.unitCode };
@@ -295,12 +321,15 @@ const SummativePracticals = (() => {
     }
     throw new Error('No sheet has the columns Reg No, Name and Unit Code (the CDACC nominal roll)');
   }
+  // Only core units have practicals: CDACC codes mark the unit type as BC (basic), CC (common) or CR (core), e.g.
+  // ENG/OS/AUT/CR/1/3/MA, sometimes with stray spaces ("CR /01"). A code with no marker is kept.
+  const notCore = (code) => /(^|\/)\s*(BC|CC)\s*(\/|$)/i.test(code);
   function group(rows, col) {
     const s = (r, f) => (col[f] === undefined ? '' : String(r[col[f]] ?? '').replace(/\s+/g, ' ').trim());
     const map = new Map();
     for (const r of rows) {
       const row = { regNo: s(r, 'reg'), admNo: s(r, 'adm'), name: s(r, 'name'), unitCode: s(r, 'unit'), unitName: s(r, 'unitName') };
-      if (!row.regNo || !row.name || !row.unitCode) continue;
+      if (!row.regNo || !row.name || !row.unitCode || notCore(row.unitCode)) continue;
       const level = s(r, 'level'), courseName = s(r, 'course'), series = s(r, 'series');
       const key = [level, courseName, series].map(lc).join('|');
       if (!map.has(key)) map.set(key, { key, level, course: courseName, series, center: '', rows: [], regs: new Set(), units: new Set() });
@@ -308,7 +337,7 @@ const SummativePracticals = (() => {
       if (!g.center) g.center = s(r, 'center');
       g.rows.push(row); g.regs.add(lc(row.regNo)); g.units.add(row.unitCode.toUpperCase());
     }
-    if (!map.size) throw new Error('No candidate rows were found under the headings');
+    if (!map.size) throw new Error('No core-unit rows were found under the headings (basic and common units are left out)');
     return [...map.values()].sort((a, b) => a.course.localeCompare(b.course) || a.level.localeCompare(b.level));
   }
   function rollHtml() {
@@ -317,7 +346,7 @@ const SummativePracticals = (() => {
     if (uploader()) {
       up = `<section class="card"><h2 class="card-h">Upload the CDACC nominal roll</h2>
         <p class="muted small">The Excel file from CDACC with one row per candidate per unit: Reg No, Center Reg No, Name, Unit Code, Unit Name, Course, Course Level, Series and Assessment Center.
-        It is separate from the class lists and does not change them. Uploading it again updates the courses you tick; candidates who already have marks are kept.</p>
+        Only the core units are taken; basic and common units are left out. It is separate from the class lists and does not change them. Uploading it again updates the courses you tick; candidates who already have marks are kept.</p>
         <label class="btn file-btn"><svg class="i" aria-hidden="true"><use href="#i-upload"/></svg>Choose the Excel file<input type="file" id="spFile" accept=".xlsx,.xlsm"></label>`;
       if (sp.roll) {
         const shown = sp.roll.filter((g) => !sp.find || lc(`${g.course} ${g.level} ${g.series}`).includes(lc(sp.find)));
@@ -337,16 +366,18 @@ const SummativePracticals = (() => {
       ${list || '<p class="muted">No courses yet.</p>'}</section>`;
   }
   function courseCard(c) {
-    const up = uploader();
+    const up = uploader(), off = office();
     const f = (k, label, v, ph = '') => `<label>${label}<input data-cf="${k}" value="${esc(v)}"${up ? '' : ' readonly'}${ph ? ` placeholder="${esc(ph)}"` : ''}></label>`;
     return `<details class="fold sp-course" data-course="${esc(c.id)}"${sp.open.has(c.id) ? ' open' : ''}><summary>${esc(courseLabel(c))} - ${c.candidates} candidates - ${c.units.length} units</summary>
       <div class="grid2">${f('centerCode', 'Assessment Center Code', c.centerCode)}${f('centerName', 'Assessment Center Name', c.centerName)}
         ${f('qualCode', 'Course/Qualification Code', c.qualCode, 'From CDACC')}${f('course', 'Course/Qualification Title', c.course)}
         ${f('assessDate', 'Date of assessment', c.assessDate, 'e.g. 10/11/2026 - 14/11/2026')}</div>
       ${up ? '<div class="row-actions"><button type="button" class="btn" data-sp="course-save">Save sheet heading</button></div>' : ''}
-      <div class="table-wrap"><table class="report-table sp-units"><thead><tr><th>#</th><th>Unit</th><th class="num">Candidates</th><th class="num">Marks I/E/M</th><th>Internal assessor</th></tr></thead>
+      <div class="table-wrap"><table class="report-table sp-units"><thead><tr><th>#</th><th>Unit</th><th class="num">Candidates</th><th class="num">Marks I/E/M</th><th>Internal assessor</th><th title="Modular curriculum: theory and practical marks">Modular</th></tr></thead>
       <tbody>${c.units.map((u) => `<tr><td>${u.seq}</td><td class="sp-who">${esc(u.name)}<span class="adm">${esc(u.code)}</span></td><td class="num">${u.candidates}</td>
-        <td class="num">${u.internal}/${u.external}/${u.moderated}</td><td>${esc(u.assessorName || '-')}</td></tr>`).join('')}</tbody></table></div>
+        <td class="num">${u.internal}/${u.external}/${u.moderated}</td><td>${esc(u.assessorName || '-')}</td>
+        <td>${off ? `<label class="check"><input type="checkbox" data-modular="${esc(u.code)}"${u.modular ? ' checked' : ''} aria-label="Modular curriculum - ${esc(u.name)}">T + P</label>` : u.modular ? 'T + P' : '-'}</td></tr>`).join('')}</tbody></table></div>
+      <p class="small muted">Modular units (codes ending /MA) have theory and practical marks; untick or tick one the code gets wrong.</p>
       ${up ? '<div class="row-actions"><button type="button" class="btn ghost danger-text" data-sp="course-delete">Remove this course</button></div>' : ''}</details>`;
   }
   async function rollFile(input) {
@@ -400,26 +431,56 @@ const SummativePracticals = (() => {
     try { need(await api('spCourseDelete', { id })); if (sp.courseId === id) { sp.courseId = ''; sp.unitCode = ''; sp.marks = null; } await loadCourses(); toast('Course removed', 'ok'); draw(); }
     catch (e) { toast(e.message, 'err'); btn.disabled = false; }
   }
-  /* ---------- sheets (CDACC CBA/SAMSP/2), made on this device ---------- */
+  async function setModular(t) {
+    const cid = t.closest('[data-course]')?.dataset.course, c = sp.data.courses.find((x) => x.id === cid);
+    if (!c) return;
+    t.disabled = true;
+    try {
+      const res = need(await api('spUnitSave', { courseId: cid, unitCode: t.dataset.modular, modular: t.checked }));
+      const i = c.units.findIndex((u) => u.code === res.unit.code); if (i >= 0) c.units[i] = res.unit;
+      if (sp.courseId === cid && sp.unitCode === res.unit.code) sp.marks = null;   // loaded again on the Marks view
+      toast(`${res.unit.name}: ${res.unit.modular ? 'modular - theory and practical marks' : 'practical marks only'}`, 'ok');
+    } catch (e) { t.checked = !t.checked; toast(e.message, 'err'); }
+    t.disabled = false;
+  }
+  /* ---------- sheets (the CDACC forms), made on this device ----------
+   * Two kinds of unit, two families of form: practical only (all units CBA/SAMSP/2, per unit CBA/SAMSP/1) and modular
+   * curricula, with a theory and a practical column (all units CDACC/CBA/SAMSP/1, per unit CDACC/CBA/SAMSP). */
+  const GROUPS = { ord: { name: 'practical-only', label: 'Practical-only units', all: 'All units - practical only (CBA/SAMSP/2)' },
+    mod: { name: 'modular', label: 'Modular units', all: 'All units - modular curricula, theory and practical (CDACC/CBA/SAMSP/1)' } };
+  const groupOf = (u) => (u.modular ? 'mod' : 'ord');
+  const groupsOf = (units) => ['ord', 'mod'].map((g) => [g, units.filter((u) => groupOf(u) === g)]).filter(([, l]) => l.length);
   function sheetsHtml() {
     if (!sp.data.courses.length) return emptyHtml();
     const c = course();
     if (!c) return '';
     if (!sp.sheetUnits) sp.sheetUnits = new Set(c.units.map((u) => u.code));
-    return `<section class="card sp-sec">${pickers(false)}
-      <h3>All units - moderated marks</h3>
-      <p class="muted small">Candidates down the side, one numbered column per unit (named under KEY), each cell the moderated mark out of 100. Candidates with none of the ticked units are left out.</p>
-      <div class="sp-check-list">${c.units.map((u) => `<label class="check"><input type="checkbox" data-su="${esc(u.code)}"${sp.sheetUnits.has(u.code) ? ' checked' : ''}>${u.seq}. ${esc(u.name)} <span class="muted small">(${u.moderated}/${u.candidates})</span></label>`).join('')}</div>
-      <div class="row-actions"><button type="button" class="btn primary" data-sp="all-pdf">All units - PDF</button><button type="button" class="btn" data-sp="all-xlsx">All units - Excel</button></div>
+    const groups = groupsOf(c.units), two = groups.length > 1, sel = sheetPick(c);
+    const allHtml = groups.map(([g, list]) => `<h3>${two ? GROUPS[g].all : g === 'mod' ? 'All units - theory and practical, moderated marks' : 'All units - moderated marks'}</h3>
+      <p class="muted small">${g === 'mod' ? 'The modularized-curricula form: candidates down the side, two columns per unit (numbered, named under KEY) - P practical and T theory, each the moderated mark out of 100.'
+        : 'Candidates down the side, one numbered column per unit (named under KEY), each cell the moderated mark out of 100.'} Candidates with none of the ticked units are left out.${two ? ' The course has both kinds of unit, so each form is its own file.' : ''}</p>
+      <div class="sp-check-list">${list.map((u) => `<label class="check"><input type="checkbox" data-su="${esc(u.code)}"${sp.sheetUnits.has(u.code) ? ' checked' : ''}>${u.seq}. ${esc(u.name)} <span class="muted small">(${u.moderated}/${u.candidates})</span></label>`).join('')}</div>
+      <div class="row-actions"><button type="button" class="btn primary" data-sp="all-pdf" data-group="${g}">${two ? GROUPS[g].label : 'All units'} - PDF</button><button type="button" class="btn" data-sp="all-xlsx" data-group="${g}">${two ? GROUPS[g].label : 'All units'} - Excel</button></div>`).join('');
+    const every = two ? groups.map(([g]) => `<option value="*${g}"${sel === '*' + g ? ' selected' : ''}>Every ${GROUPS[g].name} unit (one PDF)</option>`).join('') : '<option value="">Every unit (one PDF)</option>';
+    return `<section class="card sp-sec">${pickers(false)}${allHtml}
       <h3>Per unit of competency</h3>
-      <p class="muted small">Internal assessor’s marks (all candidates), the external verifier’s (sampled), the moderated marks, the mean deviation and the three sign-offs. “Every unit” puts one sheet per unit into a single PDF.</p>
-      <label>Unit<select id="spSheetUnit"><option value="">Every unit (one PDF)</option>${c.units.map((u) => `<option value="${esc(u.code)}"${u.code === sp.sheetUnit ? ' selected' : ''}>${esc(u.seq + '. ' + u.name)}</option>`).join('')}</select></label>
-      <div class="row-actions"><button type="button" class="btn primary" data-sp="per-pdf">Per unit - PDF</button><button type="button" class="btn" data-sp="per-xlsx"${sp.sheetUnit ? '' : ' disabled title="Choose one unit for Excel"'}>Per unit - Excel</button></div></section>`;
+      <p class="muted small">Internal assessor’s marks (all candidates), the external verifier’s (sampled), the moderated marks, the mean deviation and the sign-offs${groups.some(([g]) => g === 'mod') ? '. A modular unit has a T and a P column under each, and a mean deviation for each' : ''}. “Every unit” puts one sheet per unit into a single PDF.</p>
+      <label>Unit<select id="spSheetUnit">${every}${c.units.map((u) => `<option value="${esc(u.code)}"${u.code === sel ? ' selected' : ''}>${esc(u.seq + '. ' + u.name)}${u.modular ? ' (T + P)' : ''}</option>`).join('')}</select></label>
+      <div class="row-actions"><button type="button" class="btn primary" data-sp="per-pdf">Per unit - PDF</button><button type="button" class="btn" data-sp="per-xlsx"${sel && !sel.startsWith('*') ? '' : ' disabled title="Choose one unit for Excel"'}>Per unit - Excel</button></div></section>`;
+  }
+  /** The per-unit choice: a unit code, '*ord' or '*mod' (every unit of that kind, when the course has both), or '' (every unit). */
+  function sheetPick(c) {
+    const groups = groupsOf(c.units), v = sp.sheetUnit;
+    if (v && !v.startsWith('*')) return c.units.some((u) => u.code === v) ? v : '';
+    if (groups.length < 2) return '';
+    return groups.some(([g]) => '*' + g === v) ? v : '*' + groups[0][0];
   }
   const CDACC = 'TVET CURRICULUM DEVELOPMENT, ASSESSMENT AND CERTIFICATION COUNCIL (TVET CDACC)';
   // Candidates per printed sheet (landscape A4). The KEY and the sign-offs go on the last sheet only, so it holds fewer.
   // A unit's last sheet also carries the mean deviation, its workings (one row fewer per line they take) and a breather.
+  // The modular forms (_M) have more heading rows, and the all-units one a third sign-off.
   const ALL_FULL = 24, ALL_LAST = 19, UNIT_FULL = 24, UNIT_LAST = 18;
+  const ALL_FULL_M = 22, ALL_LAST_M = 16, UNIT_FULL_M = 23, UNIT_LAST_M = 17;
   const title = (c) => [c.course, c.level].filter(Boolean).join(' - ');
   /** Splits a list into sheets: as few as fit (full sheets hold `full`, the last one `last`), evened out so no sheet is nearly empty. */
   function pagesOf(list, full, last) {
@@ -432,52 +493,88 @@ const SummativePracticals = (() => {
     return out;
   }
   const ln = (v, cls = '') => `<span class="ln${cls ? ' ' + cls : ''}">${esc(v || '')}</span>`;
-  function headHtml(c, heading, sheet, of, date, extra = '') {
+  /** The top of a form: crest, form number (and SHEET x OF y on the all-units forms), heading, the centre and course lines. */
+  function headHtml(c, o) {
+    const [codeL, titleL] = o.modular ? ['Course Code:', 'Course Title:'] : ['Course/Qualification Code:', 'Course/Qualification Title:'];
     return `<div class="sp-top"><img src="icons/cdacc-logo.png" alt=""><div class="sp-org">${CDACC}</div></div>
-      <div class="sp-form"><span>CBA/SAMSP/2</span><span>SHEET ${sheet} OF ${of}</span></div>
-      <h1>${heading}</h1>
+      <div class="sp-form"><span>${o.form}</span>${o.of ? `<span>SHEET ${o.sheet} OF ${o.of}</span>` : ''}</div>
+      <h1>${o.heading}</h1>
       <table class="sp-fields"><tr><th>Assessment Center Code:</th><td>${esc(c.centerCode)}</td><th>Assessment Center Name:</th><td>${esc(c.centerName)}</td></tr>
-        <tr><th>Course/Qualification Code:</th><td>${esc(c.qualCode)}</td><th>Course/Qualification Title:</th><td>${esc(title(c))}</td></tr>
-        <tr><th>Date of Assessment:</th><td>${esc(date || '')}</td><th>Assessment Series:</th><td>${esc(c.series)}</td></tr>${extra}</table>`;
+        <tr><th>${codeL}</th><td>${esc(c.qualCode)}</td><th>${titleL}</th><td>${esc(title(c))}</td></tr>
+        ${o.noDate ? '' : `<tr><th>Date of Assessment:</th><td>${fromTo(o.date)}</td><th>Assessment Series:</th><td>${esc(c.series)}</td></tr>`}${o.extra || ''}</table>`;
+  }
+  /** "10/11/2026 - 14/11/2026" (or one date) the way the forms ask for it: From … to … */
+  function fromTo(s) {
+    const t = String(s || '').trim(), gap = '&nbsp;'.repeat(16);
+    if (!t) return `From${gap}to${gap}`;
+    const [a, b] = t.split(/\s+(?:-|–|—|to)\s+/i);
+    return `From ${esc(a)} to ${esc(b || a)}`;
   }
   const common = (units, key) => { const v = [...new Set(units.map((u) => u[key]).filter(Boolean))]; return v.length === 1 ? v[0] : ''; };
-  function allUnitsPages(d, units) {
-    const c = d.course, codes = new Set(units.map((u) => u.code)), people = new Map();
+  /** Each candidate on any of these units, with their [practical, theory] moderated marks per unit, in Reg No order. */
+  function peopleOf(d, units) {
+    const codes = new Set(units.map((u) => u.code)), people = new Map();
     for (const m of d.marks) {
       if (!codes.has(m.unit)) continue;
       const k = m.regNo.toLowerCase();
       if (!people.has(k)) people.set(k, { regNo: m.regNo, name: m.name, admNo: m.admNo, marks: {} });
-      people.get(k).marks[m.unit] = m.moderated;
+      people.get(k).marks[m.unit] = [m.moderated ?? null, m.moderatedT ?? null];
     }
-    const list = [...people.values()].sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
-    const pages = pagesOf(list, ALL_FULL, Math.max(6, ALL_LAST - Math.ceil(units.length / 3)));
+    return [...people.values()].sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
+  }
+  function allUnitsPages(d, units, modular) {
+    const c = d.course, list = peopleOf(d, units), cols = units.length * (modular ? 2 : 1);
+    const pages = pagesOf(list, modular ? ALL_FULL_M : ALL_FULL, Math.max(6, (modular ? ALL_LAST_M : ALL_LAST) - Math.ceil(units.length / 3)));
     const key = `<div class="sp-key"><b>KEY:</b>${units.map((u, j) => `<span>${j + 1} - ${esc(u.name)}</span>`).join('')}</div>`;
     const sign = `<div class="sp-sign"><p>1. Name of External Verifier:${ln('')}External Verifier Reg. Code/National ID. No:${ln('', 's')}</p>
       <p>Signature:${ln('', 's')}Date:${ln('', 's')}</p>
       <p>2. Name of Assessment Center Manager/Officer:${ln(common(units, 'managerName'))}Signature:${ln('', 's')}Date:${ln('', 's')}</p>
-      <p>Institutional stamp:${ln('', 's')}</p></div>`;
+      <p>Institutional stamp:${ln('', 's')}</p>${modular ? `<p>3. Verified by Council Officer at the Center:${ln('')}Signature:${ln('', 's')}Date:${ln('', 's')}</p>` : ''}</div>`;
+    const head = modular
+      ? `<tr><th rowspan="5" class="sn">S/N</th><th rowspan="5" class="rg">Candidate’s Registration Code/National Id No.</th><th rowspan="5">Candidate’s Name</th><th colspan="${cols}">Candidate’s Score Per Unit of Competency (units numbered as under KEY)</th></tr>
+        <tr><th colspan="${cols}">MODERATED MARKS</th></tr><tr><th colspan="${cols}">Marks out of 100% [P: Practical (100%) T: Theory (100%)]</th></tr>
+        <tr>${units.map((u, j) => `<th colspan="2">UNIT ${j + 1}</th>`).join('')}</tr><tr>${units.map(() => '<th class="mk">P</th><th class="mk">T</th>').join('')}</tr>`
+      : `<tr><th rowspan="3" class="sn">S/N</th><th rowspan="3" class="rg">Candidate’s Registration Code/National Id No.</th><th rowspan="3">Candidate’s Name</th>
+        <th colspan="${cols}">Candidate’s Score Per Unit of Competency out of 100% (units numbered as under KEY)</th></tr>
+        <tr><th colspan="${cols}">MODERATED MARKS</th></tr><tr>${units.map((u, j) => `<th class="mk">${j + 1}</th>`).join('')}</tr>`;
+    // A candidate not sitting a unit gets "-"; one sitting it with no moderated mark yet, a blank.
+    const cells = (s, u) => { if (!(u.code in s.marks)) return modular ? '<td class="mk">-</td><td class="mk">-</td>' : '<td class="mk">-</td>'; const [p, t] = s.marks[u.code]; return `<td class="mk">${show(p)}</td>${modular ? `<td class="mk">${show(t)}</td>` : ''}`; };
     let n = 0;
-    return pages.map((rows, p) => `${headHtml(c, 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS FOR ALL UNITS OF COMPETENCY', p + 1, pages.length, c.assessDate || common(units, 'assessDate'))}
-      <table class="sp-grid${units.length > 14 ? ' many' : ''}"><thead><tr><th rowspan="3" class="sn">S/N</th><th rowspan="3" class="rg">Candidate’s Registration Code/National Id No.</th><th rowspan="3">Candidate’s Name</th>
-        <th colspan="${units.length}">Candidate’s Score Per Unit of Competency out of 100% (units numbered as under KEY)</th></tr>
-        <tr><th colspan="${units.length}">MODERATED MARKS</th></tr><tr>${units.map((u, j) => `<th class="mk">${j + 1}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${units.map((u) => `<td class="mk">${s.marks[u.code] ?? (u.code in s.marks ? '' : '-')}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    return pages.map((rows, p) => `${headHtml(c, { form: modular ? 'CDACC/CBA/SAMSP/1' : 'CBA/SAMSP/2', sheet: p + 1, of: pages.length, modular, date: c.assessDate || common(units, 'assessDate'),
+        heading: modular ? 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL AND THEORY MARKS SHEETS FOR ALL UNITS OF COMPETENCY FOR MODULARIZED CURRICULA' : 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS FOR ALL UNITS OF COMPETENCY' })}
+      <table class="sp-grid${cols > 14 ? ' many' : ''}"><thead>${head}</thead>
+      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${units.map((u) => cells(s, u)).join('')}</tr>`).join('')}</tbody></table>
       ${p === pages.length - 1 ? key + sign : ''}`);
   }
+  const sheetGet = (k, x) => x[k] ?? null;
+  /** One mean deviation's workings on the sheet, in CDACC's short form, and the decision. */
+  const mdLine = (m, tag = '') => (m.n ? `<p class="sp-mdw">${tag ? `<b>${tag}:</b> ` : ''}Mean Deviation = (Σ External verifier’s marks − Σ Internal assessor’s marks of the sampled candidates) ÷ number sampled = ${totalsText(m)}. ${sheetDecision(m)}</p>` : '');
   function perUnitPages(c, u, cands) {
-    const m = moderation(cands, (k, x) => x[k]), workLines = m.n ? Math.ceil((170 + workText(m).length) / 190) : 0;
-    const pages = pagesOf(cands, UNIT_FULL, Math.max(6, UNIT_LAST - workLines));
-    const extra = `<tr><th>Unit of Competency Code:</th><td>${esc(u.code)}</td><th>Unit of Competency Title:</th><td>${esc(u.name)}</td></tr>`;
-    const sign = `<div class="sp-sign"><p>1. Name of Internal Assessor${ln(u.assessorName)}Internal Assessor Reg. Code/National ID. No.${ln(u.assessorReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
-      <p>2. Name of External Verifier${ln('')}External Verifier Reg. Code/National ID. No.${ln('', 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
-      <p>3. Name of Assessment Center Manager/Officer${ln(u.managerName)}Signature${ln('', 's')}Date${ln('', 's')}Institutional stamp${ln('', 's')}</p></div>`;
+    const mod = !!u.modular, mp = moderation(cands, sheetGet, 'p'), mt = mod ? moderation(cands, sheetGet, 't') : null;
+    const workLines = (mod ? [mt, mp] : [mp]).reduce((t, m) => t + (m.n ? Math.ceil((150 + totalsText(m).length + sheetDecision(m).length) / 190) : 0), 0);
+    const pages = pagesOf(cands, mod ? UNIT_FULL_M : UNIT_FULL, Math.max(6, (mod ? UNIT_LAST_M : UNIT_LAST) - workLines));
+    const extra = `<tr><th>Unit Code:</th><td>${esc(u.code)}</td><th>Unit Title:</th><td>${esc(u.name)}</td></tr>${mod ? `<tr><th>Assessment Series:</th><td colspan="3">${esc(c.series)}</td></tr>` : ''}`;
+    const no = (k) => (mod ? '' : k + '. ');   // the modular form does not number its sign-offs
+    const sign = `<div class="sp-sign"><p>${no(1)}Name of Internal Assessor${ln(u.assessorName)}Internal Assessor Reg. Code/National ID. No.${ln(u.assessorReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
+      <p>${no(2)}Name of External Verifier${ln('')}External Verifier Reg. Code/National ID. No.${ln('', 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
+      <p>${no(3)}Name of Assessment Center Manager${mod ? '' : '/Officer'}${ln(u.managerName)}Signature${ln('', 's')}Date${ln('', 's')}Institutional stamp${ln('', 's')}</p></div>`;
+    const fig = (m) => (m.n ? md2(m.md) : '');
+    // The modular form has one Mean Deviation line: it carries both figures, theory first as in its columns.
+    const md = `<div class="sp-mdblock"><p class="sp-mdp">Mean Deviation: ${mod ? `Theory (T) ${fig(mt) || '-'}&emsp;Practical (P) ${fig(mp) || '-'}` : fig(mp)}</p>
+      ${mod ? mdLine(mt, 'Theory (T)') + mdLine(mp, 'Practical (P)') : mdLine(mp)}</div>`;
+    const head = mod
+      ? `<tr><th rowspan="2" class="sn">S/N</th><th rowspan="2" class="rg">Candidate’s CDACC Registration Code</th><th rowspan="2">Candidate’s Name</th><th colspan="2">Internal assessor’s marks (All Candidates)</th>
+        <th colspan="2">External verifier’s marks (Sampled Candidates)</th><th colspan="2">Moderated Marks</th></tr><tr>${'<th class="w2">T (100%)</th><th class="w2">P (100%)</th>'.repeat(3)}</tr>`
+      : `<tr><th class="sn">S/N</th><th class="rg">Candidate’s Registration Code</th><th>Candidate’s Name</th><th class="w">Internal assessor’s marks (All Candidates) (100%)</th>
+        <th class="w">External verifier’s (Sampled Candidates) (100%)</th><th class="w">Moderated Marks (100%)</th></tr>`;
+    const row = (s) => (mod ? [s.internalT, s.internal, s.externalT, s.external, s.moderatedT, s.moderated] : [s.internal, s.external, s.moderated]).map((v) => `<td class="mk">${show(v ?? null)}</td>`).join('');
     let n = 0;
-    return pages.map((rows, p) => `${headHtml(c, 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY', p + 1, pages.length, u.assessDate || c.assessDate, extra)}
-      <table class="sp-grid"><thead><tr><th class="sn">S/N</th><th class="rg">Candidate’s Registration Code</th><th>Candidate’s Name</th><th class="w">Internal assessor’s marks (All Candidates) (100%)</th>
-        <th class="w">External verifier’s (Sampled Candidates) (100%)</th><th class="w">Moderated Marks (100%)</th></tr></thead>
-      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td><td class="mk">${s.internal ?? ''}</td><td class="mk">${s.external ?? ''}</td><td class="mk">${s.moderated ?? ''}</td></tr>`).join('')}</tbody></table>
-      ${p === pages.length - 1 ? `<div class="sp-mdblock"><p class="sp-mdp">Mean Deviation: ${m.n ? md2(m.md) : ''}</p>
-        ${m.n ? `<p class="sp-mdw">Mean Deviation = Σ(External verifier’s mark − Internal assessor’s mark) ÷ number of sampled candidates = ${workText(m)}. ${sheetDecision(m)}</p>` : ''}</div>${sign}` : ''}`);
+    return pages.map((rows, p) => `${headHtml(c, mod
+        ? { form: 'CDACC/CBA/SAMSP', modular: true, noDate: true, extra, heading: 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY (MODULARIZED CURRICULA)' }
+        : { form: 'CBA/SAMSP/1', date: u.assessDate || c.assessDate, extra, heading: 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY' })}
+      <table class="sp-grid"><thead>${head}</thead>
+      <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${row(s)}</tr>`).join('')}</tbody></table>
+      ${p === pages.length - 1 ? md + sign : ''}`);
   }
   function sheetDecision(m) {
     if (!m.ready) return `Sample below 10% of those assessed (needs ${m.need}): no moderated marks yet.`;
@@ -488,26 +585,20 @@ const SummativePracticals = (() => {
   async function sheetData() { return need(await api('spSheet', { courseId: sp.courseId })); }
   const stamp = () => todayISO();
   async function makeAll(kind, btn) {
-    const units0 = course()?.units.filter((u) => sp.sheetUnits?.has(u.code)) || [];
-    if (!units0.length) { toast('Tick at least one unit', 'err'); return; }
+    const g = btn.dataset.group || 'ord', mod = g === 'mod', pick = (u) => sp.sheetUnits?.has(u.code) && groupOf(u) === g;
+    if (!(course()?.units.filter(pick) || []).length) { toast('Tick at least one unit', 'err'); return; }
     btn.disabled = true;
     try {
-      const d = await sheetData(), units = d.units.filter((u) => sp.sheetUnits.has(u.code)), c = d.course;
-      const name = `CDACC moderated practicals - all units - ${fileSafe(c.course + ' ' + shortLevel(c.level))}_${stamp()}`;
+      const d = await sheetData(), units = d.units.filter(pick), c = d.course;
+      if (!units.length) throw new Error('Those units are no longer on the course - refresh the page');
+      const name = `CDACC moderated ${mod ? 'theory and practical (modular)' : 'practicals'} - all units - ${fileSafe(c.course + ' ' + shortLevel(c.level))}_${stamp()}`;
       if (kind === 'pdf') {
         toast('Making the PDF…', 'ok');
-        download(name + '.pdf', await HtmlPdf.make(doc(allUnitsPages(d, units)), { landscape: true }));
+        download(name + '.pdf', await HtmlPdf.make(doc(allUnitsPages(d, units, mod)), { landscape: true }));
       } else {
-        const people = new Map();
-        for (const m of d.marks) {
-          if (!units.some((u) => u.code === m.unit)) continue;
-          const k = m.regNo.toLowerCase();
-          if (!people.has(k)) people.set(k, { ...m, marks: {} });
-          people.get(k).marks[m.unit] = m.moderated;
-        }
-        const list = [...people.values()].sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
-        download(name + '.xlsx', await Xlsx.simple('All units', ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', ...units.map((u, j) => `${j + 1} ${u.name} (${u.code})`)],
-          list.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, ...units.map((u) => s.marks[u.code] ?? '')])));
+        const heads = mod ? units.flatMap((u, j) => [`${j + 1} P - ${u.name} (${u.code})`, `${j + 1} T`]) : units.map((u, j) => `${j + 1} ${u.name} (${u.code})`);
+        download(name + '.xlsx', await Xlsx.simple('All units', ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', ...heads],
+          peopleOf(d, units).map((s, i) => [i + 1, s.regNo, s.name, s.admNo, ...units.flatMap((u) => { const [p, t] = s.marks[u.code] || [null, null]; return mod ? [show(p), show(t)] : [show(p)]; })])));
       }
       toast('Sheet saved to this device', 'ok');
     } catch (e) { toast(e.message, 'err'); }
@@ -516,20 +607,29 @@ const SummativePracticals = (() => {
   async function makePerUnit(kind, btn, only) {
     btn.disabled = true;
     try {
-      const d = await sheetData(), c = d.course;
-      const units = only ? d.units.filter((u) => u.code === only) : d.units;
+      const d = await sheetData(), c = d.course, many = !only || only.startsWith('*');
+      const units = !only ? d.units : many ? d.units.filter((u) => groupOf(u) === only.slice(1)) : d.units.filter((u) => u.code === only);
       if (!units.length) throw new Error('That unit is not on the course');
       const candsOf = (u) => d.marks.filter((m) => m.unit === u.code).sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
-      const base = `CDACC moderated practicals - ${only ? fileSafe(units[0].name) : 'every unit'} - ${fileSafe(c.course + ' ' + shortLevel(c.level))}_${stamp()}`;
+      const what = !only ? 'every unit' : many ? `every ${GROUPS[only.slice(1)].name} unit` : fileSafe(units[0].name);
+      const base = `CDACC moderated practicals - ${what} - ${fileSafe(c.course + ' ' + shortLevel(c.level))}_${stamp()}`;
       if (kind === 'pdf') {
         toast('Making the PDF…', 'ok');
         download(base + '.pdf', await HtmlPdf.make(doc(units.flatMap((u) => perUnitPages(c, u, candsOf(u)))), { landscape: true }));
       } else {
-        const u = units[0], cands = candsOf(u), m = moderation(cands, (k, x) => x[k]);
-        download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal assessor (all candidates, 100%)', 'External verifier (sampled, 100%)', 'Moderated (100%)'],
-          [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, s.internal ?? '', s.external ?? '', s.moderated ?? '']), [], ['', '', 'Mean deviation', '', '', m.md ?? '', ''], ['', '', 'Formula', 'Σ(External − Internal) ÷ number of sampled candidates'],
-           ['', '', 'Workings', m.n ? workText(m) : 'no external marks yet'], ['', '', 'Sample', `${m.sampled} of ${m.assessed} assessed (10% needed: ${m.need})`],
-           ['', '', 'Decision', sheetDecision(m)]]));
+        const u = units[0], cands = candsOf(u), sx = (v) => show(v ?? null);
+        const formula = ['', '', 'Formula', '(Σ External − Σ Internal of the sampled candidates) ÷ number sampled'];
+        const sum = (m, tag) => { const t = tag ? tag + ' - ' : ''; return [['', '', t + 'Mean deviation', '', '', m.md ?? '', ''], ['', '', t + 'Workings', m.n ? `${totalsText(m)}; per candidate ${workText(m)}` : 'no external marks yet'],
+          ['', '', t + 'Sample', `${m.sampled} of ${m.assessed} assessed (10% needed: ${m.need})`], ['', '', t + 'Decision', sheetDecision(m)]]; };
+        if (u.modular) {
+          download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s CDACC Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal T (all candidates, 100%)', 'Internal P (all candidates, 100%)',
+            'External T (sampled, 100%)', 'External P (sampled, 100%)', 'Moderated T (100%)', 'Moderated P (100%)'],
+          [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, sx(s.internalT), sx(s.internal), sx(s.externalT), sx(s.external), sx(s.moderatedT), sx(s.moderated)]), [], formula,
+            ...sum(moderation(cands, sheetGet, 't'), 'Theory (T)'), ...sum(moderation(cands, sheetGet, 'p'), 'Practical (P)')]));
+        } else {
+          download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal assessor (all candidates, 100%)', 'External verifier (sampled, 100%)', 'Moderated (100%)'],
+            [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, sx(s.internal), sx(s.external), sx(s.moderated)]), [], formula, ...sum(moderation(cands, sheetGet, 'p'), '')]));
+        }
       }
       toast('Sheet saved to this device', 'ok');
     } catch (e) { toast(e.message, 'err'); }
@@ -551,6 +651,9 @@ const SummativePracticals = (() => {
         if (sp.view === 'marks' && sp.unitCode) { try { await loadMarks(); } catch (er) { toast(er.message, 'err'); } draw(); }
         return;
       }
+      // Theory or practical on a modular unit: typed marks wait under their own column, so nothing needs saving first.
+      const pt = e.target.closest('[data-sppart]');
+      if (pt) { if (pt.dataset.sppart !== sp.part) { sp.part = pt.dataset.sppart; draw(); } return; }
       const b = e.target.closest('[data-sp]');
       if (!b || b.disabled) return;
       const act = b.dataset.sp;
@@ -563,8 +666,8 @@ const SummativePracticals = (() => {
       if (act === 'course-delete') return courseDelete(b);
       if (act === 'all-pdf') return makeAll('pdf', b);
       if (act === 'all-xlsx') return makeAll('xlsx', b);
-      if (act === 'per-pdf') return makePerUnit('pdf', b, sp.sheetUnit);
-      if (act === 'per-xlsx') return makePerUnit('xlsx', b, sp.sheetUnit);
+      if (act === 'per-pdf') return makePerUnit('pdf', b, sheetPick(course()));
+      if (act === 'per-xlsx') return makePerUnit('xlsx', b, sheetPick(course()));
     });
     document.addEventListener('change', async (e) => {
       const t = e.target, root = box();
@@ -585,6 +688,7 @@ const SummativePracticals = (() => {
       if (t.id === 'spFile') return rollFile(t);
       if (t.dataset.pick !== undefined) { if (t.checked) sp.pick.add(t.dataset.pick); else sp.pick.delete(t.dataset.pick); draw(); return; }
       if (t.id === 'spPickAll') { for (const g of sp.roll.filter((x) => !sp.find || lc(`${x.course} ${x.level} ${x.series}`).includes(lc(sp.find)))) { if (t.checked) sp.pick.add(g.key); else sp.pick.delete(g.key); } draw(); return; }
+      if (t.dataset.modular !== undefined) return setModular(t);
       if (t.dataset.su !== undefined) { if (t.checked) sp.sheetUnits.add(t.dataset.su); else sp.sheetUnits.delete(t.dataset.su); return; }
       if (t.id === 'spSheetUnit') { sp.sheetUnit = t.value; draw(); }
     });
@@ -598,8 +702,9 @@ const SummativePracticals = (() => {
       if (!t.matches || !t.matches('#sumprac input.spmk')) return;
       const k = t.dataset.kind + '|' + t.dataset.reg, c = candOf(t.dataset.reg);
       sp.edits.set(k, t.value.trim());
-      t.classList.toggle('bad', !markOk(t.value));
-      t.classList.toggle('changed', !!c && markOk(t.value) && markNum(t.value) !== c[t.dataset.kind]);
+      const ok = markOk(t.value, t.dataset.kind);
+      t.classList.toggle('bad', !ok);
+      t.classList.toggle('changed', !!c && ok && markNum(t.value) !== (c[t.dataset.kind] ?? null));
       if (saveState === 'error') saveState = 'saved';
       refreshDev();
       scheduleSave();

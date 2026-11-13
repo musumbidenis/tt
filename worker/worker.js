@@ -16,7 +16,7 @@
  * class; MIS sets up terms, uploads loading and class lists, approves students and manages staff.
  */
 
-export const VERSION = '7.33.0';
+export const VERSION = '7.34.0';
 const SCHEMA_VERSION = '31';
 const WINDOW_SECONDS = 20;   // how often the lesson QR changes — must match QR_WINDOW in app.js
 const CODE_LENGTH = 10;
@@ -31,9 +31,11 @@ const GONE = "('withdrawn','rejected','inactive')";
 // Summative practicals (TVET CDACC moderated practical marks): one sheet set per course of the CDACC nominal roll.
 // Also made on first use (spReady), so a database already at this schema version gets them without a version bump.
 const SP_SCHEMA = `CREATE TABLE IF NOT EXISTS sp_courses (id TEXT PRIMARY KEY, level TEXT, course TEXT, series TEXT, center_code TEXT, center_name TEXT, qual_code TEXT, assess_date TEXT, candidates INTEGER, updated_by TEXT, updated_at TEXT);
-CREATE TABLE IF NOT EXISTS sp_units (course_id TEXT, unit_code TEXT, unit_name TEXT, seq INTEGER, assessor_code TEXT COLLATE NOCASE, assessor_name TEXT, assessor_reg TEXT, verifier_name TEXT, verifier_reg TEXT, manager_name TEXT, assess_date TEXT, n_cand INTEGER, n_int INTEGER, n_ext INTEGER, n_mod INTEGER, locked_at TEXT, locked_by TEXT, updated_at TEXT, PRIMARY KEY (course_id, unit_code));
+CREATE TABLE IF NOT EXISTS sp_units (course_id TEXT, unit_code TEXT, unit_name TEXT, seq INTEGER, assessor_code TEXT COLLATE NOCASE, assessor_name TEXT, assessor_reg TEXT, verifier_name TEXT, verifier_reg TEXT, manager_name TEXT, assess_date TEXT, n_cand INTEGER, n_int INTEGER, n_ext INTEGER, n_mod INTEGER, locked_at TEXT, locked_by TEXT, updated_at TEXT, modular INTEGER, PRIMARY KEY (course_id, unit_code));
 CREATE INDEX IF NOT EXISTS sp_units_assessor ON sp_units (assessor_code);
-CREATE TABLE IF NOT EXISTS sp_marks (course_id TEXT, unit_code TEXT, reg_no TEXT COLLATE NOCASE, adm_no TEXT, name TEXT, internal_mark INTEGER, external_mark INTEGER, moderated_mark INTEGER, int_by TEXT, ext_by TEXT, mod_by TEXT, updated_at TEXT, PRIMARY KEY (course_id, unit_code, reg_no));`;
+CREATE TABLE IF NOT EXISTS sp_marks (course_id TEXT, unit_code TEXT, reg_no TEXT COLLATE NOCASE, adm_no TEXT, name TEXT, internal_mark INTEGER, external_mark INTEGER, moderated_mark INTEGER, int_by TEXT, ext_by TEXT, mod_by TEXT, updated_at TEXT, internal_t INTEGER, external_t INTEGER, moderated_t INTEGER, int_t_by TEXT, ext_t_by TEXT, PRIMARY KEY (course_id, unit_code, reg_no));`;
+// Columns added after the tables first went live: spReady adds any a database is missing (no version bump, so nobody is signed out).
+const SP_ADDED = { sp_units: ['modular INTEGER'], sp_marks: ['internal_t INTEGER', 'external_t INTEGER', 'moderated_t INTEGER', 'int_t_by TEXT', 'ext_t_by TEXT'] };
 
 // One statement per line (D1 exec runs them in order).
 const SCHEMA = `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -4287,8 +4289,19 @@ let spReadyFlag = false;
 async function spReady(env) {
   if (spReadyFlag) return;
   await env.DB.exec(SP_SCHEMA);
+  for (const [table, cols] of Object.entries(SP_ADDED)) {
+    const have = new Set((await all(env, `PRAGMA table_info(${table})`)).map((c) => c.name));
+    for (const c of cols) if (!have.has(c.split(' ')[0])) await env.DB.exec(`ALTER TABLE ${table} ADD COLUMN ${c}`);
+  }
   spReadyFlag = true;
 }
+/* Modular curricula (CDACC, from May 2025): every unit has a theory (T) and a practical (P) mark, each out of 100, entered,
+ * verified and moderated on its own. Their unit codes end in /MA (e.g. IT/OS/ICTA/CR/01/5/MA); the office can set a unit
+ * either way (sp_units.modular, NULL = by the code). Only core units (CR) are taken from the roll: CDACC sets practicals
+ * for core units, with the basic and common ones built into them. */
+const spModular = (u) => (u.modular === null || u.modular === undefined ? /\/MA$/i.test(u.unit_code || '') : !!u.modular);
+const SP_MODULAR_SQL = "COALESCE(sp_units.modular, sp_units.unit_code LIKE '%/MA')";
+const spNotCore = (code) => /(^|\/)(BC|CC)(\/|$)/.test(code);
 const spText = (v, max = 160) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const spId = (level, course, series) => [level, course, series].map((x) => lower(spText(x))).join('|');
 /** "RIFT VALLEY INSTITUTE ... (RVIST) (0320134P)" -> name and centre code (the last bracket holding a digit). */
@@ -4296,23 +4309,32 @@ function spCenter(s) {
   const t = spText(s, 200), m = /^(.*?)\s*\(([A-Z0-9]{4,12})\)\s*$/i.exec(t);
   return m && /\d/.test(m[2]) ? { name: m[1].trim(), code: m[2].toUpperCase() } : { name: t, code: '' };
 }
-const spMark = (v) => {
+// AB: the candidate was absent. Kept as -1, typed only in the internal assessor's column; the moderated mark is AB too.
+const SP_AB = -1;
+const spMark = (v, ab) => {
   const t = String(v ?? '').trim();
   if (t === '') return { ok: true, v: null };
+  if (ab && /^ab$/i.test(t)) return { ok: true, v: SP_AB };
   return /^\d{1,3}$/.test(t) && Number(t) <= 100 ? { ok: true, v: Number(t) } : { ok: false };
 };
-// People type in two columns; the third (moderated) is always worked out by spRemoderate.
-const SP_COL = { internal: ['internal_mark', 'int_by'], external: ['external_mark', 'ext_by'] };
+// People type in the internal and external columns (practical; and theory on a modular unit); the moderated ones are
+// always worked out by spRemoderate.
+const SP_COL = { internal: ['internal_mark', 'int_by'], external: ['external_mark', 'ext_by'], internalT: ['internal_t', 'int_t_by'], externalT: ['external_t', 'ext_t_by'] };
+const SP_PART = { p: ['internal_mark', 'external_mark', 'moderated_mark'], t: ['internal_t', 'external_t', 'moderated_t'] };
 /* CDACC moderation. The external verifier re-assesses a random sample of at least 10% of the candidates who were assessed
  * (CDACC Assessment Centre Guide, 4.3.3 II). Mean deviation = the average of (external - internal) over the sampled
  * candidates. Within +/-5 the internal assessor's marks stand; beyond 5 every candidate's mark moves by the mean deviation
- * (CDACC RPL Assessment & Certification Framework, verification of marks). Moderated marks appear only once the sample is big enough. */
+ * (CDACC RPL Assessment & Certification Framework, verification of marks). Moderated marks appear only once the sample is big enough.
+ * Checked against a filled CDACC sheet (MDS5): (1044 - 1046) / 13 = -0.15, within 5, so the internal marks stood.
+ * On a modular unit theory and practical are moderated apart (part 't' and 'p'): CDACC's forms keep the two moderated
+ * marks in their own columns and publish no combined figure. Absent candidates (AB) are not assessed, so not counted. */
 const SP_SAMPLE_DIV = 10, SP_TOLERANCE = 5;
-function spModeration(rows) {
-  const assessed = rows.filter((r) => r.internal_mark !== null && r.internal_mark !== undefined);
-  const both = assessed.filter((r) => r.external_mark !== null && r.external_mark !== undefined);
+function spModeration(rows, part = 'p') {
+  const [ik, xk] = SP_PART[part], has = (v) => v !== null && v !== undefined;
+  const assessed = rows.filter((r) => has(r[ik]) && r[ik] >= 0);
+  const both = assessed.filter((r) => has(r[xk]));
   const need = assessed.length ? Math.max(1, Math.ceil(assessed.length / SP_SAMPLE_DIV)) : 0;
-  const md = both.length ? Math.round((both.reduce((t, r) => t + r.external_mark - r.internal_mark, 0) / both.length) * 100) / 100 : null;
+  const md = both.length ? Math.round((both.reduce((t, r) => t + r[xk] - r[ik], 0) / both.length) * 100) / 100 : null;
   const ready = assessed.length > 0 && both.length >= need;
   const adjust = ready && Math.abs(md) > SP_TOLERANCE ? md : 0;
   return { assessed: assessed.length, need, sampled: both.length, md, ready, adjust, tolerance: SP_TOLERANCE };
@@ -4320,32 +4342,41 @@ function spModeration(rows) {
 const spModerated = (internal, adjust) => Math.max(0, Math.min(100, Math.round(internal + adjust)));
 /** Works the moderated marks out again for one unit, or every unit of a course. */
 async function spRemoderate(env, cid, unit = null) {
-  const rows = await all(env, `SELECT unit_code, reg_no, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=?${unit ? ' AND unit_code=?' : ''}`,
+  const rows = await all(env, `SELECT unit_code, reg_no, internal_mark, external_mark, moderated_mark, internal_t, external_t, moderated_t FROM sp_marks WHERE course_id=?${unit ? ' AND unit_code=?' : ''}`,
   cid, ...(unit ? [unit] : []));
   const by = new Map();
   for (const r of rows) { if (!by.has(r.unit_code)) by.set(r.unit_code, []); by.get(r.unit_code).push(r); }
   const upd = [];
   for (const [code, list] of by) {
-    const m = spModeration(list);
+    const mp = spModeration(list, 'p'), mt = spModeration(list, 't');
+    const modOf = (m, i) => (i === null || i === undefined ? null : i < 0 ? SP_AB : m.ready ? spModerated(i, m.adjust) : null);
     for (const r of list) {
-      const v = m.ready && r.internal_mark !== null ? spModerated(r.internal_mark, m.adjust) : null;
-      if (v !== (r.moderated_mark ?? null)) upd.push(['UPDATE sp_marks SET moderated_mark=?, mod_by=? WHERE course_id=? AND unit_code=? AND reg_no=?', v, v === null ? null : 'system', cid, code, r.reg_no]);
+      const p = modOf(mp, r.internal_mark), t = modOf(mt, r.internal_t);
+      if (p !== (r.moderated_mark ?? null) || t !== (r.moderated_t ?? null)) {
+        upd.push(['UPDATE sp_marks SET moderated_mark=?, moderated_t=?, mod_by=? WHERE course_id=? AND unit_code=? AND reg_no=?', p, t, p === null && t === null ? null : 'system', cid, code, r.reg_no]);
+      }
     }
   }
   for (let i = 0; i < upd.length; i += 50) await many(env, ...upd.slice(i, i + 50));
   await run(env, SP_RECOUNT + ` WHERE course_id=?${unit ? ' AND unit_code=?' : ''}`, cid, ...(unit ? [unit] : []));
 }
-const SP_RECOUNT = 'UPDATE sp_units SET ' + [['n_cand', '*'], ['n_int', 'm.internal_mark'], ['n_ext', 'm.external_mark'], ['n_mod', 'm.moderated_mark']]
-  .map(([c, x]) => `${c}=(SELECT COUNT(${x}) FROM sp_marks m WHERE m.course_id=sp_units.course_id AND m.unit_code=sp_units.unit_code)`).join(', ');
+// The unit counts (Marks I/E/M on the course card). On a modular unit a candidate's internal or moderated marks count once
+// both theory and practical are in; an external mark counts when either part was sampled.
+const spCount = (cond) => `(SELECT COUNT(*) FROM sp_marks m WHERE m.course_id=sp_units.course_id AND m.unit_code=sp_units.unit_code${cond ? ' AND ' + cond : ''})`;
+const spBoth = (p, t, join) => `(${p} IS NOT NULL ${join} (NOT ${SP_MODULAR_SQL} OR ${t} IS NOT NULL))`;
+const SP_RECOUNT = `UPDATE sp_units SET n_cand=${spCount('')}, n_int=${spCount(spBoth('m.internal_mark', 'm.internal_t', 'AND'))},
+  n_ext=${spCount(`(m.external_mark IS NOT NULL OR (${SP_MODULAR_SQL} AND m.external_t IS NOT NULL))`)}, n_mod=${spCount(spBoth('m.moderated_mark', 'm.moderated_t', 'AND'))}`;
 const spOffice = (me) => me.roles.some((r) => ['MIS', 'HOD', 'IAO'].includes(r));
 const spEnters = (me) => me.roles.some((r) => ['TRAINER', 'HOD', 'EAO', 'GUEST'].includes(r));
 const spCourseOut = (c) => ({ id: c.id, level: c.level || '', course: c.course || '', series: c.series || '', centerCode: c.center_code || '',
   centerName: c.center_name || '', qualCode: c.qual_code || '', assessDate: c.assess_date || '', candidates: c.candidates || 0 });
 const spUnitOut = (u) => ({ code: u.unit_code, name: u.unit_name || u.unit_code, seq: u.seq || 0, assessorCode: u.assessor_code || '', assessorName: u.assessor_name || '',
   assessorReg: u.assessor_reg || '', verifierName: u.verifier_name || '', verifierReg: u.verifier_reg || '', managerName: u.manager_name || '',
-  assessDate: u.assess_date || '', candidates: u.n_cand || 0, internal: u.n_int || 0, external: u.n_ext || 0, moderated: u.n_mod || 0 });
+  assessDate: u.assess_date || '', candidates: u.n_cand || 0, internal: u.n_int || 0, external: u.n_ext || 0, moderated: u.n_mod || 0, modular: spModular(u) });
+// AB (absent) goes out as -1; the app shows it as AB.
 const spCandOut = (r) => ({ regNo: r.reg_no, admNo: r.adm_no || '', name: r.name || '', internal: r.internal_mark ?? null, external: r.external_mark ?? null,
-  moderated: r.moderated_mark ?? null, intBy: r.int_by || '', extBy: r.ext_by || '' });
+  moderated: r.moderated_mark ?? null, internalT: r.internal_t ?? null, externalT: r.external_t ?? null, moderatedT: r.moderated_t ?? null,
+  intBy: r.int_by || '', extBy: r.ext_by || '' });
 async function spUnit(env, courseId, unitCode) {
   const u = await one(env, 'SELECT * FROM sp_units WHERE course_id=? AND unit_code=?', String(courseId || ''), String(unitCode || ''));
   if (!u) fail('That unit is not on this course’s roll. Refresh and choose it again.');
@@ -4360,13 +4391,13 @@ async function spUpload(env, b, me) {
   const id = spId(level, course, series), seen = new Set(), rows = [];
   for (const r of (b.rows || []).slice(0, 8000)) {
     const reg = spText(r.regNo, 60), unit = spText(r.unitCode, 60).replace(/\s+/g, '').toUpperCase(), name = nameCase(spText(r.name, 120));
-    if (!reg || !unit || !name) continue;
+    if (!reg || !unit || !name || spNotCore(unit)) continue;
     const k = unit + '|' + lower(reg);
     if (seen.has(k)) continue;
     seen.add(k);
     rows.push({ k, reg, adm: spText(r.admNo, 60), name, unit, unitName: spText(r.unitName, 200) });
   }
-  if (!rows.length) fail(`No candidates for ${course}: each row needs a Reg No, a Name and a Unit Code`);
+  if (!rows.length) fail(`No candidates for ${course}: each row needs a Reg No, a Name and a core Unit Code (basic and common units are left out)`);
   const now = nowIso(), center = spCenter(b.center);
   const had = await all(env, 'SELECT unit_code, seq FROM sp_units WHERE course_id=?', id);
   const seqOf = new Map(had.map((u) => [u.unit_code, Number(u.seq) || 0]));
@@ -4389,7 +4420,7 @@ async function spUpload(env, b, me) {
       use.map((r) => ({ course_id: id, unit_code: r.unit, reg_no: r.reg, adm_no: r.adm, name: r.name, updated_at: now })), ['course_id', 'unit_code', 'reg_no'], ['adm_no', 'name']),
     // Off the new roll: dropped, unless a mark was already entered for them (kept, and counted for the message).
     [`DELETE FROM sp_marks WHERE course_id=? AND internal_mark IS NULL AND external_mark IS NULL AND moderated_mark IS NULL
-      AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, keys],
+      AND internal_t IS NULL AND external_t IS NULL AND moderated_t IS NULL AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, keys],
     [`SELECT COUNT(*) AS n FROM sp_marks WHERE course_id=? AND (unit_code || '|' || lower(reg_no)) NOT IN (SELECT value FROM json_each(?))`, id, keys],
     [SP_RECOUNT + ' WHERE course_id=?', id],
     ['DELETE FROM sp_units WHERE course_id=? AND n_cand=0', id],
@@ -4439,9 +4470,12 @@ async function spUnitSave(env, b, me) {
   if (b.assessorReg !== undefined) put('assessor_reg', spText(b.assessorReg, 60));
   if (b.managerName !== undefined) put('manager_name', spText(b.managerName, 120));
   if (b.assessDate !== undefined) put('assess_date', spText(b.assessDate, 60));
+  // Modular (theory and practical) or not: set by the office when the unit code does not tell it right.
+  if (b.modular !== undefined) { if (!spOffice(me)) fail('The HOD, MIS Officer or Assessment Officer sets whether a unit is modular'); put('modular', b.modular ? 1 : 0); }
   if (sets.length) {
     put('updated_at', nowIso());
     await run(env, `UPDATE sp_units SET ${sets.join(', ')} WHERE course_id=? AND unit_code=?`, ...vals, u.course_id, u.unit_code);
+    if (b.modular !== undefined) await spRemoderate(env, u.course_id, u.unit_code);
     await audit(env, me, 'summative practicals unit', `${u.unit_code} (${u.course_id}): ${sets.slice(0, -1).map((x) => x.split('=')[0]).join(', ')}`);
   }
   return { ok: true, unit: spUnitOut(await spUnit(env, u.course_id, u.unit_code)) };
@@ -4451,26 +4485,29 @@ async function spMarks(env, b, me) {
   await spReady(env);
   const id = String(b.courseId || ''), unit = String(b.unitCode || '');
   const [cr, ur, rows] = await many(env, ['SELECT * FROM sp_courses WHERE id=?', id], ['SELECT * FROM sp_units WHERE course_id=? AND unit_code=?', id, unit],
-    ['SELECT reg_no, adm_no, name, internal_mark, external_mark, moderated_mark, int_by, ext_by FROM sp_marks WHERE course_id=? AND unit_code=? ORDER BY reg_no', id, unit]);
+    ['SELECT reg_no, adm_no, name, internal_mark, external_mark, moderated_mark, internal_t, external_t, moderated_t, int_by, ext_by FROM sp_marks WHERE course_id=? AND unit_code=? ORDER BY reg_no', id, unit]);
   if (!cr[0] || !ur[0]) fail('That unit is not on this course’s roll. Refresh and choose it again.');
-  return { ok: true, course: spCourseOut(cr[0]), unit: spUnitOut(ur[0]), moderation: spModeration(rows), candidates: rows.map(spCandOut) };
+  return { ok: true, course: spCourseOut(cr[0]), unit: spUnitOut(ur[0]), moderation: spModeration(rows, 'p'),
+    ...(spModular(ur[0]) ? { moderationT: spModeration(rows, 't') } : {}), candidates: rows.map(spCandOut) };
 }
-/** Saves one column of a unit's marks (internal or external; a blank clears) and works the moderated marks out again. */
+/** Saves one column of a unit's marks (internal or external, practical or theory; a blank clears) and works the moderated
+ *  marks out again. */
 async function spSave(env, b, me) {
   await spReady(env);
-  const kind = String(b.kind || ''), col = SP_COL[kind];
+  const kind = String(b.kind || ''), col = SP_COL[kind], internal = kind.startsWith('internal');
   if (!col) fail('Moderated marks are worked out by the system from the internal and external marks');
   if (!spEnters(me)) fail('Trainers, guests and external officers enter these marks');
   const u = await spUnit(env, b.courseId, b.unitCode);
-  const list = (b.marks || []).slice(0, 3000).map((m) => ({ reg: spText(m.regNo, 60), p: spMark(m.mark) })).filter((m) => m.reg);
+  if (kind.endsWith('T') && !spModular(u)) fail('This unit has practical marks only (it is not on a modular curriculum)');
+  const list = (b.marks || []).slice(0, 3000).map((m) => ({ reg: spText(m.regNo, 60), p: spMark(m.mark, internal) })).filter((m) => m.reg);
   const bad = list.find((m) => !m.p.ok);
-  if (bad) fail(`Marks are whole numbers from 0 to 100 (check ${bad.reg})`);
+  if (bad) fail(`Marks are whole numbers from 0 to 100${internal ? ', or AB for absent' : ' (AB for absent goes in the internal column)'} - check ${bad.reg}`);
   const now = nowIso(), sql = `UPDATE sp_marks SET ${col[0]}=?, ${col[1]}=?, updated_at=? WHERE course_id=? AND unit_code=? AND reg_no=?`;
   for (let i = 0; i < list.length; i += 50) await many(env, ...list.slice(i, i + 50).map((m) => [sql, m.p.v, m.p.v === null ? null : me.code, now, u.course_id, u.unit_code, m.reg]));
   // The sheet's Internal Assessor is whoever saves the internal marks (someone saving only external marks is named only
   // while nobody has saved internal ones). The External Verifier lines stay blank on the sheet, for signing by hand.
   if (list.some((m) => m.p.v !== null)) {
-    await run(env, `UPDATE sp_units SET assessor_code=?, assessor_name=?, updated_at=? WHERE course_id=? AND unit_code=?${kind === 'internal' ? '' : " AND COALESCE(assessor_name,'')=''"}`,
+    await run(env, `UPDATE sp_units SET assessor_code=?, assessor_name=?, updated_at=? WHERE course_id=? AND unit_code=?${internal ? '' : " AND COALESCE(assessor_name,'')=''"}`,
       me.code, me.name, now, u.course_id, u.unit_code);
   }
   await spRemoderate(env, u.course_id, u.unit_code);
@@ -4482,10 +4519,11 @@ async function spSheet(env, b, me) {
   await spReady(env);
   const id = String(b.courseId || '');
   const [cr, units, rows] = await many(env, ['SELECT * FROM sp_courses WHERE id=?', id], ['SELECT * FROM sp_units WHERE course_id=? ORDER BY seq', id],
-    ['SELECT unit_code, reg_no, adm_no, name, internal_mark, external_mark, moderated_mark FROM sp_marks WHERE course_id=? ORDER BY reg_no', id]);
+    ['SELECT unit_code, reg_no, adm_no, name, internal_mark, external_mark, moderated_mark, internal_t, external_t, moderated_t FROM sp_marks WHERE course_id=? ORDER BY reg_no', id]);
   if (!cr[0]) fail('That course is not on the roll. Refresh the page.');
   return { ok: true, course: spCourseOut(cr[0]),
-    units: units.map((u) => ({ ...spUnitOut(u), moderation: spModeration(rows.filter((m) => m.unit_code === u.unit_code)) })),
+    units: units.map((u) => { const list = rows.filter((m) => m.unit_code === u.unit_code);
+      return { ...spUnitOut(u), moderation: spModeration(list, 'p'), ...(spModular(u) ? { moderationT: spModeration(list, 't') } : {}) }; }),
     marks: rows.map((m) => ({ unit: m.unit_code, ...spCandOut(m) })) };
 }
 

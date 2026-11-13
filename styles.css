@@ -1539,6 +1539,8 @@ tr.ps-no td { color: var(--muted); }
 .sp-pick { display: flex; flex-wrap: wrap; gap: 0 .875rem; }
 .sp-pick label { flex: 1 1 16rem; min-width: 0; }
 .sp-unit-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; flex-wrap: wrap; margin: 0 0 .75rem; }
+.sp-parts { display: flex; align-items: center; gap: .5rem .875rem; flex-wrap: wrap; margin: 0 0 .75rem; }   /* theory | practical on a modular unit */
+.sp-parts .view-tabs { margin: 0; }
 .sp-table th, .sp-table td { padding: .4rem .55rem; vertical-align: middle; }
 .sp-table .num { text-align: right; }
 .sp-table th.mkc, .sp-table td.mkc { text-align: center; }
@@ -1568,6 +1570,7 @@ tr.ps-no td { color: var(--muted); }
 @media (max-width: 560px) {
   .sp .grid2 { grid-template-columns: 1fr; }
   .sp-table .sp-reg { display: none; }
+  .sp-table .sp-tp { display: none; }   /* "T"/"P" after the headings: the Practical | Theory switch already says which */
   .sp .sp-table .adm.sp-reg-m { display: block; }
   .sp-table .adm { overflow-wrap: anywhere; }
   .sp-table .sp-devc { display: none; }
@@ -1593,6 +1596,7 @@ tr.ps-no td { color: var(--muted); }
   .sp-grid th.sn { width: 8mm; }
   .sp-grid th.rg { width: 46mm; }
   .sp-grid th.w { width: 34mm; }
+  .sp-grid th.w2 { width: 17mm; }   /* the T and P columns of the modular per-unit form */
   .sp-grid th.mk { min-width: 7mm; }
   .sp-grid td.c, .sp-grid td.mk { text-align: center; font-variant-numeric: tabular-nums; }
   .sp-grid td.nw { white-space: nowrap; }   /* one line per candidate, so every sheet holds a known number */
