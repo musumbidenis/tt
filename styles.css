@@ -1582,9 +1582,9 @@ tr.ps-no td { color: var(--muted); }
 @media print {
   .sp-print { font: 10pt "Times New Roman", serif; color: #000; }
   .sp-page + .sp-page { break-before: page; }
-  .sp-top { display: flex; align-items: center; justify-content: center; gap: 4mm; }
-  .sp-top img { width: 15mm; height: auto; }
-  .sp-org { font: bold 11pt "Times New Roman", serif; }
+  .sp-top { text-align: center; }   /* the crest centred, the council's name centred under it */
+  .sp-top img { display: block; width: 15mm; height: auto; margin: 0 auto 1mm; }
+  .sp-org { font: bold 11pt "Times New Roman", serif; text-align: center; }
   .sp-form { display: flex; justify-content: space-between; font-weight: bold; margin: 1mm 0 .5mm; }
   .sp-print h1 { font: bold 10.5pt "Times New Roman", serif; text-align: center; text-decoration: underline; margin: .5mm 0 1.5mm; }
   .sp-fields { width: 100%; border-collapse: collapse; margin-bottom: 1.5mm; }

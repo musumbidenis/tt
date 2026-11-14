@@ -479,16 +479,18 @@ const SummativePracticals = (() => {
   // Candidates per printed sheet (landscape A4). The KEY and the sign-offs go on the last sheet only, so it holds fewer.
   // A unit's last sheet also carries the mean deviation, its workings (one row fewer per line they take) and a breather.
   // The modular forms (_M) have more heading rows, and the all-units one a third sign-off.
-  const ALL_FULL = 24, ALL_LAST = 19, UNIT_FULL = 24, UNIT_LAST = 18;
-  const ALL_FULL_M = 22, ALL_LAST_M = 16, UNIT_FULL_M = 23, UNIT_LAST_M = 17;
+  const ALL_FULL = 24, ALL_LAST = 18, UNIT_FULL = 24, UNIT_LAST = 18;
+  const ALL_FULL_M = 22, ALL_LAST_M = 15, UNIT_FULL_M = 23, UNIT_LAST_M = 16;
   const title = (c) => [c.course, c.level].filter(Boolean).join(' - ');
-  /** Splits a list into sheets: as few as fit (full sheets hold `full`, the last one `last`), evened out so no sheet is nearly empty. */
-  function pagesOf(list, full, last) {
-    const n = list.length;
-    if (n <= last) return [list];
-    const P = 1 + Math.ceil((n - last) / full), lastSize = Math.min(last, Math.round(n / P)), rest = n - lastSize, out = [];
-    let i = 0;
-    for (let k = 0; k < P - 1; k++) { const take = Math.ceil((rest - i) / (P - 1 - k)); out.push(list.slice(i, i + take)); i += take; }
+  /** Splits a list into sheets: as few as fit, evened out so no sheet is nearly empty. Full sheets hold `full` and the last one
+   * `last`; the first sheet carries the crest, which takes the room of `crest` rows (so a one-sheet form holds last - crest). */
+  function pagesOf(list, full, last, crest = 2) {
+    const n = list.length, first = full - crest;
+    if (n <= last - crest) return [list];
+    const P = 2 + Math.max(0, Math.ceil((n - first - last) / full)), lastSize = Math.min(last, Math.round(n / P)), rest = n - lastSize;
+    const out = [list.slice(0, Math.min(first, Math.ceil(rest / (P - 1))))];
+    let i = out[0].length;
+    for (let k = 0; k < P - 2; k++) { const take = Math.ceil((rest - i) / (P - 2 - k)); out.push(list.slice(i, i + take)); i += take; }
     out.push(list.slice(i));
     return out;
   }
@@ -496,7 +498,8 @@ const SummativePracticals = (() => {
   /** The top of a form: crest, form number (and SHEET x OF y on the all-units forms), heading, the centre and course lines. */
   function headHtml(c, o) {
     const [codeL, titleL] = o.modular ? ['Course Code:', 'Course Title:'] : ['Course/Qualification Code:', 'Course/Qualification Title:'];
-    return `<div class="sp-top"><img src="icons/cdacc-logo.png" alt=""><div class="sp-org">${CDACC}</div></div>
+    // The crest and the council's name head the first sheet of a form only.
+    return `${o.first ? `<div class="sp-top"><img src="icons/cdacc-logo.png" alt=""><div class="sp-org">${CDACC}</div></div>` : ''}
       <div class="sp-form"><span>${o.form}</span>${o.of ? `<span>SHEET ${o.sheet} OF ${o.of}</span>` : ''}</div>
       <h1>${o.heading}</h1>
       <table class="sp-fields"><tr><th>Assessment Center Code:</th><td>${esc(c.centerCode)}</td><th>Assessment Center Name:</th><td>${esc(c.centerName)}</td></tr>
@@ -524,7 +527,9 @@ const SummativePracticals = (() => {
   }
   function allUnitsPages(d, units, modular) {
     const c = d.course, list = peopleOf(d, units), cols = units.length * (modular ? 2 : 1);
-    const pages = pagesOf(list, modular ? ALL_FULL_M : ALL_FULL, Math.max(6, (modular ? ALL_LAST_M : ALL_LAST) - Math.ceil(units.length / 3)));
+    // The KEY runs in three columns; a long unit name wraps (about 60 characters a line), and each KEY line costs a row.
+    const keyLines = Math.ceil(units.reduce((t, u) => t + Math.ceil((String(u.name || '').length + 5) / 60), 0) / 3);
+    const pages = pagesOf(list, modular ? ALL_FULL_M : ALL_FULL, Math.max(6, (modular ? ALL_LAST_M : ALL_LAST) - keyLines));
     const key = `<div class="sp-key"><b>KEY:</b>${units.map((u, j) => `<span>${j + 1} - ${esc(u.name)}</span>`).join('')}</div>`;
     const sign = `<div class="sp-sign"><p>1. Name of External Verifier:${ln('')}External Verifier Reg. Code/National ID. No:${ln('', 's')}</p>
       <p>Signature:${ln('', 's')}Date:${ln('', 's')}</p>
@@ -540,7 +545,7 @@ const SummativePracticals = (() => {
     // A candidate not sitting a unit gets "-"; one sitting it with no moderated mark yet, a blank.
     const cells = (s, u) => { if (!(u.code in s.marks)) return modular ? '<td class="mk">-</td><td class="mk">-</td>' : '<td class="mk">-</td>'; const [p, t] = s.marks[u.code]; return `<td class="mk">${show(p)}</td>${modular ? `<td class="mk">${show(t)}</td>` : ''}`; };
     let n = 0;
-    return pages.map((rows, p) => `${headHtml(c, { form: modular ? 'CDACC/CBA/SAMSP/1' : 'CBA/SAMSP/2', sheet: p + 1, of: pages.length, modular, date: c.assessDate || common(units, 'assessDate'),
+    return pages.map((rows, p) => `${headHtml(c, { form: modular ? 'CDACC/CBA/SAMSP/1' : 'CBA/SAMSP/2', sheet: p + 1, of: pages.length, first: p === 0, modular, date: c.assessDate || common(units, 'assessDate'),
         heading: modular ? 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL AND THEORY MARKS SHEETS FOR ALL UNITS OF COMPETENCY FOR MODULARIZED CURRICULA' : 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS FOR ALL UNITS OF COMPETENCY' })}
       <table class="sp-grid${cols > 14 ? ' many' : ''}"><thead>${head}</thead>
       <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${units.map((u) => cells(s, u)).join('')}</tr>`).join('')}</tbody></table>
@@ -570,8 +575,8 @@ const SummativePracticals = (() => {
     const row = (s) => (mod ? [s.internalT, s.internal, s.externalT, s.external, s.moderatedT, s.moderated] : [s.internal, s.external, s.moderated]).map((v) => `<td class="mk">${show(v ?? null)}</td>`).join('');
     let n = 0;
     return pages.map((rows, p) => `${headHtml(c, mod
-        ? { form: 'CDACC/CBA/SAMSP', modular: true, noDate: true, extra, heading: 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY (MODULARIZED CURRICULA)' }
-        : { form: 'CBA/SAMSP/1', date: u.assessDate || c.assessDate, extra, heading: 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY' })}
+        ? { first: p === 0, form: 'CDACC/CBA/SAMSP', modular: true, noDate: true, extra, heading: 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY (MODULARIZED CURRICULA)' }
+        : { first: p === 0, form: 'CBA/SAMSP/1', date: u.assessDate || c.assessDate, extra, heading: 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY' })}
       <table class="sp-grid"><thead>${head}</thead>
       <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${row(s)}</tr>`).join('')}</tbody></table>
       ${p === pages.length - 1 ? md + sign : ''}`);
