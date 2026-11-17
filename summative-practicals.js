@@ -455,7 +455,12 @@ const SummativePracticals = (() => {
       <div class="sp-check-list">${list.map((u) => `<label class="check"><input type="checkbox" data-su="${esc(u.code)}"${sp.sheetUnits.has(u.code) ? ' checked' : ''}>${u.seq}. ${esc(u.name)} <span class="muted small">(${u.moderated}/${u.candidates})</span></label>`).join('')}</div>
       <div class="row-actions"><button type="button" class="btn primary" data-sp="all-pdf" data-group="${g}">${two ? GROUPS[g].label : 'All units'} - PDF</button><button type="button" class="btn" data-sp="all-xlsx" data-group="${g}">${two ? GROUPS[g].label : 'All units'} - Excel</button></div>`).join('');
     const every = two ? groups.map(([g]) => `<option value="*${g}"${sel === '*' + g ? ' selected' : ''}>Every ${GROUPS[g].name} unit (one PDF)</option>`).join('') : '<option value="">Every unit (one PDF)</option>';
-    return `<section class="card sp-sec">${pickers(false)}${allHtml}
+    return `<section class="card sp-sec">${pickers(false)}
+      <div class="sp-zip">
+        <p class="muted small">Download the ticked units as one zip: a <b>Per unit of competency</b> PDF for every ticked unit, plus the <b>all units</b> marksheet. The all-units marksheet holds at most 10 units per document, so a course with more units produces further batches.</p>
+        <div class="row-actions"><button type="button" class="btn primary" data-sp="zip-all">Download all ticked units (zip)</button></div>
+        <div id="spZipOut" class="sp-zip-out"></div>
+      </div>${allHtml}
       <h3>Per unit of competency</h3>
       <p class="muted small">Internal assessor’s marks (all candidates), the external verifier’s (sampled), the moderated marks, the mean deviation and the sign-offs${groups.some(([g]) => g === 'mod') ? '. A modular unit has a T and a P column under each, and a mean deviation for each' : ''}. “Every unit” puts one sheet per unit into a single PDF.</p>
       <label>Unit<select id="spSheetUnit">${every}${c.units.map((u) => `<option value="${esc(u.code)}"${u.code === sel ? ' selected' : ''}>${esc(u.seq + '. ' + u.name)}${u.modular ? ' (T + P)' : ''}</option>`).join('')}</select></label>
@@ -778,6 +783,50 @@ const SummativePracticals = (() => {
     } catch (e) { toast(e.message, 'err'); }
     btn.disabled = false;
   }
+  // The whole course in one zip: a per-unit-of-competency PDF for each ticked unit, plus the all-units marksheet,
+  // split so no all-units document carries more than MAX_ALL units (the rest spill into further batches).
+  const MAX_ALL = 10;
+  async function makeZip(btn) {
+    const chosen = (course()?.units || []).filter((u) => sp.sheetUnits?.has(u.code));
+    if (!chosen.length) { toast('Tick at least one unit', 'err'); return; }
+    if (!navigator.onLine) { toast('Marksheets come from the server - this needs internet', 'err'); return; }
+    const out = $('#spZipOut');
+    btn.disabled = true;
+    try {
+      const d = await sheetData(), c = d.course, picked = new Set(chosen.map((u) => u.code));
+      const units = d.units.filter((u) => picked.has(u.code));
+      if (!units.length) throw new Error('Those units are no longer on the course - refresh the page');
+      const candsOf = (u) => d.marks.filter((m) => m.unit === u.code).sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
+      const grouped = groupsOf(units);                                    // [[g, list], ...], a list per form family
+      const total = units.length + grouped.reduce((t, [, l]) => t + Math.ceil(l.length / MAX_ALL), 0);
+      if (total > 24 && !confirm(`This builds ${total} PDFs and may be slow on a phone. Continue?`)) { btn.disabled = false; if (out) out.innerHTML = ''; return; }
+      const zip = new JSZip();
+      let n = 0;
+      const tick = (label) => { if (out) out.innerHTML = `<div class="bk-prog"><progress max="${total}" value="${n}"></progress><span>${Math.min(n + 1, total)} of ${total} - ${esc(label)}</span></div>`; };
+      const safe = fileSafe(c.course + ' ' + shortLevel(c.level));
+      // Per unit of competency: one PDF per ticked unit.
+      for (const u of units) {
+        tick(`Per unit: ${u.name}`); await new Promise((res) => setTimeout(res));
+        zip.file(`Per unit of competency/${fileSafe(u.seq + ' ' + u.name)}.pdf`, await HtmlPdf.make(doc(perUnitPages(c, u, candsOf(u))), { landscape: true }));
+        n++;
+      }
+      // All units of competency: per form family, at most MAX_ALL units a document.
+      for (const [g, list] of grouped) {
+        const mod = g === 'mod', count = Math.ceil(list.length / MAX_ALL), kind = mod ? 'theory and practical (modular)' : 'practicals';
+        for (let i = 0, b = 1; i < list.length; i += MAX_ALL, b++) {
+          tick(`All units${count > 1 ? ` (batch ${b} of ${count})` : ''}`); await new Promise((res) => setTimeout(res));
+          const suffix = count > 1 ? ` - batch ${b} of ${count}` : '';
+          zip.file(`All units of competency/CDACC moderated ${kind} - all units${suffix}.pdf`, await HtmlPdf.make(doc(allUnitsPages(d, list.slice(i, i + MAX_ALL), mod)), { landscape: true }));
+          n++;
+        }
+      }
+      if (out) out.innerHTML = '<p class="muted">Putting the zip together…</p>';
+      download(`CDACC marksheets - ${safe}_${stamp()}.zip`, await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }));
+      if (out) out.innerHTML = `<p class="ok-text">${total} PDF${total === 1 ? '' : 's'} zipped — the file is downloading.</p>`;
+      toast('Zip saved to this device', 'ok');
+    } catch (e) { if (out) out.innerHTML = `<p class="err-text">${esc(e.message)}</p>`; toast(e.message, 'err'); }
+    btn.disabled = false;
+  }
 
   /* ---------- events ---------- */
   function wire() {
@@ -807,6 +856,7 @@ const SummativePracticals = (() => {
       if (act === 'roll-cancel') { sp.roll = null; sp.pick.clear(); draw(); return; }
       if (act === 'course-save') return courseSave(b);
       if (act === 'course-delete') return courseDelete(b);
+      if (act === 'zip-all') return makeZip(b);
       if (act === 'all-pdf') return makeAll('pdf', b);
       if (act === 'all-xlsx') return makeAll('xlsx', b);
       if (act === 'per-pdf') return makePerUnit('pdf', b, sheetPick(course()));

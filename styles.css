@@ -1563,6 +1563,9 @@ tr.ps-no td { color: var(--muted); }
 .sp-sec h3 { margin: 1.25rem 0 .25rem; font: 600 1rem var(--display); }
 .sp-check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .25rem .875rem; margin: .5rem 0 .75rem; }
 .sp-check-list label.check { margin: 0; font-size: .875rem; }
+.sp-zip { margin: .5rem 0 1rem; padding: .75rem .875rem; border: 1px solid var(--line); border-radius: var(--r); background: rgba(127, 127, 127, .06); }
+.sp-zip p { margin: 0 0 .5rem; }
+.sp-zip-out:not(:empty) { margin-top: .6rem; }
 .sp .adm.sp-reg-m { display: none; }
 .sp-table .sp-modc { color: var(--ink); }
 .sp-table.sp-preview .sp-modc { color: var(--muted); font-style: italic; }
