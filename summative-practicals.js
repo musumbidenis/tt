@@ -137,9 +137,6 @@ const SummativePracticals = (() => {
   const modOf = (c, m) => { const i = val(PARTS[m.part].i, c); return !has(i) ? null : i < 0 ? AB : m.ready ? Math.max(0, Math.min(100, Math.round(i + m.adjust))) : null; };
   /** "(64 − 60) + (80 − 70) = (+4) + (+10) = +14; +14 ÷ 2 = +7.00" */
   const workText = (m) => `${m.pairs.map(([i, x]) => `(${x} − ${i})`).join(' + ')} = ${m.terms.map((t) => `(${signed(t)})`).join(' + ')} = ${signed(m.sum)}; ${signed(m.sum)} ÷ ${m.n} = ${md2(m.md)}`;
-  /** The short form CDACC's own filled sheets use: "(1044 − 1046) ÷ 13 = −0.15" - the sampled candidates' external marks
-   *  added up, less their internal marks added up, over the number sampled. */
-  const totalsText = (m) => `(${m.pairs.reduce((t, p) => t + p[1], 0)} − ${m.pairs.reduce((t, p) => t + p[0], 0)}) ÷ ${m.n} = ${md2(m.md)}`;
   function modHtml(m, label = '') {
     const head = `<p><b>${label ? label + ' - mean deviation' : 'Mean deviation'}</b> = Σ (External − Internal) ÷ number of sampled candidates</p>`;
     if (!m.assessed) return head + '<p class="muted">Enter the internal assessor’s marks first.</p>';
@@ -583,6 +580,167 @@ const SummativePracticals = (() => {
   const doc = (pages) => `<div class="sp-print">${pages.map((p, i) => `<div class="sp-page">${p}<div class="sp-foot">Page ${i + 1} of ${pages.length}</div></div>`).join('')}</div>`;
   async function sheetData() { return need(await api('spSheet', { courseId: sp.courseId })); }
   const stamp = () => todayISO();
+
+  /* ---------- the official forms as a styled Excel workbook, a replica of the PDF (via Xlsx.spWorkbook) ---------- */
+  const SN_W = 5, REG_W = 26, NAME_W = 28, SIG = '__________________';
+  const FROM_TO = (s) => { const t = String(s || '').trim(); if (!t) return 'From ________ to ________'; const [a, b] = t.split(/\s+(?:-|–|—|to)\s+/i); return `From ${a} to ${b || a}`; };
+  async function crestBytes() { try { return new Uint8Array(await (await fetch('icons/cdacc-logo.png')).arrayBuffer()); } catch { return null; } }
+  const C = (v, s, n) => ({ v, s: s || 'plain', n: !!n });
+  // A mark cell: AB stays AB, a number is numeric, nothing shows blank, a candidate not sitting the unit shows "-".
+  const markCell = (v) => (v === AB ? C('AB', 'sn') : v === '-' ? C('-', 'sn') : (v == null || v === '') ? C('', 'sn') : C(Number(v), 'sn', true));
+  function sheetBuilder(name, cols) {
+    const grid = [], merges = [], heights = {};
+    return {
+      name, cols, crest: true, grid, merges, heights, W: cols.length,
+      blank() { grid.push(cols.map(() => null)); return grid.length - 1; },
+      merge(r0, c0, r1, c1) { merges.push([r0, c0, r1, c1]); },
+      h(r, pt) { heights[r] = pt; },
+    };
+  }
+  // A full-width line: one value in column A, blanks (same style) across the rest, merged into one banner.
+  function banner(S, value, style, h) {
+    const r = S.cols.map((_, c) => (c === 0 ? C(value, style) : C('', style)));
+    const ri = S.grid.push(r) - 1; S.merge(ri, 0, ri, S.W - 1); if (h) S.h(ri, h);
+    return ri;
+  }
+  // A left-aligned line of text in column A that overflows across the (empty) rest of the row - no wrap, no clipping.
+  // Used for KEY, Mean Deviation and sign-off lines, where wrapping inside a cell would cut the text off.
+  function flow(S, value, bold, h) {
+    const r = S.cols.map(() => null); r[0] = C(value, bold ? 'form' : 'plain');
+    const ri = S.grid.push(r) - 1; if (h) S.h(ri, h);
+    return ri;
+  }
+  // One identification row: a label/value pair across the full width. Excel shares one column grid, so narrow data
+  // columns would clip the labels - the label takes the wide left columns, the value the rest, both merged.
+  function fieldsRow(S, label, value) {
+    const W = S.W, px = (w) => Math.round(w * 7) + 5, target = Math.max(150, S.cols.reduce((t, w) => t + px(w), 0) * 0.3);
+    let k = 0, acc = 0;
+    while (k < W - 2) { acc += px(S.cols[k]); k++; if (acc >= target) break; }   // label = cols 0..k-1, value = cols k..W-1
+    const row = S.cols.map(() => null);
+    row[0] = C(label, 'lbl'); for (let c = 1; c < k; c++) row[c] = C('', 'lbl');
+    row[k] = C(value, 'val'); for (let c = k + 1; c < W; c++) row[c] = C('', 'val');
+    const ri = S.grid.push(row) - 1;
+    if (k - 1 > 0) S.merge(ri, 0, ri, k - 1);
+    if (W - 1 > k) S.merge(ri, k, ri, W - 1);
+    S.h(ri, 22);
+  }
+  function header(S, o) {
+    const cr = S.blank(); S.h(cr, 115);                        // the crest floats over this first row
+    banner(S, CDACC, 'org', 30);                               // the council's name
+    const fr = S.cols.map(() => null); fr[0] = C(o.form, 'form'); S.h(S.grid.push(fr) - 1, 16);
+    banner(S, o.heading, 'title', 34);
+    for (const [label, value] of o.fields) fieldsRow(S, label, value);
+    S.blank();                                                  // a spacer before the grid
+  }
+  // Writes a merged header cell across r0..r1 / c0..c1 (borders + shading on every covered cell).
+  const hspan = (S, r0, c0, r1, c1, v) => { for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) S.grid[r][c] = C(r === r0 && c === c0 ? v : '', 'hdr'); if (r1 > r0 || c1 > c0) S.merge(r0, c0, r1, c1); };
+
+  function allUnitsSheet(d, units, modular) {
+    const c = d.course, people = peopleOf(d, units), dataCols = units.length * (modular ? 2 : 1), base = 3;
+    const S = sheetBuilder(modular ? 'All units (T&P)' : 'All units', [SN_W, REG_W, NAME_W, ...Array(dataCols).fill(modular ? 6 : 9)]);
+    const [codeL, titleL] = modular ? ['Course Code:', 'Course Title:'] : ['Course/Qualification Code:', 'Course/Qualification Title:'];
+    header(S, {
+      form: modular ? 'CDACC/CBA/SAMSP/1' : 'CBA/SAMSP/2',
+      heading: modular ? 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL AND THEORY MARKS SHEETS FOR ALL UNITS OF COMPETENCY FOR MODULARIZED CURRICULA'
+        : 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS FOR ALL UNITS OF COMPETENCY',
+      fields: [
+        ['Assessment Center Code:', c.centerCode], ['Assessment Center Name:', c.centerName],
+        [codeL, c.qualCode], [titleL, title(c)],
+        ['Date of Assessment:', FROM_TO(c.assessDate || common(units, 'assessDate'))], ['Assessment Series:', c.series],
+      ],
+    });
+    const h0 = S.grid.length, rows = modular ? 5 : 3;
+    for (let i = 0; i < rows; i++) S.blank();
+    hspan(S, h0, 0, h0 + rows - 1, 0, 'S/N');
+    hspan(S, h0, 1, h0 + rows - 1, 1, 'Candidate’s Registration Code/National Id No.');
+    hspan(S, h0, 2, h0 + rows - 1, 2, 'Candidate’s Name');
+    if (modular) {
+      hspan(S, h0, base, h0, S.W - 1, 'Candidate’s Score Per Unit of Competency (units numbered as under KEY)');
+      hspan(S, h0 + 1, base, h0 + 1, S.W - 1, 'MODERATED MARKS');
+      hspan(S, h0 + 2, base, h0 + 2, S.W - 1, 'Marks out of 100% [P: Practical (100%) T: Theory (100%)]');
+      units.forEach((u, j) => { const a = base + j * 2; hspan(S, h0 + 3, a, h0 + 3, a + 1, `UNIT ${j + 1}`); S.grid[h0 + 4][a] = C('P', 'hdr'); S.grid[h0 + 4][a + 1] = C('T', 'hdr'); });
+      S.h(h0, 30);
+    } else {
+      hspan(S, h0, base, h0, S.W - 1, 'Candidate’s Score Per Unit of Competency out of 100% (units numbered as under KEY)');
+      hspan(S, h0 + 1, base, h0 + 1, S.W - 1, 'MODERATED MARKS');
+      units.forEach((u, j) => { S.grid[h0 + 2][base + j] = C(String(j + 1), 'hdr'); });
+      S.h(h0, 34);
+    }
+    people.forEach((s, i) => {
+      const r = S.cols.map(() => null);
+      r[0] = C(i + 1, 'sn', true); r[1] = C(s.regNo, 'txt'); r[2] = C(s.name, 'txt');
+      units.forEach((u, j) => {
+        const has = u.code in s.marks, pt = has ? s.marks[u.code] : [null, null];
+        if (modular) { r[base + j * 2] = markCell(has ? pt[0] : '-'); r[base + j * 2 + 1] = markCell(has ? pt[1] : '-'); }
+        else r[base + j] = markCell(has ? pt[0] : '-');
+      });
+      S.grid.push(r);
+    });
+    S.blank();
+    flow(S, 'KEY:', true, 15);
+    units.forEach((u, j) => flow(S, `${j + 1} - ${u.name}`, false, 14));
+    S.blank();
+    const mgr = common(units, 'managerName');
+    [`1. Name of External Verifier: ${SIG}    External Verifier Reg. Code/National ID. No: ${SIG}`,
+      `Signature: ${SIG}    Date: ${SIG}`,
+      `2. Name of Assessment Center Manager/Officer: ${mgr || SIG}`,
+      `Signature: ${SIG}    Date: ${SIG}    Institutional stamp: ${SIG}`,
+      ...(modular ? [`3. Verified by Council Officer at the Center: ${SIG}    Signature: ${SIG}    Date: ${SIG}`] : [])].forEach((l) => flow(S, l, false, 15));
+    return S;
+  }
+
+  function perUnitSheet(c, u, cands) {
+    const mod = !!u.modular, base = 3;
+    const S = sheetBuilder(u.code || u.name, mod ? [SN_W, REG_W, NAME_W, 9, 9, 9, 9, 9, 9] : [SN_W, REG_W, NAME_W, 17, 17, 17]);
+    const [codeL, titleL] = mod ? ['Course Code:', 'Course Title:'] : ['Course/Qualification Code:', 'Course/Qualification Title:'];
+    header(S, {
+      form: mod ? 'CDACC/CBA/SAMSP' : 'CBA/SAMSP/1',
+      heading: mod ? 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY (MODULARIZED CURRICULA)'
+        : 'SUMMATIVE ASSESSMENT MODERATED PRACTICAL MARKS SHEETS PER UNIT OF COMPETENCY',
+      fields: mod
+        ? [['Assessment Center Code:', c.centerCode], ['Assessment Center Name:', c.centerName], [codeL, c.qualCode], [titleL, title(c)],
+          ['Unit Code:', u.code], ['Unit Title:', u.name], ['Assessment Series:', c.series]]
+        : [['Assessment Center Code:', c.centerCode], ['Assessment Center Name:', c.centerName], [codeL, c.qualCode], [titleL, title(c)],
+          ['Date of Assessment:', FROM_TO(u.assessDate || c.assessDate)], ['Assessment Series:', c.series], ['Unit Code:', u.code], ['Unit Title:', u.name]],
+    });
+    const h0 = S.grid.length;
+    if (mod) {
+      S.blank(); S.blank();
+      hspan(S, h0, 0, h0 + 1, 0, 'S/N'); hspan(S, h0, 1, h0 + 1, 1, 'Candidate’s CDACC Registration Code'); hspan(S, h0, 2, h0 + 1, 2, 'Candidate’s Name');
+      hspan(S, h0, base, h0, base + 1, 'Internal assessor’s marks (All Candidates)');
+      hspan(S, h0, base + 2, h0, base + 3, 'External verifier’s marks (Sampled Candidates)');
+      hspan(S, h0, base + 4, h0, base + 5, 'Moderated Marks');
+      ['T (100%)', 'P (100%)', 'T (100%)', 'P (100%)', 'T (100%)', 'P (100%)'].forEach((v, k) => { S.grid[h0 + 1][base + k] = C(v, 'hdr'); });
+      S.h(h0, 30);
+    } else {
+      S.blank();
+      ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Internal assessor’s marks (All Candidates) (100%)', 'External verifier’s (Sampled Candidates) (100%)', 'Moderated Marks (100%)']
+        .forEach((v, k) => { S.grid[h0][k] = C(v, 'hdr'); });
+      S.h(h0, 34);
+    }
+    cands.forEach((s, i) => {
+      const r = S.cols.map(() => null);
+      r[0] = C(i + 1, 'sn', true); r[1] = C(s.regNo, 'txt'); r[2] = C(s.name, 'txt');
+      (mod ? [s.internalT, s.internal, s.externalT, s.external, s.moderatedT, s.moderated] : [s.internal, s.external, s.moderated]).forEach((v, k) => { r[base + k] = markCell(v ?? null); });
+      S.grid.push(r);
+    });
+    S.blank();
+    const mp = moderation(cands, sheetGet, 'p'), mt = mod ? moderation(cands, sheetGet, 't') : null;
+    const mdLines = (m, tag) => { if (!m.n) return; const ext = m.pairs.reduce((t, p) => t + p[1], 0), int = m.pairs.reduce((t, p) => t + p[0], 0);
+      flow(S, `${tag ? tag + ': ' : ''}Mean Deviation = (${ext}-${int})/${m.n}`, true, 14);
+      flow(S, `${' '.repeat((tag ? tag.length + 2 : 0) + 17)}=${m.md.toFixed(2)}`, false, 14); };
+    if (mod) { mdLines(mt, 'Theory (T)'); mdLines(mp, 'Practical (P)'); } else mdLines(mp, '');
+    S.blank();
+    const no = (k) => (mod ? '' : k + '. ');
+    [`${no(1)}Name of Internal Assessor: ${u.assessorName || SIG}    Reg. Code/National ID. No.: ${u.assessorReg || SIG}`,
+      `Signature: ${SIG}    Date: ${SIG}`,
+      `${no(2)}Name of External Verifier: ${SIG}    Reg. Code/National ID. No.: ${SIG}`,
+      `Signature: ${SIG}    Date: ${SIG}`,
+      `${no(3)}Name of Assessment Center Manager${mod ? '' : '/Officer'}: ${u.managerName || SIG}`,
+      `Signature: ${SIG}    Date: ${SIG}    Institutional stamp: ${SIG}`].forEach((l) => flow(S, l, false, 15));
+    return S;
+  }
+
   async function makeAll(kind, btn) {
     const g = btn.dataset.group || 'ord', mod = g === 'mod', pick = (u) => sp.sheetUnits?.has(u.code) && groupOf(u) === g;
     if (!(course()?.units.filter(pick) || []).length) { toast('Tick at least one unit', 'err'); return; }
@@ -595,9 +753,7 @@ const SummativePracticals = (() => {
         toast('Making the PDF…', 'ok');
         download(name + '.pdf', await HtmlPdf.make(doc(allUnitsPages(d, units, mod)), { landscape: true }));
       } else {
-        const heads = mod ? units.flatMap((u, j) => [`${j + 1} P - ${u.name} (${u.code})`, `${j + 1} T`]) : units.map((u, j) => `${j + 1} ${u.name} (${u.code})`);
-        download(name + '.xlsx', await Xlsx.simple('All units', ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', ...heads],
-          peopleOf(d, units).map((s, i) => [i + 1, s.regNo, s.name, s.admNo, ...units.flatMap((u) => { const [p, t] = s.marks[u.code] || [null, null]; return mod ? [show(p), show(t)] : [show(p)]; })])));
+        download(name + '.xlsx', await Xlsx.spWorkbook([allUnitsSheet(d, units, mod)], await crestBytes()));
       }
       toast('Sheet saved to this device', 'ok');
     } catch (e) { toast(e.message, 'err'); }
@@ -616,19 +772,7 @@ const SummativePracticals = (() => {
         toast('Making the PDF…', 'ok');
         download(base + '.pdf', await HtmlPdf.make(doc(units.flatMap((u) => perUnitPages(c, u, candsOf(u)))), { landscape: true }));
       } else {
-        const u = units[0], cands = candsOf(u), sx = (v) => show(v ?? null);
-        const formula = ['', '', 'Formula', '(Σ External − Σ Internal of the sampled candidates) ÷ number sampled'];
-        const sum = (m, tag) => { const t = tag ? tag + ' - ' : ''; return [['', '', t + 'Mean deviation', '', '', m.md ?? '', ''], ['', '', t + 'Workings', m.n ? `${totalsText(m)}; per candidate ${workText(m)}` : 'no external marks yet'],
-          ['', '', t + 'Sample', `${m.sampled} of ${m.assessed} assessed (10% needed: ${m.need})`]]; };
-        if (u.modular) {
-          download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s CDACC Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal T (all candidates, 100%)', 'Internal P (all candidates, 100%)',
-            'External T (sampled, 100%)', 'External P (sampled, 100%)', 'Moderated T (100%)', 'Moderated P (100%)'],
-          [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, sx(s.internalT), sx(s.internal), sx(s.externalT), sx(s.external), sx(s.moderatedT), sx(s.moderated)]), [], formula,
-            ...sum(moderation(cands, sheetGet, 't'), 'Theory (T)'), ...sum(moderation(cands, sheetGet, 'p'), 'Practical (P)')]));
-        } else {
-          download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal assessor (all candidates, 100%)', 'External verifier (sampled, 100%)', 'Moderated (100%)'],
-            [...cands.map((s, i) => [i + 1, s.regNo, s.name, s.admNo, sx(s.internal), sx(s.external), sx(s.moderated)]), [], formula, ...sum(moderation(cands, sheetGet, 'p'), '')]));
-        }
+        download(base + '.xlsx', await Xlsx.spWorkbook(units.map((u) => perUnitSheet(c, u, candsOf(u))), await crestBytes()));
       }
       toast('Sheet saved to this device', 'ok');
     } catch (e) { toast(e.message, 'err'); }

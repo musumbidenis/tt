@@ -368,5 +368,126 @@ const Xlsx = (() => {
     return zip.generateAsync({ type: 'blob', mimeType: MIME, compression: 'DEFLATE' });
   }
 
-  return { open, registerFile, marksheetFile, simple, colName, colNum };
+  /* ---------- writing the CDACC summative practical forms (a styled replica of the printed sheet) ---------- */
+  // Fixed cell formats, in the order they are referenced by s="" in the sheet XML (see SP_STYLE below).
+  const SP_XF = [
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',                                                                                                       // 0 plain
+    '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>',     // 1 title
+    '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>',     // 2 org
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>',                    // 3 form
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',                   // 4 formR
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>',     // 5 lbl
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>',                   // 6 val
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>', // 7 hdr
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',                // 8 sn
+    '<xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',        // 9 num2 (0.00)
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>',                   // 10 txt
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="top" wrapText="1"/></xf>',                        // 11 note
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="top" wrapText="1"/></xf>',          // 12 noteB
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>',   // 13 valC
+  ];
+  const SP_STYLE = { plain: 0, title: 1, org: 2, form: 3, formR: 4, lbl: 5, val: 6, hdr: 7, sn: 8, num2: 9, txt: 10, note: 11, noteB: 12, valC: 13 };
+  const SP_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="${NS}">`
+    + '<fonts count="4"><font><sz val="9"/><name val="Calibri"/></font><font><b/><sz val="9"/><name val="Calibri"/></font>'
+    + '<font><b/><sz val="12"/><name val="Calibri"/></font><font><b/><sz val="10"/><name val="Calibri"/></font></fonts>'
+    + '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+    + '<fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill></fills>'
+    + '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'
+    + '<border><left style="thin"><color indexed="64"/></left><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border></borders>'
+    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    + `<cellXfs count="${SP_XF.length}">${SP_XF.join('')}</cellXfs>`
+    + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+  /**
+   * A styled workbook mirroring the official SAMSP sheets, one worksheet per form.
+   * sheets: [{ name, crest:boolean, cols:[width per column], heights:{rowIndex:points},
+   *            grid:[ row, ... ] where row = [cell|null, ...], merges:[[r0,c0,r1,c1], ...] }] (0-based indices)
+   *   cell = { v, s, n } : value v, style key s (SP_STYLE), n=true -> numeric cell. A null cell is empty and unstyled.
+   * crestPng: a Uint8Array of the CDACC crest shared by every crest sheet, or null.
+   */
+  async function spWorkbook(sheets, crestPng) {
+    const xmlT = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const used = [];
+    const sheetName = (want, i) => {
+      const base = (String(want || `Sheet ${i + 1}`).replace(/[[\]:*?/\\]/g, '-').slice(0, 31).trim()) || `Sheet ${i + 1}`;
+      let n = base, k = 2;
+      while (used.includes(n.toLowerCase())) { const suf = ` (${k++})`; n = base.slice(0, 31 - suf.length) + suf; }
+      used.push(n.toLowerCase());
+      return n;
+    };
+    const cellXml = (cell, ref) => {
+      if (cell == null) return `<c r="${ref}"/>`;
+      const s = cell.s != null ? ` s="${SP_STYLE[cell.s] ?? 0}"` : '';
+      if (cell.n && cell.v !== '' && cell.v != null && Number.isFinite(Number(cell.v))) return `<c r="${ref}"${s}><v>${Number(cell.v)}</v></c>`;
+      if (cell.v === '' || cell.v == null) return `<c r="${ref}"${s}/>`;
+      return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlT(cell.v)}</t></is></c>`;
+    };
+    const emu = (px) => Math.round(px * 9525);
+    const colPx = (w) => Math.round(w * 7) + 5;                 // Excel column width (chars) -> pixels, roughly
+
+    const zip = new JSZip();
+    const specs = sheets.map((sh, i) => ({ ...sh, title: sheetName(sh.name, i) }));
+    const anyCrest = specs.some((s) => s.crest) && !!crestPng;
+    if (anyCrest) zip.file('xl/media/image1.png', crestPng);
+
+    specs.forEach((sh, i) => {
+      const k = i + 1, width = sh.cols.length, last = colName(width), maxRow = sh.grid.length || 1;
+      const cols = `<cols>${sh.cols.map((w, c) => `<col min="${c + 1}" max="${c + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`;
+      const rowsXml = sh.grid.map((row, r) => {
+        const h = sh.heights && sh.heights[r];
+        return `<row r="${r + 1}"${h ? ` ht="${h}" customHeight="1"` : ''}>${row.map((cell, c) => cellXml(cell, colName(c + 1) + (r + 1))).join('')}</row>`;
+      }).join('');
+      const merges = (sh.merges || []).filter((m) => m[0] !== m[2] || m[1] !== m[3])
+        .map(([r0, c0, r1, c1]) => `<mergeCell ref="${colName(c0 + 1)}${r0 + 1}:${colName(c1 + 1)}${r1 + 1}"/>`);
+      const hasCrest = sh.crest && crestPng;
+      const sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + `<worksheet xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+        + '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
+        + `<dimension ref="A1:${last}${maxRow}"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>`
+        + cols + `<sheetData>${rowsXml}</sheetData>`
+        + (merges.length ? `<mergeCells count="${merges.length}">${merges.join('')}</mergeCells>` : '')
+        + '<printOptions horizontalCentered="1"/><pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>'
+        + '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>'
+        + (hasCrest ? '<drawing r:id="rIdDr"/>' : '') + '</worksheet>';
+      zip.file(`xl/worksheets/sheet${k}.xml`, sheetXml);
+
+      if (hasCrest) {
+        const totalPx = sh.cols.reduce((t, w) => t + colPx(w), 0);
+        const imgW = 150, imgH = Math.round(150 * 217 / 232), off = Math.max(0, Math.round((totalPx - imgW) / 2));
+        zip.file(`xl/drawings/drawing${k}.xml`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          + '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+          + `<xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>${emu(off)}</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>${emu(4)}</xdr:rowOff></xdr:from>`
+          + `<xdr:ext cx="${emu(imgW)}" cy="${emu(imgH)}"/>`
+          + '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="crest"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
+          + '<xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+          + `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${emu(imgW)}" cy="${emu(imgH)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`
+          + '<xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>');
+        zip.file(`xl/drawings/_rels/drawing${k}.xml.rels`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+          + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>');
+        zip.file(`xl/worksheets/_rels/sheet${k}.xml.rels`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+          + `<Relationship Id="rIdDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${k}.xml"/></Relationships>`);
+      }
+    });
+
+    zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>`
+      + specs.map((sh, i) => `<sheet name="${xmlT(sh.title)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets></workbook>');
+    zip.file('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + specs.map((sh, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')
+      + '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+    zip.file('xl/styles.xml', SP_STYLES_XML);
+    zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+    zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+      + (anyCrest ? '<Default Extension="png" ContentType="image/png"/>' : '')
+      + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+      + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+      + specs.map((sh, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
+      + specs.map((sh, i) => (sh.crest && crestPng ? `<Override PartName="/xl/drawings/drawing${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>` : '')).join('')
+      + '</Types>');
+    return zip.generateAsync({ type: 'blob', mimeType: MIME, compression: 'DEFLATE' });
+  }
+
+  return { open, registerFile, marksheetFile, simple, spWorkbook, colName, colNum };
 })();
+if (typeof module !== 'undefined' && module.exports) module.exports = Xlsx;
