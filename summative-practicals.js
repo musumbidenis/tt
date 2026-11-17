@@ -140,16 +140,12 @@ const SummativePracticals = (() => {
   /** The short form CDACC's own filled sheets use: "(1044 − 1046) ÷ 13 = −0.15" - the sampled candidates' external marks
    *  added up, less their internal marks added up, over the number sampled. */
   const totalsText = (m) => `(${m.pairs.reduce((t, p) => t + p[1], 0)} − ${m.pairs.reduce((t, p) => t + p[0], 0)}) ÷ ${m.n} = ${md2(m.md)}`;
-  const decisionText = (m) => (!m.ready ? `The moderated marks appear once the external verifier’s marks are in for at least ${m.need} candidate${m.need === 1 ? '' : 's'}.`
-    : m.adjust ? `${md2(m.md)} is more than ±${TOLERANCE}, so each moderated mark = internal mark ${m.adjust > 0 ? '+' : '−'} ${Math.abs(m.adjust).toFixed(2)}, rounded to a whole number (0 to 100).`
-      : `${md2(m.md)} is within ±${TOLERANCE}, so the moderated marks are the internal assessor’s marks.`);
   function modHtml(m, label = '') {
     const head = `<p><b>${label ? label + ' - mean deviation' : 'Mean deviation'}</b> = Σ (External − Internal) ÷ number of sampled candidates</p>`;
     if (!m.assessed) return head + '<p class="muted">Enter the internal assessor’s marks first.</p>';
     return `${head}
       <p>Sample: <b>${m.sampled}</b> of the ${m.assessed} candidate${m.assessed === 1 ? '' : 's'} assessed - CDACC needs at least 10%, here ${m.need}. Absent (AB) candidates are not counted.</p>
-      ${m.n ? `<p>Workings: ${workText(m)}</p>` : '<p class="muted">Workings: no external marks yet.</p>'}
-      <p>Decision: ${decisionText(m)}</p>`;
+      ${m.n ? `<p>Workings: ${workText(m)}</p>` : '<p class="muted">Workings: no external marks yet.</p>'}`;
   }
 
   /* ---------- marks ---------- */
@@ -557,7 +553,7 @@ const SummativePracticals = (() => {
   /** One mean deviation's workings on the sheet, in the short numeric form only:
    *    Mean Deviation = (Σexternal − Σinternal)/number sampled
    *                   = figure                                   (on the next line) */
-  const mdLine = (m, tag = '') => (m.n ? `<p class="sp-mdw">${tag ? `<b>${tag}:</b> ` : ''}Mean Deviation = <span class="sp-mdcalc">(${m.pairs.reduce((t, p) => t + p[1], 0)}-${m.pairs.reduce((t, p) => t + p[0], 0)})/${m.n}<br>=${m.md}</span></p>` : '');
+  const mdLine = (m, tag = '') => (m.n ? `<p class="sp-mdw">${tag ? `<b>${tag}:</b> ` : ''}Mean Deviation = <span class="sp-mdcalc">(${m.pairs.reduce((t, p) => t + p[1], 0)}-${m.pairs.reduce((t, p) => t + p[0], 0)})/${m.n}<br>=${m.md.toFixed(2)}</span></p>` : '');
   function perUnitPages(c, u, cands) {
     const mod = !!u.modular, mp = moderation(cands, sheetGet, 'p'), mt = mod ? moderation(cands, sheetGet, 't') : null;
     const workLines = (mod ? [mt, mp] : [mp]).reduce((t, m) => t + (m.n ? 2 : 0), 0);   // each working prints on two lines
@@ -582,10 +578,6 @@ const SummativePracticals = (() => {
       <table class="sp-grid"><thead>${head}</thead>
       <tbody>${rows.map((s) => `<tr><td class="c">${++n}</td><td class="nw">${esc(s.regNo)}</td><td class="nw">${esc(s.name)}</td>${row(s)}</tr>`).join('')}</tbody></table>
       ${p === pages.length - 1 ? md + sign : ''}`);
-  }
-  function sheetDecision(m) {
-    if (!m.ready) return `Sample below 10% of those assessed (needs ${m.need}): no moderated marks yet.`;
-    return m.adjust ? `More than ±${TOLERANCE}: every moderated mark = internal mark ${m.adjust > 0 ? '+' : '−'} ${Math.abs(m.adjust).toFixed(2)}.` : `Within ±${TOLERANCE}: the moderated marks are the internal assessor’s marks.`;
   }
   /** Puts "Page x of y" on every page of the document and wraps it for HtmlPdf. */
   const doc = (pages) => `<div class="sp-print">${pages.map((p, i) => `<div class="sp-page">${p}<div class="sp-foot">Page ${i + 1} of ${pages.length}</div></div>`).join('')}</div>`;
@@ -627,7 +619,7 @@ const SummativePracticals = (() => {
         const u = units[0], cands = candsOf(u), sx = (v) => show(v ?? null);
         const formula = ['', '', 'Formula', '(Σ External − Σ Internal of the sampled candidates) ÷ number sampled'];
         const sum = (m, tag) => { const t = tag ? tag + ' - ' : ''; return [['', '', t + 'Mean deviation', '', '', m.md ?? '', ''], ['', '', t + 'Workings', m.n ? `${totalsText(m)}; per candidate ${workText(m)}` : 'no external marks yet'],
-          ['', '', t + 'Sample', `${m.sampled} of ${m.assessed} assessed (10% needed: ${m.need})`], ['', '', t + 'Decision', sheetDecision(m)]]; };
+          ['', '', t + 'Sample', `${m.sampled} of ${m.assessed} assessed (10% needed: ${m.need})`]]; };
         if (u.modular) {
           download(base + '.xlsx', await Xlsx.simple(u.name, ['S/N', 'Candidate’s CDACC Registration Code', 'Candidate’s Name', 'Center Reg No', 'Internal T (all candidates, 100%)', 'Internal P (all candidates, 100%)',
             'External T (sampled, 100%)', 'External P (sampled, 100%)', 'Moderated T (100%)', 'Moderated P (100%)'],
