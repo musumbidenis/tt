@@ -1606,8 +1606,8 @@ tr.ps-no td { color: var(--muted); }
   .sp-key b { display: block; column-span: all; }
   .sp-key span { display: block; break-inside: avoid; }
   .sp-mdblock { margin: 1.5mm 0 8mm; }   /* a breather before the sign-offs */
-  .sp-mdp { font-weight: bold; margin: 0; }
-  .sp-mdw { font-size: 9pt; margin: .8mm 0 0; line-height: 1.3; }
+  .sp-mdw { font-size: 9pt; margin: .8mm 0 2mm; line-height: 1.3; }
+  .sp-mdcalc { display: inline-block; vertical-align: top; }   /* the "= figure" sits under the formula, not the label */
   .sp-sign { margin-top: 2mm; font-size: 9.5pt; }
   .sp-sign p { display: flex; align-items: flex-end; gap: 1.5mm; margin: 0 0 2.2mm; white-space: nowrap; }
   .sp-sign .ln { flex: 1 1 40mm; min-width: 18mm; min-height: 4mm; border-bottom: .25mm dotted #000; padding: 0 1mm; white-space: nowrap; overflow: hidden; }

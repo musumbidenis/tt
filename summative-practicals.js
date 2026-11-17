@@ -554,21 +554,21 @@ const SummativePracticals = (() => {
       ${p === pages.length - 1 ? key + sign : ''}`);
   }
   const sheetGet = (k, x) => x[k] ?? null;
-  /** One mean deviation's workings on the sheet, in CDACC's short form, and the decision. */
-  const mdLine = (m, tag = '') => (m.n ? `<p class="sp-mdw">${tag ? `<b>${tag}:</b> ` : ''}Mean Deviation = (Σ External verifier’s marks − Σ Internal assessor’s marks of the sampled candidates) ÷ number sampled = ${totalsText(m)}. ${sheetDecision(m)}</p>` : '');
+  /** One mean deviation's workings on the sheet, in the short numeric form only:
+   *    Mean Deviation = (Σexternal − Σinternal)/number sampled
+   *                   = figure                                   (on the next line) */
+  const mdLine = (m, tag = '') => (m.n ? `<p class="sp-mdw">${tag ? `<b>${tag}:</b> ` : ''}Mean Deviation = <span class="sp-mdcalc">(${m.pairs.reduce((t, p) => t + p[1], 0)}-${m.pairs.reduce((t, p) => t + p[0], 0)})/${m.n}<br>=${m.md}</span></p>` : '');
   function perUnitPages(c, u, cands) {
     const mod = !!u.modular, mp = moderation(cands, sheetGet, 'p'), mt = mod ? moderation(cands, sheetGet, 't') : null;
-    const workLines = (mod ? [mt, mp] : [mp]).reduce((t, m) => t + (m.n ? Math.ceil((150 + totalsText(m).length + sheetDecision(m).length) / 190) : 0), 0);
+    const workLines = (mod ? [mt, mp] : [mp]).reduce((t, m) => t + (m.n ? 2 : 0), 0);   // each working prints on two lines
     const pages = pagesOf(cands, mod ? UNIT_FULL_M : UNIT_FULL, Math.max(6, (mod ? UNIT_LAST_M : UNIT_LAST) - workLines));
     const extra = `<tr><th>Unit Code:</th><td>${esc(u.code)}</td><th>Unit Title:</th><td>${esc(u.name)}</td></tr>${mod ? `<tr><th>Assessment Series:</th><td colspan="3">${esc(c.series)}</td></tr>` : ''}`;
     const no = (k) => (mod ? '' : k + '. ');   // the modular form does not number its sign-offs
     const sign = `<div class="sp-sign"><p>${no(1)}Name of Internal Assessor${ln(u.assessorName)}Internal Assessor Reg. Code/National ID. No.${ln(u.assessorReg, 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
       <p>${no(2)}Name of External Verifier${ln('')}External Verifier Reg. Code/National ID. No.${ln('', 's')}Signature${ln('', 's')}Date${ln('', 's')}</p>
       <p>${no(3)}Name of Assessment Center Manager${mod ? '' : '/Officer'}${ln(u.managerName)}Signature${ln('', 's')}Date${ln('', 's')}Institutional stamp${ln('', 's')}</p></div>`;
-    const fig = (m) => (m.n ? md2(m.md) : '');
-    // The modular form has one Mean Deviation line: it carries both figures, theory first as in its columns.
-    const md = `<div class="sp-mdblock"><p class="sp-mdp">Mean Deviation: ${mod ? `Theory (T) ${fig(mt) || '-'}&emsp;Practical (P) ${fig(mp) || '-'}` : fig(mp)}</p>
-      ${mod ? mdLine(mt, 'Theory (T)') + mdLine(mp, 'Practical (P)') : mdLine(mp)}</div>`;
+    // The modular form shows two workings (theory first, as in its columns); the ordinary form one.
+    const md = `<div class="sp-mdblock">${mod ? mdLine(mt, 'Theory (T)') + mdLine(mp, 'Practical (P)') : mdLine(mp)}</div>`;
     const head = mod
       ? `<tr><th rowspan="2" class="sn">S/N</th><th rowspan="2" class="rg">Candidate’s CDACC Registration Code</th><th rowspan="2">Candidate’s Name</th><th colspan="2">Internal assessor’s marks (All Candidates)</th>
         <th colspan="2">External verifier’s marks (Sampled Candidates)</th><th colspan="2">Moderated Marks</th></tr><tr>${'<th class="w2">T (100%)</th><th class="w2">P (100%)</th>'.repeat(3)}</tr>`
