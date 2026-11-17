@@ -497,9 +497,11 @@ const SummativePracticals = (() => {
   const ln = (v, cls = '') => `<span class="ln${cls ? ' ' + cls : ''}">${esc(v || '')}</span>`;
   /** The top of a form: crest, form number (and SHEET x OF y on the all-units forms), heading, the centre and course lines. */
   function headHtml(c, o) {
+    // The heading (crest, council name, form line, title and the identification fields) heads the first sheet of a
+    // form only; later sheets repeat just the table's own column headers.
+    if (!o.first) return '';
     const [codeL, titleL] = o.modular ? ['Course Code:', 'Course Title:'] : ['Course/Qualification Code:', 'Course/Qualification Title:'];
-    // The crest and the council's name head the first sheet of a form only.
-    return `${o.first ? `<div class="sp-top"><img src="icons/cdacc-logo.png" alt=""><div class="sp-org">${CDACC}</div></div>` : ''}
+    return `<div class="sp-top"><img src="icons/cdacc-logo.png" alt=""><div class="sp-org">${CDACC}</div></div>
       <div class="sp-form"><span>${o.form}</span>${o.of ? `<span>SHEET ${o.sheet} OF ${o.of}</span>` : ''}</div>
       <h1>${o.heading}</h1>
       <table class="sp-fields"><tr><th>Assessment Center Code:</th><td>${esc(c.centerCode)}</td><th>Assessment Center Name:</th><td>${esc(c.centerName)}</td></tr>
